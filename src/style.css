@@ -600,6 +600,6 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fill.oxygen.low, .fill.health.low, .compass.danger { animation: none; }
+  .fill.oxygen.low, .fill.health.low, .compass.danger, .hazard { animation: none; }
   .toast { transition: none; }
 }

@@ -136,6 +136,19 @@ function startRun(next: Game) {
   audio.play('ui')
   world.setReducedMotion(reducedMotion())
   world.setQuality(false)
+  // dispatch flavour for the start of every shift (plan §6 story dressing)
+  game.events.push({
+    kind: 'hint',
+    text: 'DISPATCH: ROUTE EARTH -> MOON -> MARS. DON\'T DIE.',
+    amount: 0,
+    place: 'surface',
+    lat: game.player.lat,
+    lon: game.player.lon,
+    h: 0,
+    x: 0,
+    y: 0,
+    z: 0,
+  })
 }
 
 function newRun() {
