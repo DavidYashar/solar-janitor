@@ -53,6 +53,8 @@ npm run preview   # serve the production build
 ## Status & stack
 
 M1 vertical slice — code complete, `npm test` green (21 tests), production build
-passing. **Browser playtest still pending.** Stack: Vite, strict TypeScript,
+passing, and **browser-verified end-to-end** (12 Oct: title → surface sweep →
+takeoff → flight → ISS docking → delivery → shop → landing, zero console errors).
+Stack: Vite, strict TypeScript,
 Three.js, Web Audio, localStorage. All geometry, textures and sounds are generated
 procedurally in code — no external assets, no backend, no accounts.

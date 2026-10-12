@@ -219,7 +219,7 @@ export function createHud(callbacks: HudCallbacks): Hud {
     showTitle(best) {
       showOverlay(`
         <div class="card">
-          <h1 class="title">SOLAR JANITOR</h1>
+          <h1 class="title">SOLAR SYSTEM JANITOR</h1>
           <p class="subtitle">The last janitor of Sol. Sweep the junk off Earth, haul it up to the ISS
             before your oxygen runs out, and spend the credits on gear.</p>
           <div class="modes">
