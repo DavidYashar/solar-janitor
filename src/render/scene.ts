@@ -939,7 +939,13 @@ export function createWorld(container: HTMLElement): World {
     earthSystem.position.set(earthPos.x, earthPos.y, earthPos.z)
     clouds.rotation.y += dt * 0.014
 
-    iss.position.set(game.issPos.x, game.issPos.y, game.issPos.z)
+    // issPos is a world (Sun-centred) position but iss is a child of
+    // earthSystem, which already sits at Earth - so subtract to get local
+    iss.position.set(
+      game.issPos.x - earthPos.x,
+      game.issPos.y - earthPos.y,
+      game.issPos.z - earthPos.z,
+    )
     iss.rotation.y = -game.issAngle
     for (let i = 0; i < spinningRings.length; i++) {
       spinningRings[i].rotation.z += dt * (i === 0 ? 0.7 : -0.55)
