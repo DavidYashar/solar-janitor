@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#060a16" />
+    <meta name="description" content="Solar Janitor - a 3D low-gravity salvage arcade game. Sweep junk off Earth, haul it to the ISS before your oxygen runs out, and spend your credits on gear." />
+    <title>Solar Janitor</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="scene"></div>
+
+      <div id="hud" class="hud hidden" aria-hidden="true">
+        <div class="hud-top">
+          <div class="panel">
+            <span class="label">CREDITS</span>
+            <strong id="credits">0</strong>
+          </div>
+          <div class="panel center">
+            <span id="place" class="place">EARTH</span>
+            <span id="progress-note" class="note">0/24 cleared</span>
+            <span id="score" class="score">0</span>
+          </div>
+          <div class="panel actions">
+            <button id="mute" class="icon-btn" type="button" title="Mute (M)">SOUND</button>
+            <button id="pause" class="icon-btn" type="button" title="Pause (P)">PAUSE</button>
+          </div>
+        </div>
+
+        <div class="hud-left">
+          <div class="meter">
+            <span class="meter-label">O<sub>2</sub></span>
+            <div class="bar"><i id="oxygen-fill" class="fill oxygen"></i></div>
+          </div>
+          <div class="meter">
+            <span class="meter-label">SUIT</span>
+            <div class="bar"><i id="health-fill" class="fill health"></i></div>
+          </div>
+        </div>
+
+        <div class="hud-right">
+          <div id="carry" class="carry"></div>
+          <div id="hold" class="hold">HOLD 0/30</div>
+        </div>
+
+        <div class="hud-bottom">
+          <div id="compass" class="compass">
+            <i id="compass-arrow" class="needle"></i>
+            <b id="compass-label" class="compass-label">LANDER</b>
+          </div>
+          <div id="prompt" class="prompt"></div>
+        </div>
+
+        <div id="toasts" class="toasts"></div>
+      </div>
+
+      <div id="touch" class="touch hidden">
+        <div id="stick" class="stick"><i id="stick-knob"></i></div>
+        <div class="touch-actions">
+          <button id="touch-hop" class="touch-btn" type="button">HOP</button>
+          <button id="touch-act" class="touch-btn context" type="button">ACTION</button>
+        </div>
+      </div>
+
+      <div id="overlay" class="overlay"></div>
+      <div id="fade" class="fade"></div>
+
+      <noscript class="noscript">Solar Janitor needs JavaScript and WebGL enabled.</noscript>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>
