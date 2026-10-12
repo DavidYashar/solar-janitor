@@ -7,6 +7,8 @@ export const SURFACE_RADIUS = 55
 /** Players walk anywhere except the last 30 degrees to each pole (keeps the maths sane). */
 export const POLE_CLAMP = 1.04
 export const WALK_SPEED = 7.4
+/** how fast the janitor swings around to face the pointer (radians per second) */
+export const SURFACE_TURN_RATE = 4.2
 export const SPRINT_MULTIPLIER = 1.6
 export const AIR_CONTROL_K = 3.4
 export const HOP_SPEED = 11.5
@@ -46,6 +48,8 @@ export const HEALTH_MAX = 100
 export const SHIP_SPEED = 55
 export const SHIP_BOOST_SPEED = 110
 export const SHIP_REVERSE_SPEED = 24
+/** lateral thruster speed for arrow-key strafing */
+export const SHIP_STRAFE_SPEED = 34
 /** exponential velocity blend rate - heavy damping, no drift-fighter float */
 export const SHIP_ACCEL_K = 3.1
 /** angular rates, radians per second, applied in the ship's local frame */

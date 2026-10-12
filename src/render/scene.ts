@@ -1273,9 +1273,10 @@ export function createWorld(container: HTMLElement): World {
         Math.cos(player.lat),
         -Math.sin(player.lat) * Math.sin(player.lon),
       ).normalize()
-      const east = vC.crossVectors(up, north).normalize()
-      const forward = vD.copy(north).multiplyScalar(Math.cos(player.facing))
-        .addScaledVector(east, Math.sin(player.facing)).normalize()
+      // a stable view is what makes pointer-relative arrows feel right: the
+      // camera keeps looking north while the janitor turns toward the pointer,
+      // so "up the screen" always means the same direction
+      const forward = vD.copy(north)
       const playerPosition = surfacePoint(
         player.lat, player.lon, radiusAt(game.planetId, player.lat, player.lon) + player.h, camLook,
       )

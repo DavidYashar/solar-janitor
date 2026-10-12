@@ -21,6 +21,7 @@ credits on gear. Clean all three worlds to restore the system.
   stays safe; its danger is the debris in orbit.
 - **Full-freedom flight:** pitch + yaw + roll about the ship's own axes, thrust
   along the facing vector, strongly damped arcade feel with a gentle auto-bank.
+  Steered by pointing with the mouse; the arrow keys thrust and side-step.
 - **Relics → tools:** first delivery of each world's relic permanently unlocks
   Eye in the Sky (Earth — the radar tracks every junk piece), Surefoot Stride
   (Moon — +20 % speed, softer landings) and Storm Sense (Mars — hazards telegraph
@@ -45,18 +46,21 @@ credits on gear. Clean all three worlds to restore the system.
 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
-| Surface move | `WASD` / arrows (camera-relative) | left stick |
+| Surface move | point with the mouse · `W`/`↑` walk, `S`/`↓` back, `A`/`D`/`←`/`→` side-step | left stick |
 | Surface hop / space boost | `Space` | HOP / BOOST |
 | Sprint (surface) / boost (space) | `Shift` | — |
-| Fly: thrust | `W` / `S` | left stick up/down |
-| Fly: pitch & yaw | mouse (click to lock) or arrows | drag the right-hand look pad |
+| Fly: steer | the mouse is your pointer — the nose follows it | drag the right-hand look pad |
+| Fly: thrust | `W`/`S` or `↑`/`↓` | left stick up/down |
+| Fly: strafe | `←`/`→` | left stick sideways |
 | Fly: roll | `A` / `D` | ROLL ◀ / ROLL ▶ |
 | Context action — deposit, take off, land, dock | `F` | ACTION |
 | Confirm on menus | `Enter` / `Space` | tap |
 | Pause | `P` / `Esc` | PAUSE |
 | Mute | `M` | SOUND |
 
-Walking near junk vacuums it up (carry 8 to start). Watch the O₂ bar — the lander
+The mouse is your pointer everywhere: on foot the janitor faces it and the
+arrows walk relative to it; in flight the nose follows it and the arrows thrust
+and side-step. Walking near junk vacuums it up (carry 8 to start). Watch the O₂ bar — the lander
 is the only refill — and the compass ring always points home. In space the compass
 points at your objective: the ISS when you are carrying a haul, otherwise the
 nearest world that still has junk on it.

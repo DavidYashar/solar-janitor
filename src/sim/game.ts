@@ -12,9 +12,10 @@ import {
   SPRINT_MULTIPLIER, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
   STORM_WARN_LEAD_BONUS, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
   THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS,
+  SHIP_STRAFE_SPEED, SURFACE_TURN_RATE,
 } from './config.ts'
 import { RELIC_BY_PLANET, SHOP_BY_ID } from './economy.ts'
-import { quatForward, quatFromBasis, quatIntegrate, quatNlerp, quatToFlightAngles } from './orient.ts'
+import { quatForward, quatFromBasis, quatIntegrate, quatNlerp, quatRight, quatToFlightAngles } from './orient.ts'
 import { PLANETS, landerSite, planetById } from './planets.ts'
 import { nextRandom, randomBetween } from './rng.ts'
 import type {
@@ -28,6 +29,18 @@ export function wrapAngle(angle: number): number {
   if (value > Math.PI) value -= TAU
   if (value < -Math.PI) value += TAU
   return value
+}
+
+/**
+ * Maps the pointer frame to sim-world movement: screen +x = right, +y = up,
+ * aim 0 = straight up the screen. The rendered world is mirror-handed, so
+ * screen-right is -east. Used by input.ts and covered by tests.
+ */
+export function screenMoveVector(aim: number, screenX: number, screenY: number): { x: number; y: number } {
+  const length = Math.min(1, Math.hypot(screenX, screenY))
+  if (length < 0.06) return { x: 0, y: 0 }
+  const beta = aim + Math.atan2(screenX, screenY)
+  return { x: -Math.sin(beta) * length, y: Math.cos(beta) * length }
 }
 
 /** Great-circle distance between two surface points, in surface units. */
@@ -839,7 +852,7 @@ function updateSurface(game: Game, dt: number, input: Input) {
   if (length > 0.12) {
     const nx = input.x / Math.max(1, length)
     const ny = input.y / Math.max(1, length)
-    player.facing = Math.atan2(nx, ny)
+    if (input.face === undefined) player.facing = Math.atan2(nx, ny)
     if (onGround) {
       player.vN = ny * speed
       player.vE = nx * speed
@@ -851,6 +864,12 @@ function updateSurface(game: Game, dt: number, input: Input) {
   } else if (onGround) {
     player.vN = 0
     player.vE = 0
+  }
+
+  // the pointer aims the janitor: swing around toward it at a fixed rate
+  if (input.face !== undefined) {
+    const diff = wrapAngle(input.face - player.facing)
+    player.facing = wrapAngle(player.facing + Math.sign(diff) * Math.min(Math.abs(diff), SURFACE_TURN_RATE * dt))
   }
 
   player.lat = clamp(player.lat + (player.vN * dt) / SURFACE_RADIUS, -POLE_CLAMP, POLE_CLAMP)
@@ -972,6 +991,7 @@ export function updateHazards(game: Game, dt: number) {
 }
 
 const SCRATCH_FORWARD: Vec3 = { x: 0, y: 0, z: 0 }
+const SCRATCH_RIGHT: Vec3 = { x: 0, y: 0, z: 0 }
 
 function collideBodies(game: Game) {
   const ship = game.ship
@@ -1053,6 +1073,9 @@ function updateShip(game: Game, dt: number, input: Input) {
 
   const forward = quatForward(ship.q, SCRATCH_FORWARD)
   const thrust = clamp(input.y, -1, 1)
+  // lateral strafe: screen-right is the ship's -X axis (same mirror as the surface)
+  const strafe = clamp(input.x, -1, 1) * SHIP_STRAFE_SPEED
+  const side = quatRight(ship.q, SCRATCH_RIGHT)
   const boosting = input.boost || input.hop
   ship.thrust = thrust
   ship.boosting = boosting && thrust > 0.12
@@ -1064,9 +1087,9 @@ function updateShip(game: Game, dt: number, input: Input) {
   const previousVx = ship.vx
   const previousVy = ship.vy
   const previousVz = ship.vz
-  ship.vx += (forward.x * targetSpeed - ship.vx) * k
-  ship.vy += (forward.y * targetSpeed - ship.vy) * k
-  ship.vz += (forward.z * targetSpeed - ship.vz) * k
+  ship.vx += (forward.x * targetSpeed - side.x * strafe - ship.vx) * k
+  ship.vy += (forward.y * targetSpeed - side.y * strafe - ship.vy) * k
+  ship.vz += (forward.z * targetSpeed - side.z * strafe - ship.vz) * k
   // trapezoidal integration of the damped velocity: matches the analytic
   // solution to O(dt^2), so 60/120/144 Hz produce the same flight path
   ship.x += (previousVx + ship.vx) * 0.5 * dt

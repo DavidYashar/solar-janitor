@@ -12,6 +12,7 @@ import {
   landTarget, landingZone, latLonDistance, maxOxygen, nearLander, objective, placePlayerAtLander,
   planetJunkTotal, progressSummary, rankForScore, remainingCount, resetHazards, scannerPings,
   shipSpeed, step, takeOff, undock, updateHazards, walkSpeed, systemReport,
+  screenMoveVector, wrapAngle,
 } from '../src/sim/game.ts'
 import { PLANETS, landerSite } from '../src/sim/planets.ts'
 import { SHOP_ITEMS } from '../src/sim/economy.ts'
@@ -567,6 +568,36 @@ test('docking delivers the hold and the carry, paying credits and score', () => 
   assert.equal(holdCount(game), 0)
   assert.equal(carryCount(game), 0)
   assert.equal(game.bestBatch, 7)
+})
+
+test('the pointer aims the janitor and the arrows move in that frame', () => {
+  const game = running()
+  const aim = 0.9 // pointer ~52 degrees clockwise of screen-up
+  const withFace = face => ({ x: 0, y: 0, face, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false })
+  advance(game, 1.2, withFace(aim))
+  assert.ok(Math.abs(wrapAngle(game.player.facing - aim)) < 0.05, 'the janitor faces the pointer')
+  const lat0 = game.player.lat
+  advance(game, 2, { x: 0, y: 1, face: aim, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false })
+  assert.ok(game.player.lat > lat0 + 0.2, 'forward walks along the world vector the input layer composed')
+  assert.ok(Math.abs(wrapAngle(game.player.facing - aim)) < 0.05, 'movement does not steal the facing from the pointer')
+})
+
+test('screen arrows map into the mirror-handed world', () => {
+  const up = screenMoveVector(0, 0, 1)
+  assert.ok(Math.abs(up.x) < 1e-9 && Math.abs(up.y - 1) < 1e-9, 'pointer up + forward walks north')
+  const right = screenMoveVector(0, 1, 0)
+  assert.ok(right.x < -0.99 && Math.abs(right.y) < 1e-9, 'right side-step is screen-right (-east)')
+  const atPointer = screenMoveVector(Math.PI / 2, 0, 1)
+  assert.ok(atPointer.x < -0.99 && Math.abs(atPointer.y) < 1e-9, 'forward walks toward the pointer')
+  assert.deepEqual(screenMoveVector(0, 0, 0), { x: 0, y: 0 })
+})
+
+test('space strafe slides the ship sideways without turning the nose', () => {
+  const game = flying(71)
+  advance(game, 2, { x: 1, y: 0, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false })
+  assert.ok(game.ship.vx < -8, `expected screen-right drift, got vx=${game.ship.vx.toFixed(1)}`)
+  assert.ok(Math.abs(game.ship.vz) < 8, 'no forward speed from strafing alone')
+  assert.ok(Math.abs(game.ship.q.x) < 1e-9 && Math.abs(game.ship.q.z) < 1e-9, 'the nose is unchanged')
 })
 
 test('partial cleanups persist per planet across takeoff and landing', () => {

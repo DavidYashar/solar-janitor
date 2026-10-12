@@ -409,12 +409,13 @@ export function createHud(callbacks: HudCallbacks): Hud {
           ${saveInfo ? `<p class="save-note">${escapeHtml(saveInfo)}</p>` : ''}
           <p class="best">${best > 0 ? `BEST ${best.toLocaleString()}` : 'NO SHIFTS LOGGED YET'}</p>
           <div class="howto">
-            <div><b>ON FOOT</b><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk the whole planet ·
-              <kbd>Shift</kbd> sprint · <kbd>Space</kbd> hop</div>
+            <div><b>ON FOOT</b>point with the mouse · <kbd>W</kbd>/<kbd>↑</kbd> walks where you point ·
+              <kbd>A</kbd>/<kbd>D</kbd>/<kbd>←</kbd>/<kbd>→</kbd> side-step · <kbd>Shift</kbd> sprint</div>
             <div><b>VACUUM</b>walk near junk to suck it up - up to ${CARRY_SLOTS} pieces</div>
             <div><b>LANDER</b>stand in the ring to refill O<sub>2</sub> · <kbd>F</kbd> stows your haul or lifts off</div>
-            <div><b>FLY</b><kbd>W</kbd>/<kbd>S</kbd> thrust · <b>mouse</b> or <kbd>arrows</kbd> pitch &amp; yaw ·
-              <kbd>A</kbd>/<kbd>D</kbd> roll · <kbd>Shift</kbd> boost</div>
+            <div><b>FLY</b>the mouse is your pointer — the nose follows it ·
+              <kbd>W</kbd>/<kbd>S</kbd>/<kbd>↑</kbd>/<kbd>↓</kbd> thrust · <kbd>←</kbd>/<kbd>→</kbd> strafe ·
+              <kbd>A</kbd>/<kbd>D</kbd> roll</div>
             <div><b>DOCK</b>fly to the ISS and press <kbd>F</kbd> to deliver, shop and gear up</div>
             <div><b>LAND</b>fly to a planet, slow down and press <kbd>F</kbd> to land</div>
             <div><b>HAZARDS</b>Moon meteor showers · Mars dust storms · watch the warnings</div>

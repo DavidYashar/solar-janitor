@@ -110,7 +110,7 @@ let accumulator = 0
 let lastFrame = performance.now()
 let shopOpen = false
 let fadeOut = 0
-let looking = false
+let spaceHintUntil = 0
 let saveAvailable = loadSave() !== null
 
 function recordBest() {
@@ -128,7 +128,6 @@ function startRun(next: Game) {
   lastMode = game.mode
   accumulator = 0
   shopOpen = false
-  looking = false
   fadeOut = 1
   hud.hideOverlay()
   hud.setMuted(audio.isMuted())
@@ -195,7 +194,6 @@ function togglePause() {
     hud.hideOverlay()
     audio.play('ui')
   }
-  input.setMouseLook(game.mode === 'space' && game.phase === 'playing')
 }
 
 function toggleMute() {
@@ -270,9 +268,6 @@ const input = createInput({
   toggleMute,
   boost: () => {
     if (game.phase === 'playing' && game.mode === 'space') audio.play('thrust', 0.6)
-  },
-  lookActive: active => {
-    looking = active
   },
 })
 
@@ -492,7 +487,7 @@ function syncMode() {
   const previous = lastMode
   lastMode = game.mode
   fadeOut = game.mode === 'docked' ? 0.5 : 1
-  input.setMouseLook(game.mode === 'space' && game.phase === 'playing')
+  if (game.mode === 'space') spaceHintUntil = performance.now() + 12000
   if (game.mode === 'docked') {
     shopOpen = true
     hud.showShop(game)
@@ -512,7 +507,7 @@ function frame(now: number) {
   requestAnimationFrame(frame)
   const dt = Math.min(0.25, Math.max(0, (now - lastFrame) / 1000))
   lastFrame = now
-  const command: Input = input.read(dt)
+  const command: Input = input.read({ mode: game.mode, facing: game.player.facing })
 
   if (game.phase === 'playing') {
     accumulator += dt
@@ -546,7 +541,7 @@ function frame(now: number) {
   hud.update(frameData)
   const touch = input.isTouch()
   hud.setTouch(touch && game.phase !== 'ready')
-  hud.setLookHint(game.mode === 'space' && game.phase === 'playing' && !touch && !looking)
+  hud.setLookHint(game.mode === 'space' && game.phase === 'playing' && !touch && performance.now() < spaceHintUntil)
   input.setTouchLabels({
     hop: game.mode === 'surface' ? 'HOP' : 'BOOST',
     action: context,
@@ -593,14 +588,12 @@ document.addEventListener('visibilitychange', () => {
     writeSave()
     game.phase = 'paused'
     hud.showPause(game)
-    input.setMouseLook(false)
     audio.setLoop('vacuum', 0)
     audio.setLoop('thruster', 0)
     audio.setLoop('wind', 0)
   }
 })
 
-input.setMouseLook(false)
 hud.setMuted(audio.isMuted())
 world.setReducedMotion(reducedMotion())
 {

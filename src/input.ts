@@ -1,4 +1,4 @@
-import { SHIP_PITCH_RATE, SHIP_YAW_RATE } from './sim/config.ts'
+import { screenMoveVector } from './sim/game.ts'
 import type { Input } from './sim/types.ts'
 
 export interface InputActions {
@@ -7,8 +7,12 @@ export interface InputActions {
   togglePause(): void
   toggleMute(): void
   boost(): void
-  /** pointer lock engaged or released */
-  lookActive(active: boolean): void
+}
+
+export interface InputContext {
+  mode: 'surface' | 'space' | 'docked'
+  /** the janitor's current facing in sim-world radians */
+  facing: number
 }
 
 export interface TouchLabels {
@@ -20,19 +24,18 @@ export interface TouchLabels {
 }
 
 export interface InputSource {
-  /** dt is the real frame time: pointer-lock deltas become rotation rates */
-  read(dt: number): Input
+  read(ctx: InputContext): Input
   isTouch(): boolean
-  /** mouse look only makes sense while flying */
-  setMouseLook(enabled: boolean): void
   setTouchLabels(labels: TouchLabels): void
   dispose(): void
 }
 
-/** radians of ship rotation per pixel of pointer movement */
-const MOUSE_SENSITIVITY = 0.0028
-/** a finger drag is shorter than a mouse swipe, so it gets a bonus */
-const TOUCH_LOOK_GAIN = 2.4
+/** aim deadzone: below this fraction of the viewport the pointer keeps its heading */
+const AIM_DEAD = 0.08
+/** aim offset that commands the full steering rate */
+const AIM_FULL = 0.45
+/** units of aim per pixel of look-pad drag (touch) */
+const PAD_LOOK_GAIN = 0.006
 
 export function createInput(actions: InputActions): InputSource {
   const held = new Set<string>()
@@ -42,9 +45,11 @@ export function createInput(actions: InputActions): InputSource {
   let hopHeld = false
   let touchRoll = 0
   let boostQueued = false
-  let mouseDx = 0
-  let mouseDy = 0
-  let mouseLook = false
+  /** pointer aim, -1..1: +x = screen-right, +y = screen-up */
+  let aimX = 0
+  let aimY = 0
+  /** last pointer heading in screen radians: 0 = straight up, + clockwise */
+  let aimAngle: number | null = null
 
   function isTypingTarget(target: EventTarget | null): boolean {
     const element = target as HTMLElement | null
@@ -94,8 +99,6 @@ export function createInput(actions: InputActions): InputSource {
     touchRoll = 0
     stickX = 0
     stickY = 0
-    mouseDx = 0
-    mouseDy = 0
     setKnob(0, 0)
   }
 
@@ -103,35 +106,17 @@ export function createInput(actions: InputActions): InputSource {
   window.addEventListener('keyup', onKeyUp)
   window.addEventListener('blur', onBlur)
 
-  // -------------------------------------------------------------- mouse look
-  const scene = document.getElementById('scene')
-
-  function pointerLocked(): boolean {
-    return document.pointerLockElement === scene?.querySelector('canvas') || !!document.pointerLockElement
-  }
-
-  scene?.addEventListener('pointerdown', event => {
-    if (!mouseLook || event.pointerType === 'touch') return
-    if (pointerLocked()) return
-    const canvas = scene.querySelector('canvas')
-    if (canvas && 'requestPointerLock' in canvas) {
-      void (canvas as HTMLCanvasElement).requestPointerLock()
-    }
-  })
-
+  // ------------------------------------------------------------- pointer aim
+  // The mouse is the pointer: its screen position sets the aim direction.
+  // The janitor faces it, the ship steers toward it, and the arrow keys move
+  // left/right and front/back relative to it. No pointer lock — the cursor
+  // stays visible so the player always sees where they are pointing.
   function onPointerMove(event: PointerEvent) {
     if (event.pointerType === 'touch') return
-    if (!mouseLook || !pointerLocked()) return
-    mouseDx += event.movementX ?? 0
-    mouseDy += event.movementY ?? 0
+    aimX = Math.max(-1, Math.min(1, (event.clientX / window.innerWidth) * 2 - 1))
+    aimY = Math.max(-1, Math.min(1, 1 - (event.clientY / window.innerHeight) * 2))
   }
   window.addEventListener('pointermove', onPointerMove)
-
-  document.addEventListener('pointerlockchange', () => {
-    actions.lookActive(pointerLocked())
-    if (!pointerLocked()) window.removeEventListener('pointermove', onPointerMove)
-    else window.addEventListener('pointermove', onPointerMove)
-  })
 
   // ------------------------------------------------------------------ touch
   const stick = document.getElementById('stick')
@@ -195,8 +180,8 @@ export function createInput(actions: InputActions): InputSource {
   })
   lookPad?.addEventListener('pointermove', event => {
     if (event.pointerId !== lookPointerId) return
-    mouseDx += (event.clientX - lookX) * TOUCH_LOOK_GAIN
-    mouseDy += (event.clientY - lookY) * TOUCH_LOOK_GAIN
+    aimX = Math.max(-1, Math.min(1, aimX + (event.clientX - lookX) * PAD_LOOK_GAIN))
+    aimY = Math.max(-1, Math.min(1, aimY + (lookY - event.clientY) * PAD_LOOK_GAIN))
     lookX = event.clientX
     lookY = event.clientY
   })
@@ -263,39 +248,38 @@ export function createInput(actions: InputActions): InputSource {
   const clampInput = (value: number) => Math.max(-1, Math.min(1, value))
 
   return {
-    read(dt) {
-      const dtSafe = Math.max(0.008, Math.min(0.1, dt))
-      // The rendered world is mirror-handed: the sim's "east" appears on the
-      // left of the screen, so the strafe axis is negated to make D move the
-      // janitor toward the screen's right (roll and yaw are unaffected).
-      let x = down('KeyA') - down('KeyD') + down('ArrowLeft') - down('ArrowRight')
-      let y = down('KeyW') - down('KeyS') + down('ArrowUp') - down('ArrowDown')
-      if (Math.abs(stickX) > 0.12 || Math.abs(stickY) > 0.12) {
-        x = -stickX
-        y = stickY
-      }
-
-      // pointer movement becomes an angular rate so one frame of input applies
-      // exactly the rotation the player asked for
-      let pitch = down('ArrowUp') - down('ArrowDown')
-      let yaw = down('ArrowRight') - down('ArrowLeft')
-      if (mouseDx !== 0 || mouseDy !== 0) {
-        yaw += (mouseDx * MOUSE_SENSITIVITY) / (SHIP_YAW_RATE * dtSafe)
-        pitch += (-mouseDy * MOUSE_SENSITIVITY) / (SHIP_PITCH_RATE * dtSafe)
-        mouseDx = 0
-        mouseDy = 0
-      }
-
-      const roll = down('KeyD') - down('KeyA') + touchRoll
+    read(ctx) {
       const boost = boostQueued || held.has('ShiftLeft') || held.has('ShiftRight')
       const hop = hopHeld || held.has('Space')
       boostQueued = false
 
+      // pointer heading in screen radians: 0 = straight up, + clockwise
+      if (Math.hypot(aimX, aimY) > AIM_DEAD) aimAngle = Math.atan2(aimX, aimY)
+      if (aimAngle === null) aimAngle = -ctx.facing
+
+      if (ctx.mode === 'surface') {
+        // arrow keys and the stick work in screen space; screenMoveVector
+        // rotates them into the pointer's frame (mirror-handed world)
+        const screenX = down('KeyD') - down('KeyA') + down('ArrowRight') - down('ArrowLeft') + stickX
+        const screenY = down('KeyW') - down('KeyS') + down('ArrowUp') - down('ArrowDown') + stickY
+        const move = screenMoveVector(aimAngle, screenX, screenY)
+        return { x: move.x, y: move.y, face: -aimAngle, pitch: 0, yaw: 0, roll: 0, boost, hop }
+      }
+
+      // space: the pointer steers the nose, the arrows fly and side-step
+      const ramp = (value: number) => {
+        const magnitude = Math.abs(value)
+        if (magnitude <= AIM_DEAD) return 0
+        return Math.sign(value) * Math.min(1, (magnitude - AIM_DEAD) / (AIM_FULL - AIM_DEAD))
+      }
+      const thrust = down('KeyW') - down('KeyS') + down('ArrowUp') - down('ArrowDown') + stickY
+      const strafe = down('ArrowRight') - down('ArrowLeft') + stickX
+      const roll = down('KeyD') - down('KeyA') + touchRoll
       return {
-        x: clampInput(x),
-        y: clampInput(y),
-        pitch: clampInput(pitch),
-        yaw: clampInput(yaw),
+        x: clampInput(strafe),
+        y: clampInput(thrust),
+        pitch: ramp(aimY),
+        yaw: ramp(aimX),
         roll: clampInput(roll),
         boost,
         hop,
@@ -303,14 +287,6 @@ export function createInput(actions: InputActions): InputSource {
     },
     isTouch() {
       return touchActive
-    },
-    setMouseLook(enabled) {
-      mouseLook = enabled
-      if (!enabled) {
-        mouseDx = 0
-        mouseDy = 0
-        if (pointerLocked()) document.exitPointerLock()
-      }
     },
     setTouchLabels(labels) {
       if (hopButton) {

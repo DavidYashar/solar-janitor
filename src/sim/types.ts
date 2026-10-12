@@ -105,10 +105,15 @@ export interface GameEvent {
 }
 
 export interface Input {
-  /** -1..1 strafe (surface: east, space: unused) */
+  /** -1..1 sideways movement (surface: screen left/right, space: lateral strafe) */
   x: number
-  /** -1..1 forward (surface: north, space: thrust) */
+  /** -1..1 forward movement (surface: screen front/back, space: thrust) */
   y: number
+  /**
+   * Desired facing in sim-world radians (surface only). With a pointer the
+   * janitor turns toward it; without one it faces the movement direction.
+   */
+  face?: number
   /** -1..1 pitch input (space only) */
   pitch: number
   /** -1..1 yaw input (space only) */
