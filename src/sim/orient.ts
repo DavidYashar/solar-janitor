@@ -154,7 +154,7 @@ export interface EulerFlight {
   pitch: number
   /** -PI .. PI */
   yaw: number
-  /** -PI .. PI, 0 = wings level with the orbital plane */
+  /** -PI .. PI, 0 = wings level with the orbital plane, positive = banked right on screen */
   roll: number
 }
 
@@ -163,13 +163,15 @@ export function quatToFlightAngles(q: Quat): EulerFlight {
   const up = quatUp(q)
   const yaw = Math.atan2(forward.x, forward.z)
   const pitch = Math.asin(Math.max(-1, Math.min(1, forward.y)))
-  // reference "level" up: the world up vector with the forward component removed
-  const refRightLength = Math.hypot(forward.z, forward.x) || 1
-  const refRightX = forward.z / refRightLength
-  const refRightZ = -forward.x / refRightLength
-  const refUpX = forward.y * refRightZ
-  const refUpY = forward.z * refRightX - forward.x * refRightZ
-  const refUpZ = -forward.y * refRightX
+  // Reference frame for bank: the chase camera looks along +forward, so the
+  // on-screen right is -(world x) style "level right" of the current heading.
+  const rightLength = Math.hypot(forward.z, forward.x) || 1
+  const refRightX = -forward.z / rightLength
+  const refRightZ = forward.x / rightLength
+  // refUp = refRight x forward
+  const refUpX = -refRightZ * forward.y
+  const refUpY = refRightZ * forward.x - refRightX * forward.z
+  const refUpZ = refRightX * forward.y
   const dotRight = up.x * refRightX + up.z * refRightZ
   const dotUp = up.x * refUpX + up.y * refUpY + up.z * refUpZ
   const roll = Math.atan2(dotRight, dotUp)

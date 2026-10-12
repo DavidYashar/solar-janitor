@@ -478,10 +478,9 @@ export function canDock(game: Game): boolean {
   return game.mode === 'space' && !game.transition && distance3(game.ship, game.dockPos) <= dockRadius(game)
 }
 
-/** The landable planet the ship is currently inside the landing zone of, or -1. */
-export function landTarget(game: Game): number {
+/** The landable planet the ship is inside the landing zone of, or -1. */
+export function landingZone(game: Game): number {
   if (game.mode !== 'space' || game.transition) return -1
-  if (game.ship.speed > LAND_MAX_SPEED) return -1
   let best = -1
   let bestDistance = Infinity
   for (const planet of PLANETS) {
@@ -494,6 +493,13 @@ export function landTarget(game: Game): number {
     }
   }
   return best
+}
+
+/** The planet the ship can land on right now (inside the zone and slow enough). */
+export function landTarget(game: Game): number {
+  const zone = landingZone(game)
+  if (zone < 0 || game.ship.speed > LAND_MAX_SPEED) return -1
+  return zone
 }
 
 export function canLand(game: Game): boolean {
@@ -534,6 +540,7 @@ export function contextLabel(game: Game): string {
   if (game.mode === 'space') {
     if (canDock(game)) return 'DOCK'
     if (canLand(game)) return 'LAND'
+    if (landingZone(game) >= 0) return 'SLOW DOWN TO LAND'
     const target = objective(game)
     return target.kind === 'iss' ? 'FLY TO THE ISS' : `FLY TO ${target.label}`
   }
@@ -1027,18 +1034,20 @@ function updateShip(game: Game, dt: number, input: Input) {
   const yaw = clamp(input.yaw, -1, 1)
   const roll = clamp(input.roll, -1, 1)
 
-  // local-frame angular velocity: +pitch input pitches the nose up, +roll rolls right
+  // Local-frame angular velocity. Screen convention: the chase camera looks
+  // along the nose, so +yaw input turns the nose right on screen, +pitch input
+  // lifts it, +roll input banks the ship right (right side dips).
   quatIntegrate(ship.q, {
     x: -pitch * SHIP_PITCH_RATE,
-    y: yaw * SHIP_YAW_RATE,
-    z: -roll * SHIP_ROLL_RATE,
+    y: -yaw * SHIP_YAW_RATE,
+    z: roll * SHIP_ROLL_RATE,
   }, dt)
 
   // arcade auto-bank back toward level flight when the player is not rolling
   if (Math.abs(roll) < 0.2) {
     const bank = quatToFlightAngles(ship.q).roll
     if (Math.abs(bank) > 1e-4) {
-      quatIntegrate(ship.q, { x: 0, y: 0, z: bank * SHIP_LEVEL_K }, dt)
+      quatIntegrate(ship.q, { x: 0, y: 0, z: -bank * SHIP_LEVEL_K }, dt)
     }
   }
 

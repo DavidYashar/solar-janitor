@@ -9,7 +9,7 @@ import {
 import {
   allPlanetsClean, bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
   deliverValue, deliveredCount, deposit, dock, hasRelic, hasUpgrade, holdCount, holdSlots, hopSpeed, land,
-  landTarget, latLonDistance, maxOxygen, nearLander, objective, placePlayerAtLander,
+  landTarget, landingZone, latLonDistance, maxOxygen, nearLander, objective, placePlayerAtLander,
   planetJunkTotal, progressSummary, rankForScore, remainingCount, resetHazards, scannerPings,
   shipSpeed, step, takeOff, undock, updateHazards, walkSpeed, systemReport,
 } from '../src/sim/game.ts'
@@ -17,7 +17,7 @@ import { PLANETS, landerSite } from '../src/sim/planets.ts'
 import { SHOP_ITEMS } from '../src/sim/economy.ts'
 import { decodeSave, encodeSave, restoreSave, serializeSave } from '../src/sim/save.ts'
 import { dailySeed } from '../src/sim/rng.ts'
-import { quatForward, quatToFlightAngles } from '../src/sim/orient.ts'
+import { quatForward, quatToFlightAngles, quatUp } from '../src/sim/orient.ts'
 
 const idle = { x: 0, y: 0, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false }
 const STEP = 1 / 120
@@ -223,12 +223,13 @@ test('pitch, yaw and roll inputs drive a full-freedom quaternion', () => {
   advance(yawed, 0.5, { ...idle, yaw: 1 })
   const yawForward = quatForward(yawed.ship.q)
   assert.ok(Math.abs(yawForward.y) < 1e-9, 'pure yaw keeps the nose level')
-  assert.ok(yawForward.x > 0.5, 'yaw +1 swings the nose toward +x')
+  assert.ok(yawForward.x < -0.5, 'yaw +1 swings the nose toward screen right (world -x)')
 
   const rolled = flying(42)
   advance(rolled, 0.5, { ...idle, roll: 1 })
   const rollAngle = quatToFlightAngles(rolled.ship.q).roll
   assert.ok(rollAngle > 0.6, `roll +1 banks right (got ${rollAngle.toFixed(3)})`)
+  assert.ok(quatUp(rolled.ship.q).x < 0, 'the up vector leans toward screen right')
   const rolledForward = quatForward(rolled.ship.q)
   assert.ok(Math.abs(rolledForward.y) < 1e-9, 'rolling never changes the facing vector')
 })
@@ -297,8 +298,11 @@ test('landing needs a slow approach to the right planet', () => {
   assert.equal(landTarget(game), 2)
   game.ship.speed = 55
   assert.equal(landTarget(game), -1, 'too fast to land')
+  assert.equal(landingZone(game), 2, 'but still inside the zone')
+  assert.equal(contextLabel(game), 'SLOW DOWN TO LAND')
   game.ship.speed = 0
   assert.equal(landTarget(game), 2)
+  assert.equal(contextLabel(game), 'LAND')
   assert.equal(canLand(game), true)
   assert.ok(land(game))
   assert.equal(game.transition.kind, 'landing')
@@ -948,4 +952,45 @@ test('docking needs proximity to the ISS airlock', () => {
   assert.ok(undock(game))
   assert.equal(game.mode, 'space')
   assert.ok(game.ship.speed > 0, 'undocking pushes the tug off the hatch')
+})
+
+test('a full three-planet run plays through to SYSTEM RESTORED', () => {
+  const game = running(77)
+  for (const planet of PLANETS) {
+    if (game.planetId !== planet.id) onPlanet(game, planet.id)
+    assert.equal(game.planetId, planet.id)
+
+    const groundLeft = () => game.junk.filter(entry => entry.planet === planet.id && entry.status === 'ground').length
+    let guard = 0
+    while (groundLeft() > 0 && guard++ < 12) {
+      // walk the whole planet, one piece at a time, then stow the haul
+      for (const item of game.junk) {
+        if (item.planet !== planet.id || item.status !== 'ground') continue
+        park(game, item.lat, item.lon)
+        step(game, STEP, idle)
+      }
+      placePlayerAtLander(game)
+      deposit(game)
+    }
+    assert.equal(groundLeft(), 0, `${planet.name} has nothing left on the ground`)
+    assert.equal(holdCount(game), planet.junkCount, `${planet.name} is fully stowed`)
+
+    assert.ok(takeOff(game))
+    advance(game, TRANSITION_TIME + 0.1)
+    assert.equal(game.mode, 'space')
+    standOnDock(game)
+    assert.ok(dock(game))
+    if (planet.id < PLANETS.length - 1) {
+      assert.ok(undock(game))
+      assert.equal(game.phase, 'playing', `${planet.name} delivered, run continues`)
+    }
+  }
+
+  assert.equal(game.phase, 'finished')
+  assert.equal(game.outcome, 'won')
+  assert.equal(game.planetsCleaned, 3)
+  assert.equal(game.relicTools.length, 3, 'all three relics came home')
+  assert.ok(allPlanetsClean(game))
+  assert.ok(game.score > 5000, `a full run is worth real points (${game.score})`)
+  assert.notEqual(rankForScore(game.score), 'BRONZE', 'finishing the system is at least SILVER')
 })

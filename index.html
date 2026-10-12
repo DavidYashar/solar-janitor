@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#060a16" />
-    <meta name="description" content="Solar System Janitor - a 3D low-gravity salvage arcade game. Sweep junk off Earth, haul it to the ISS before your oxygen runs out, and spend your credits on gear." />
+    <meta name="description" content="Solar System Janitor - a 3D low-gravity salvage arcade game. Sweep the junk off Earth, the Moon and Mars, haul it to the ISS before your oxygen runs out, and spend the credits on gear." />
     <title>Solar System Janitor</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./src/style.css" />
@@ -39,14 +39,20 @@
             <span class="meter-label">SUIT</span>
             <div class="bar"><i id="health-fill" class="fill health"></i></div>
           </div>
+          <div id="radar-wrap" class="radar-wrap hidden">
+            <canvas id="radar" class="radar" width="132" height="132"></canvas>
+            <span id="radar-note" class="radar-note">SCANNER</span>
+          </div>
         </div>
 
         <div class="hud-right">
           <div id="carry" class="carry"></div>
           <div id="hold" class="hold">HOLD 0/30</div>
+          <div id="system" class="system hidden"></div>
         </div>
 
         <div class="hud-bottom">
+          <div id="hazard" class="hazard hidden"></div>
           <div id="compass" class="compass">
             <i id="compass-arrow" class="needle"></i>
             <b id="compass-label" class="compass-label">LANDER</b>
@@ -54,12 +60,20 @@
           <div id="prompt" class="prompt"></div>
         </div>
 
+        <div id="look-hint" class="look-hint hidden">CLICK TO LOOK · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> +
+          <kbd>arrows</kbd> fly too</div>
+
         <div id="toasts" class="toasts"></div>
       </div>
 
       <div id="touch" class="touch hidden">
         <div id="stick" class="stick"><i id="stick-knob"></i></div>
+        <div id="touch-look" class="touch-look"></div>
         <div class="touch-actions">
+          <div class="roll-row">
+            <button id="roll-left" class="touch-btn small" type="button">ROLL ◀</button>
+            <button id="roll-right" class="touch-btn small" type="button">ROLL ▶</button>
+          </div>
           <button id="touch-hop" class="touch-btn" type="button">HOP</button>
           <button id="touch-act" class="touch-btn context" type="button">ACTION</button>
         </div>

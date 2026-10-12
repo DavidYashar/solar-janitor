@@ -1,13 +1,16 @@
 export type SoundKind =
   | 'pickup' | 'deposit' | 'deliver' | 'buy' | 'dock' | 'undock' | 'takeoff' | 'land'
   | 'hop' | 'oxygen' | 'rescue' | 'block' | 'clean' | 'win' | 'lose' | 'ui' | 'scrape' | 'thrust'
+  | 'meteor' | 'storm' | 'relic' | 'hint'
+
+export type LoopKind = 'vacuum' | 'thruster' | 'wind'
 
 export interface Audio {
   unlock(): void
   play(kind: SoundKind, strength?: number): void
   setMuted(muted: boolean): void
   isMuted(): boolean
-  setLoop(kind: 'vacuum' | 'thruster', intensity: number): void
+  setLoop(kind: LoopKind, intensity: number): void
   stop(): void
 }
 
@@ -78,6 +81,20 @@ const TONES: Record<string, Tone[]> = {
   ],
   ui: [{ wave: 'triangle', from: 440, to: 660, duration: 0.08, gain: 0.07 }],
   thrust: [{ wave: 'sine', from: 240, to: 760, duration: 0.16, gain: 0.1 }],
+  meteor: [
+    { wave: 'sawtooth', from: 1500, to: 260, duration: 0.55, gain: 0.12, noise: true },
+    { wave: 'sine', from: 110, to: 38, duration: 0.6, gain: 0.17, delay: 0.48 },
+  ],
+  storm: [
+    { wave: 'sawtooth', from: 140, to: 460, duration: 1.0, gain: 0.12, noise: true },
+    { wave: 'sine', from: 120, to: 68, duration: 1.2, gain: 0.1, delay: 0.22 },
+  ],
+  relic: [
+    { wave: 'triangle', from: 660, to: 990, duration: 0.16, gain: 0.1 },
+    { wave: 'triangle', from: 990, to: 1420, duration: 0.18, gain: 0.1, delay: 0.13 },
+    { wave: 'sine', from: 1320, to: 1980, duration: 0.55, gain: 0.1, delay: 0.3 },
+  ],
+  hint: [{ wave: 'square', from: 1180, to: 1420, duration: 0.07, gain: 0.05 }],
 }
 
 export function createAudio(): Audio {
@@ -87,15 +104,15 @@ export function createAudio(): Audio {
   let muted = false
 
   interface Loop {
-    kind: 'vacuum' | 'thruster'
+    kind: LoopKind
     gain: GainNode
     filter: BiquadFilterNode
     source: AudioBufferSourceNode
   }
 
   const loops: Loop[] = []
-  const loopTargets: Record<'vacuum' | 'thruster', number> = { vacuum: 0, thruster: 0 }
-  const loopFor = (kind: 'vacuum' | 'thruster') => loops.find(loop => loop.kind === kind)
+  const loopTargets: Record<LoopKind, number> = { vacuum: 0, thruster: 0, wind: 0 }
+  const loopFor = (kind: LoopKind) => loops.find(loop => loop.kind === kind)
 
   function ensure(): AudioContext | undefined {
     if (context) return context
@@ -117,9 +134,10 @@ export function createAudio(): Audio {
     }
 
     // vacuum: a soft filtered hiss; thruster: a low rumble
-    const specs: { kind: 'vacuum' | 'thruster'; type: BiquadFilterType; frequency: number; q: number }[] = [
+    const specs: { kind: LoopKind; type: BiquadFilterType; frequency: number; q: number }[] = [
       { kind: 'vacuum', type: 'bandpass', frequency: 520, q: 0.9 },
       { kind: 'thruster', type: 'lowpass', frequency: 420, q: 0.6 },
+      { kind: 'wind', type: 'bandpass', frequency: 760, q: 0.5 },
     ]
     for (const spec of specs) {
       const source = context.createBufferSource()
@@ -202,10 +220,10 @@ export function createAudio(): Audio {
       const loop = loopFor(kind)
       const ctx = context
       if (!loop || !ctx) return
-      const target = kind === 'vacuum' ? clamped * 0.055 : clamped * 0.11
+      const target = kind === 'vacuum' ? clamped * 0.055 : kind === 'wind' ? clamped * 0.06 : clamped * 0.11
       loop.gain.gain.setTargetAtTime(target, ctx.currentTime, 0.14)
       loop.filter.frequency.setTargetAtTime(
-        kind === 'vacuum' ? 420 + clamped * 380 : 300 + clamped * 320,
+        kind === 'vacuum' ? 420 + clamped * 380 : kind === 'wind' ? 520 + clamped * 620 : 300 + clamped * 320,
         ctx.currentTime,
         0.2,
       )
