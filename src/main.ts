@@ -184,9 +184,9 @@ function toMenu() {
 
 function togglePause() {
   if (game.phase === 'playing') {
+    writeSave()
     game.phase = 'paused'
     lastPhase = 'paused'
-    writeSave()
     hud.showPause(game)
     audio.play('ui')
   } else if (game.phase === 'paused') {
@@ -590,8 +590,8 @@ window.addEventListener('orientationchange', () => setTimeout(() => world.resize
 window.addEventListener('pagehide', () => writeSave())
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && game.phase === 'playing') {
-    game.phase = 'paused'
     writeSave()
+    game.phase = 'paused'
     hud.showPause(game)
     input.setMouseLook(false)
     audio.setLoop('vacuum', 0)
