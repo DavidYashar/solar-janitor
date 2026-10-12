@@ -155,7 +155,7 @@ export function createGame(options: CreateOptions = {}): Game {
     scrapeTimer: 0,
     planetId: options.planetId ?? 0,
     player: { lat: 0, lon: 0, h: 0, vH: 0, vN: 0, vE: 0, facing: 0, hopCooldown: 0 },
-    ship: { x: 0, y: 0, z: 0, vx: 0, vz: 0, yaw: 0, speed: 0 },
+    ship: { x: 0, y: 0, z: 0, vx: 0, vz: 0, yaw: 0, speed: 0, thrust: 0, boosting: false },
     earthAngle: 0,
     issAngle: 0,
     moonAngle: 0,
@@ -463,6 +463,8 @@ function snapShipToDock(game: Game) {
   ship.vx = 0
   ship.vz = 0
   ship.speed = 0
+  ship.thrust = 0
+  ship.boosting = false
 }
 
 // ------------------------------------------------------------------ updates
@@ -601,6 +603,8 @@ function updateShip(game: Game, dt: number, input: Input) {
   ship.yaw = wrapAngle(ship.yaw + clamp(input.x, -1, 1) * SHIP_YAW_RATE * dt)
   const thrust = clamp(input.y, -1, 1)
   const boosting = input.boost || input.hop
+  ship.thrust = thrust
+  ship.boosting = boosting && thrust > 0.12
   let targetSpeed = 0
   if (thrust > 0.12) targetSpeed = (boosting ? boostSpeed(game) : shipSpeed(game)) * thrust
   else if (thrust < -0.12) targetSpeed = SHIP_REVERSE_SPEED * thrust

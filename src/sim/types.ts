@@ -45,6 +45,9 @@ export interface Ship {
   vz: number
   yaw: number
   speed: number
+  /** last commanded thrust, -1..1 (visual + audio juice) */
+  thrust: number
+  boosting: boolean
 }
 
 export interface Transition {
