@@ -81,9 +81,12 @@ npm run preview   # serve the production build
 
 ## Status & stack
 
-M2 content complete — `npm test` green (53 tests: saves, per-planet persistence,
-hazard behaviour, quaternion flight maths, upgrade effects, ranks, determinism and
-a headless full three-world run), `tsc --noEmit` clean and the production build
+M2 content complete and **browser-verified end-to-end** (12 Oct — landed on all
+three worlds, rode out a Mars dust storm, unlocked Storm Sense, bought upgrades,
+and saved/continued across a reload, with zero console errors). `npm test` green
+(53 tests: saves, per-planet persistence, hazard behaviour, quaternion flight
+maths, upgrade effects, ranks, determinism and a headless full three-world run),
+`tsc --noEmit` clean and the production build
 clean (~608 kB JS / 162 kB gzipped, plus 13 kB CSS — well inside the payload
 budget). Stack: Vite, strict TypeScript, Three.js, Web Audio, localStorage. All
 geometry, textures and sounds are generated procedurally in code — no external
