@@ -1,11 +1,16 @@
 import * as THREE from 'three'
 import {
-  ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_COLORS, LANDER_RING_RADIUS, MOON_ORBIT, MOON_RADIUS,
-  OXYGEN_WARN, SUN_RADIUS, SURFACE_RADIUS, TAU,
+  EARTH_ORBIT, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_COLORS, MARS_ORBIT, METEOR_RADIUS, MOON_ORBIT,
+  MOON_RADIUS, OXYGEN_WARN, SUN_RADIUS, SURFACE_RADIUS, TAU,
 } from '../sim/config.ts'
 import { canDock, canLand, holdCount, nearLander, scoopRadius } from '../sim/game.ts'
-import { landerSite, planetById, surfaceHeight } from '../sim/planets.ts'
-import type { Game, GameEvent, JunkClass } from '../sim/types.ts'
+import { quatForward, quatUp } from '../sim/orient.ts'
+import { PLANETS, planetById } from '../sim/planets.ts'
+import type { PlanetTheme } from '../sim/planets.ts'
+import type { Game, GameEvent, JunkClass, Vec3 } from '../sim/types.ts'
+import {
+  buildSurface, canvasTexture, clampValue, dir, glowTexture, makeRnd, surfacePoint, type SurfaceBuild,
+} from './surfaces.ts'
 
 const MAX_PARTICLES = 300
 const MAX_JUNK = 160
@@ -33,37 +38,20 @@ interface Particle {
   centre: THREE.Vector3
 }
 
+/** Per-theme lighting: the sun sprite, the key light and the sky bounce. */
+interface ThemeLook {
+  keyLight: number
+  keyIntensity: number
+  skyLight: number
+  groundLight: number
+  hemiIntensity: number
+  fill: number
+  fillIntensity: number
+  sunTint: number
+  sunScale: number
+}
+
 // --------------------------------------------------------------- utilities
-
-function canvasTexture(
-  width: number, height: number, draw: (ctx: CanvasRenderingContext2D, rnd: () => number) => void,
-): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d')
-  let state = 991
-  const rnd = () => {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
-    return state / 4294967296
-  }
-  if (ctx) draw(ctx, rnd)
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.anisotropy = 2
-  return texture
-}
-
-function glowTexture(inner: string, outer: string): THREE.CanvasTexture {
-  return canvasTexture(256, 256, ctx => {
-    const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128)
-    gradient.addColorStop(0, inner)
-    gradient.addColorStop(0.3, inner)
-    gradient.addColorStop(1, outer)
-    ctx.fillStyle = gradient
-    ctx.fillRect(0, 0, 256, 256)
-  })
-}
 
 function makeLabel(text: string, color = '#dff2ff'): THREE.Sprite {
   const texture = canvasTexture(320, 96, ctx => {
@@ -85,23 +73,10 @@ function makeLabel(text: string, color = '#dff2ff'): THREE.Sprite {
   )
 }
 
-function dir(lat: number, lon: number, target = new THREE.Vector3()): THREE.Vector3 {
-  const cosLat = Math.cos(lat)
-  return target.set(cosLat * Math.cos(lon), Math.sin(lat), cosLat * Math.sin(lon))
-}
-
-function surfacePoint(lat: number, lon: number, radius: number, target = new THREE.Vector3()): THREE.Vector3 {
-  return dir(lat, lon, target).multiplyScalar(radius)
-}
-
 function basisFor(up: THREE.Vector3, forward: THREE.Vector3, right: THREE.Vector3): THREE.Matrix4 {
   right.crossVectors(up, forward).normalize()
   forward.crossVectors(right, up).normalize()
   return new THREE.Matrix4().makeBasis(right, up, forward)
-}
-
-function clampValue(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
 }
 
 // ------------------------------------------------------------------ world
@@ -122,6 +97,7 @@ export function createWorld(container: HTMLElement): World {
 
   const cameraPosition = new THREE.Vector3()
   const cameraTarget = new THREE.Vector3()
+  const cameraUp = new THREE.Vector3(0, 1, 0)
   let firstFrame = true
 
   // scratch vectors (reused every frame, no per-frame allocation)
@@ -130,6 +106,14 @@ export function createWorld(container: HTMLElement): World {
   const vC = new THREE.Vector3()
   const vD = new THREE.Vector3()
   const vE = new THREE.Vector3()
+  const shipForward = new THREE.Vector3(0, 0, 1)
+  const shipUp = new THREE.Vector3(0, 1, 0)
+  const shipOrigin = new THREE.Vector3()
+  const camWish = new THREE.Vector3()
+  const camLook = new THREE.Vector3()
+  const camUpWish = new THREE.Vector3(0, 1, 0)
+  const flightForward: Vec3 = { x: 0, y: 0, z: 1 }
+  const flightUp: Vec3 = { x: 0, y: 1, z: 0 }
   const dummy = new THREE.Object3D()
   const tmpColor = new THREE.Color()
 
@@ -301,7 +285,98 @@ export function createWorld(container: HTMLElement): World {
       roughness: 1,
     }),
   )
-  earthSystem.add(moon)
+
+  // --------------------------------------------------------- moon & mars
+  // the moon is its own body: the sim hands us a world position that already
+  // includes Earth's orbit, so it lives at the root of the space scene.
+  spaceScene.add(moon)
+  const moonLabel = makeLabel('MOON', '#dfe6ff')
+  moonLabel.position.set(0, MOON_RADIUS + 5, 0)
+  moon.add(moonLabel)
+
+  const marsSystem = new THREE.Group()
+  spaceScene.add(marsSystem)
+  const marsDef = planetById(2)
+
+  const mars = new THREE.Mesh(
+    new THREE.SphereGeometry(marsDef.spaceRadius, 64, 48),
+    new THREE.MeshStandardMaterial({
+      map: canvasTexture(512, 256, (ctx, rnd) => {
+        ctx.fillStyle = '#a34a2b'
+        ctx.fillRect(0, 0, 512, 256)
+        for (let blob = 0; blob < 26; blob++) {
+          ctx.fillStyle = `rgba(${86 + rnd() * 34 | 0}, ${42 + rnd() * 22 | 0}, ${28 + rnd() * 18 | 0}, 0.55)`
+          const cx = rnd() * 512
+          const cy = 30 + rnd() * 196
+          for (let piece = 0; piece < 7; piece++) {
+            ctx.beginPath()
+            ctx.ellipse(
+              cx + (rnd() - 0.5) * 74, cy + (rnd() - 0.5) * 52,
+              16 + rnd() * 46, 10 + rnd() * 26, rnd() * TAU, 0, TAU,
+            )
+            ctx.fill()
+          }
+        }
+        for (let streak = 0; streak < 20; streak++) {
+          ctx.fillStyle = `rgba(${216 + rnd() * 34 | 0}, ${148 + rnd() * 44 | 0}, ${104 + rnd() * 34 | 0}, 0.26)`
+          ctx.beginPath()
+          ctx.ellipse(rnd() * 512, 20 + rnd() * 216, 22 + rnd() * 72, 8 + rnd() * 22, rnd() * 0.7, 0, TAU)
+          ctx.fill()
+        }
+        ctx.fillStyle = 'rgba(242, 247, 255, 0.92)'
+        ctx.fillRect(0, 0, 512, 13)
+        ctx.fillRect(0, 243, 512, 13)
+        ctx.fillStyle = 'rgba(242, 247, 255, 0.45)'
+        for (let i = 0; i < 26; i++) {
+          ctx.beginPath()
+          ctx.ellipse(rnd() * 512, 6 + rnd() * 14, 14 + rnd() * 28, 4 + rnd() * 8, 0, 0, TAU)
+          ctx.fill()
+          ctx.beginPath()
+          ctx.ellipse(rnd() * 512, 236 + rnd() * 14, 14 + rnd() * 28, 4 + rnd() * 8, 0, 0, TAU)
+          ctx.fill()
+        }
+      }),
+      roughness: 0.96,
+      metalness: 0,
+    }),
+  )
+  marsSystem.add(mars)
+
+  marsSystem.add(new THREE.Mesh(
+    new THREE.SphereGeometry(marsDef.spaceRadius * 1.07, 32, 24),
+    new THREE.MeshBasicMaterial({
+      color: marsDef.atmosphere, transparent: true, opacity: 0.18, side: THREE.BackSide,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  ))
+  const marsGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture('rgba(255, 168, 108, 0.34)', 'rgba(190, 80, 34, 0)'),
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }))
+  marsGlow.scale.setScalar(marsDef.spaceRadius * 4.2)
+  marsSystem.add(marsGlow)
+
+  // Phobos and Deimos, two lumpy pebbles that keep the red planet company
+  const marsMoonlets = new THREE.Group()
+  const moonletGeometry = new THREE.IcosahedronGeometry(1, 0)
+  const moonletMaterial = new THREE.MeshStandardMaterial({ color: 0x9a9187, flatShading: true, roughness: 1 })
+  const phobos = new THREE.Mesh(moonletGeometry, moonletMaterial)
+  phobos.scale.set(1.5, 1.1, 1.25)
+  phobos.position.set(marsDef.spaceRadius + 6.5, 1.4, 0)
+  marsMoonlets.add(phobos)
+  const deimos = new THREE.Mesh(moonletGeometry, moonletMaterial)
+  deimos.scale.set(0.95, 0.78, 0.9)
+  deimos.position.set(-(marsDef.spaceRadius + 11), -2.2, 3.6)
+  marsMoonlets.add(deimos)
+  marsSystem.add(marsMoonlets)
+
+  const marsLabel = makeLabel('MARS', '#ffbf94')
+  marsLabel.position.set(0, marsDef.spaceRadius + 12, 0)
+  marsSystem.add(marsLabel)
+
+  // mars tracks its own lane around the Sun
+  spaceScene.add(orbitRing(EARTH_ORBIT, 0x6f9fd0, 0.1))
+  spaceScene.add(orbitRing(MARS_ORBIT, 0xc08050, 0.13))
 
   // ------------------------------------------------------------------- ISS
   const iss = new THREE.Group()
@@ -365,10 +440,7 @@ export function createWorld(container: HTMLElement): World {
   const earthLabel = makeLabel('EARTH')
   earthLabel.position.set(0, earthDef.spaceRadius + 12, 0)
   earthSystem.add(earthLabel)
-  const moonLabel = makeLabel('MOON', '#dfe6ff')
-  moonLabel.position.set(0, MOON_RADIUS + 5, 0)
-  earthSystem.add(moonLabel)
-  const labels = [issLabel, earthLabel, moonLabel]
+  const labels = [issLabel, earthLabel, moonLabel, marsLabel]
 
   // ------------------------------------------------------------------ ship
   function buildShip(): {
@@ -442,7 +514,8 @@ export function createWorld(container: HTMLElement): World {
   // ---------------------------------------------------------- surface scene
   const surfaceScene = new THREE.Scene()
   surfaceScene.fog = new THREE.Fog(0xbfe4ff, 170, 560)
-  surfaceScene.add(new THREE.HemisphereLight(0xcfe9ff, 0x2f5a3a, 1.2))
+  const surfaceHemisphere = new THREE.HemisphereLight(0xcfe9ff, 0x2f5a3a, 1.2)
+  surfaceScene.add(surfaceHemisphere)
   const surfaceKey = new THREE.DirectionalLight(0xfff4df, 2.0)
   surfaceKey.position.set(60, 120, 40)
   surfaceScene.add(surfaceKey)
@@ -450,24 +523,34 @@ export function createWorld(container: HTMLElement): World {
   surfaceFill.position.set(-70, -30, -60)
   surfaceScene.add(surfaceFill)
 
-  const planetDef = planetById(0)
-  const worldSeed = 12345
+  const themeLooks: Record<PlanetTheme, ThemeLook> = {
+    earth: {
+      keyLight: 0xfff4df, keyIntensity: 2.0, skyLight: 0xcfe9ff, groundLight: 0x2f5a3a,
+      hemiIntensity: 1.2, fill: 0x9fd0ff, fillIntensity: 0.45, sunTint: 0xffffff, sunScale: 130,
+    },
+    moon: {
+      keyLight: 0xffffff, keyIntensity: 2.7, skyLight: 0x2c3a58, groundLight: 0x14161c,
+      hemiIntensity: 0.4, fill: 0x4a5f8c, fillIntensity: 0.14, sunTint: 0xffffff, sunScale: 104,
+    },
+    mars: {
+      keyLight: 0xffd2a4, keyIntensity: 1.95, skyLight: 0xd9a074, groundLight: 0x6b3524,
+      hemiIntensity: 1.05, fill: 0xffb083, fillIntensity: 0.3, sunTint: 0xffbe8a, sunScale: 118,
+    },
+  }
+  const stormFog = new THREE.Color(0xb2561f)
+  const skyColor = new THREE.Color()
+  const skyTextures = PLANETS.map(planet => canvasTexture(64, 256, ctx => {
+    const gradient = ctx.createLinearGradient(0, 0, 0, 256)
+    gradient.addColorStop(0, planet.skyTop)
+    gradient.addColorStop(0.58, planet.skyMid)
+    gradient.addColorStop(1, planet.skyHorizon)
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, 64, 256)
+  }))
 
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(760, 32, 16),
-    new THREE.MeshBasicMaterial({
-      map: canvasTexture(64, 256, ctx => {
-        const gradient = ctx.createLinearGradient(0, 0, 0, 256)
-        gradient.addColorStop(0, '#0d2c66')
-        gradient.addColorStop(0.45, '#4a8fd6')
-        gradient.addColorStop(0.72, '#a8d8f5')
-        gradient.addColorStop(1, '#e6f4ff')
-        ctx.fillStyle = gradient
-        ctx.fillRect(0, 0, 64, 256)
-      }),
-      side: THREE.BackSide,
-      fog: false,
-    }),
+    new THREE.MeshBasicMaterial({ map: skyTextures[0], side: THREE.BackSide, fog: false }),
   )
   surfaceScene.add(sky)
   const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -478,115 +561,152 @@ export function createWorld(container: HTMLElement): World {
   sunSprite.scale.setScalar(130)
   surfaceScene.add(sunSprite)
 
-  function terrainRadius(lat: number, lon: number): number {
-    return SURFACE_RADIUS + surfaceHeight(lat, lon, worldSeed)
+  // three landable worlds, built once from the sim seed and toggled by planetId
+  let terrainSeed = -1
+  let activePlanetId = -1
+  const surfaces: SurfaceBuild[] = []
+
+  function radiusAt(planetId: number, lat: number, lon: number): number {
+    const surface = surfaces[planetId]
+    return surface ? surface.terrainRadius(lat, lon) : SURFACE_RADIUS
   }
 
-  // planet surface: displaced low-poly sphere with height-tinted vertices
-  const groundGeometry = new THREE.SphereGeometry(SURFACE_RADIUS, 112, 72)
+  function applyPlanetTheme(planetId: number) {
+    const planet = planetById(planetId)
+    const look = themeLooks[planet.theme]
+    sky.material.map = skyTextures[planet.id] ?? skyTextures[0]
+    sky.material.needsUpdate = true
+    sunSprite.material.color.setHex(look.sunTint)
+    sunSprite.scale.setScalar(look.sunScale)
+    surfaceHemisphere.color.setHex(look.skyLight)
+    surfaceHemisphere.groundColor.setHex(look.groundLight)
+    surfaceKey.color.setHex(look.keyLight)
+    surfaceFill.color.setHex(look.fill)
+    blobShadow.material.color.setHex(planet.theme === 'earth' ? 0x102415 : 0x14161c)
+  }
+
+  function disposeSurfaces() {
+    cargoMesh.removeFromParent()
+    parked.group.removeFromParent()
+    for (const surface of surfaces) {
+      surfaceScene.remove(surface.group)
+      surface.group.traverse(object => {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Points || object instanceof THREE.Line) {
+          object.geometry.dispose()
+        }
+        if (
+          object instanceof THREE.Mesh || object instanceof THREE.Points
+          || object instanceof THREE.Line || object instanceof THREE.Sprite
+        ) {
+          for (const item of Array.isArray(object.material) ? object.material : [object.material]) {
+            const texture = (item as { map?: THREE.Texture | null }).map
+            if (texture) texture.dispose()
+            item.dispose()
+          }
+        }
+      })
+    }
+    surfaces.length = 0
+    activePlanetId = -1
+  }
+
+  function ensureSurfaces(game: Game) {
+    const seed = game.seed >>> 0
+    if (surfaces.length === 3 && terrainSeed === seed) return
+    disposeSurfaces()
+    terrainSeed = seed
+    for (let planetId = 0; planetId < PLANETS.length; planetId++) {
+      const surface = buildSurface(planetId, seed)
+      surface.group.visible = false
+      surfaceScene.add(surface.group)
+      surfaces[planetId] = surface
+    }
+    setActivePlanet(game.planetId)
+  }
+
+  function setActivePlanet(planetId: number) {
+    const surface = surfaces[planetId]
+    if (!surface || activePlanetId === planetId) return
+    activePlanetId = planetId
+    for (let i = 0; i < surfaces.length; i++) {
+      surfaces[i].group.visible = i === planetId
+    }
+    // the parked tug and the waiting cargo pile live on the active lander pad
+    surface.lander.add(cargoMesh)
+    surface.lander.add(parked.group)
+    applyPlanetTheme(planetId)
+  }
+
+  /** Sky, fog and light follow the planet, and get eaten by a Mars storm. */
+  function updateSurfaceMood(game: Game) {
+    const planet = planetById(game.planetId)
+    const look = themeLooks[planet.theme]
+    const storm = planet.theme === 'mars' ? clampValue(game.hazards.stormIntensity, 0, 1) : 0
+    const fog = surfaceScene.fog as THREE.Fog
+    fog.color.setHex(planet.fogColor).lerp(stormFog, storm * 0.9)
+    fog.near = planet.fogNear + (11 - planet.fogNear) * storm
+    fog.far = planet.fogFar + (96 - planet.fogFar) * storm
+    surfaceKey.intensity = look.keyIntensity * (1 - storm * 0.55)
+    surfaceHemisphere.intensity = look.hemiIntensity * (1 - storm * 0.4)
+    surfaceFill.intensity = look.fillIntensity * (1 - storm * 0.3)
+    sunSprite.material.opacity = (0.9 + Math.sin(elapsed * 1.6) * 0.06) * (1 - storm * 0.85)
+    skyColor.setScalar(1 - storm * 0.42).lerp(stormFog, storm * 0.45)
+    sky.material.color.copy(skyColor)
+  }
+
+  // hazard visuals: the Moon meteor telegraph
+  const meteorShadow = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 40),
+    new THREE.MeshBasicMaterial({
+      color: 0x3a0806, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide,
+    }),
+  )
+  const meteorRing = new THREE.Mesh(
+    new THREE.TorusGeometry(1, 0.09, 6, 48),
+    new THREE.MeshBasicMaterial({
+      color: 0xff7048, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  )
+  const meteorStreak = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+    new THREE.LineBasicMaterial({ color: 0xffb894, transparent: true, opacity: 0.7 }),
+  )
+  for (const object of [meteorShadow, meteorRing, meteorStreak]) {
+    object.visible = false
+    surfaceScene.add(object)
+  }
+
+  // hazard visuals: the Mars dust field, drifting around the janitor
+  const DUST_COUNT = 320
+  const dustOffsets = new Float32Array(DUST_COUNT * 3)
+  const dustSizes = new Float32Array(DUST_COUNT)
   {
-    const position = groundGeometry.attributes.position
-    const colors = new Float32Array(position.count * 3)
-    const low = new THREE.Color(planetDef.groundLow)
-    const high = new THREE.Color(planetDef.groundHigh)
-    const sand = new THREE.Color(0xd9c98a)
-    const rock = new THREE.Color(0x808c96)
-    const vertex = new THREE.Vector3()
-    const color = new THREE.Color()
-    for (let i = 0; i < position.count; i++) {
-      vertex.fromBufferAttribute(position, i).normalize()
-      const lat = Math.asin(clampValue(vertex.y, -1, 1))
-      const lon = Math.atan2(vertex.z, vertex.x)
-      const height = surfaceHeight(lat, lon, worldSeed)
-      const radius = SURFACE_RADIUS + height
-      position.setXYZ(i, vertex.x * radius, vertex.y * radius, vertex.z * radius)
-      const t = clampValue((height + 2.2) / 4.4, 0, 1)
-      color.copy(low).lerp(high, t)
-      if (height > 1.4) color.lerp(sand, 0.55)
-      if (lon > 2.2 && lon < 3.1 && Math.abs(lat) < 0.5) color.lerp(rock, 0.5)
-      colors.set([color.r, color.g, color.b], i * 3)
-    }
-    groundGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-    groundGeometry.computeVertexNormals()
-  }
-  surfaceScene.add(new THREE.Mesh(
-    groundGeometry,
-    new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 }),
-  ))
-
-  // trees and rocks
-  {
-    let state = 777
-    const rnd = () => {
-      state = (Math.imul(state, 1664525) + 1013904223) >>> 0
-      return state / 4294967296
-    }
-    const treeCapacity = 240
-    const trunkMesh = new THREE.InstancedMesh(
-      new THREE.CylinderGeometry(0.2, 0.26, 1.4, 5),
-      new THREE.MeshStandardMaterial({ color: 0x6b4a2f, flatShading: true }),
-      treeCapacity,
-    )
-    const canopyMesh = new THREE.InstancedMesh(
-      new THREE.ConeGeometry(1.5, 3.4, 6),
-      new THREE.MeshStandardMaterial({ color: 0x2f7d4f, flatShading: true }),
-      treeCapacity,
-    )
-    let trees = 0
-    let attempts = 0
-    while (trees < 190 && attempts < 900) {
-      attempts++
-      const lat = (rnd() * 2 - 1) * 1.0
-      const lon = rnd() * TAU
-      // keep the landing pad clear
-      if (Math.abs(lat) < 0.34 && Math.abs(lon - 0.6) < 0.55) continue
-      const radius = terrainRadius(lat, lon)
-      dir(lat, lon, vA)
-      const scale = 0.7 + rnd() * 0.9
-      dummy.position.copy(vA).multiplyScalar(radius + 0.6 * scale)
-      dummy.quaternion.setFromUnitVectors(UP, vA)
-      dummy.rotateY(rnd() * TAU)
-      dummy.scale.setScalar(scale)
-      dummy.updateMatrix()
-      trunkMesh.setMatrixAt(trees, dummy.matrix)
-      dummy.position.copy(vA).multiplyScalar(radius + 2.05 * scale)
-      dummy.updateMatrix()
-      canopyMesh.setMatrixAt(trees, dummy.matrix)
-      trees++
-    }
-    trunkMesh.count = trees
-    canopyMesh.count = trees
-
-    const rockMesh = new THREE.InstancedMesh(
-      new THREE.IcosahedronGeometry(0.95, 0),
-      new THREE.MeshStandardMaterial({ color: 0x8b929b, flatShading: true }),
-      110,
-    )
-    for (let i = 0; i < 110; i++) {
-      const lat = (rnd() * 2 - 1) * 1.0
-      const lon = rnd() * TAU
-      const radius = terrainRadius(lat, lon)
-      dir(lat, lon, vA)
-      dummy.position.copy(vA).multiplyScalar(radius + 0.25)
-      dummy.quaternion.setFromUnitVectors(UP, vA)
-      dummy.rotateY(rnd() * TAU)
-      dummy.rotateX((rnd() - 0.5) * 0.5)
-      const scale = 0.6 + rnd() * 1.5
-      dummy.scale.set(scale, scale * (0.6 + rnd() * 0.5), scale)
-      dummy.updateMatrix()
-      rockMesh.setMatrixAt(i, dummy.matrix)
-    }
-    for (const mesh of [trunkMesh, canopyMesh, rockMesh]) {
-      mesh.instanceMatrix.needsUpdate = true
-      surfaceScene.add(mesh)
+    const rnd = makeRnd(4242)
+    for (let i = 0; i < DUST_COUNT; i++) {
+      dustOffsets[i * 3] = (rnd() * 2 - 1) * 38
+      dustOffsets[i * 3 + 1] = 0.3 + rnd() * 16
+      dustOffsets[i * 3 + 2] = (rnd() * 2 - 1) * 38
+      dustSizes[i] = 0.5 + rnd() * 1.4
     }
   }
+  const dustMesh = new THREE.InstancedMesh(
+    new THREE.TetrahedronGeometry(0.5, 0),
+    new THREE.MeshBasicMaterial({ color: 0xdba576, transparent: true, opacity: 0, depthWrite: false }),
+    DUST_COUNT,
+  )
+  dustMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  dustMesh.frustumCulled = false
+  dustMesh.count = 0
+  dustMesh.visible = false
+  surfaceScene.add(dustMesh)
 
   // junk on the ground, plus faint pickup beacons so sweeps stay readable
+  const JUNK_CLASSES: JunkClass[] = ['scrap', 'tech', 'hazardous', 'relic']
   const junkGeometry: Record<JunkClass, THREE.BufferGeometry> = {
     scrap: new THREE.BoxGeometry(1.15, 0.75, 0.95),
     tech: new THREE.IcosahedronGeometry(0.62, 0),
     hazardous: new THREE.CylinderGeometry(0.42, 0.42, 1.0, 10),
+    relic: new THREE.OctahedronGeometry(0.8, 0),
   }
   const junkMaterial: Record<JunkClass, THREE.MeshStandardMaterial> = {
     scrap: new THREE.MeshStandardMaterial({ color: JUNK_COLORS.scrap, flatShading: true, roughness: 0.85 }),
@@ -598,9 +718,14 @@ export function createWorld(container: HTMLElement): World {
       color: JUNK_COLORS.hazardous, flatShading: true, roughness: 0.6,
       emissive: 0x2a5a12, emissiveIntensity: 0.9,
     }),
+    // relics have to read from a long way off: hot gold, lit from inside
+    relic: new THREE.MeshStandardMaterial({
+      color: JUNK_COLORS.relic, flatShading: true, roughness: 0.28, metalness: 0.55,
+      emissive: 0xc07a12, emissiveIntensity: 1.5,
+    }),
   }
   const junkMeshes = {} as Record<JunkClass, THREE.InstancedMesh>
-  for (const cls of ['scrap', 'tech', 'hazardous'] as JunkClass[]) {
+  for (const cls of JUNK_CLASSES) {
     const mesh = new THREE.InstancedMesh(junkGeometry[cls], junkMaterial[cls], MAX_JUNK)
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
     mesh.count = 0
@@ -619,46 +744,49 @@ export function createWorld(container: HTMLElement): World {
   beaconMesh.count = 0
   surfaceScene.add(beaconMesh)
 
-  // the lander: the parked tug, a landing ring and a cargo pile
-  const site = landerSite(0)
-  const landerUp = dir(site.lat, site.lon).clone()
-  const landerGroup = new THREE.Group()
-  landerGroup.position.copy(surfacePoint(site.lat, site.lon, terrainRadius(site.lat, site.lon)))
-  landerGroup.quaternion.setFromUnitVectors(UP, landerUp)
-  surfaceScene.add(landerGroup)
+  // relics get their own taller beam and a spinning halo on top
+  const relicBeamMesh = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.09, 1.1, 15, 8, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: JUNK_COLORS.relic, transparent: true, opacity: 0.3, side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+    MAX_JUNK,
+  )
+  relicBeamMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  relicBeamMesh.frustumCulled = false
+  relicBeamMesh.count = 0
+  surfaceScene.add(relicBeamMesh)
+  const relicHaloMesh = new THREE.InstancedMesh(
+    new THREE.TorusGeometry(1.5, 0.07, 6, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0xffe0a0, transparent: true, opacity: 0.75,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+    4,
+  )
+  relicHaloMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+  relicHaloMesh.frustumCulled = false
+  relicHaloMesh.count = 0
+  surfaceScene.add(relicHaloMesh)
+  // one glow sprite per planet, and only the active planet ever shows it
+  const relicGlows = PLANETS.map(() => {
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTexture('rgba(255, 219, 138, 0.9)', 'rgba(255, 158, 40, 0)'),
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    }))
+    glow.scale.setScalar(6.5)
+    glow.visible = false
+    surfaceScene.add(glow)
+    return glow
+  })
 
+  // the lander tug and the cargo pile it guards
   const parked = buildShip()
   parked.group.scale.setScalar(1.3)
   parked.group.position.set(0, 2.2, 0)
   parked.thrusterGlow.visible = false
   parked.thruster.scale.setScalar(0.001)
-  landerGroup.add(parked.group)
-
-  for (const angle of [0, 1, 2, 3]) {
-    const leg = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 2.6, 0.28),
-      new THREE.MeshStandardMaterial({ color: 0x4a5162, roughness: 0.7, flatShading: true }),
-    )
-    const a = (angle / 4) * TAU + Math.PI / 4
-    leg.position.set(Math.cos(a) * 2.2, 0.75, Math.sin(a) * 2.2)
-    leg.rotation.set(Math.sin(a) * 0.45, 0, -Math.cos(a) * 0.45)
-    landerGroup.add(leg)
-  }
-
-  const ringMaterialLander = new THREE.MeshBasicMaterial({ color: 0x7fffb0, transparent: true, opacity: 0.5 })
-  const landingRing = new THREE.Mesh(
-    new THREE.TorusGeometry(LANDER_RING_RADIUS, 0.2, 8, 64), ringMaterialLander,
-  )
-  landingRing.rotation.x = -Math.PI / 2
-  landingRing.position.y = 0.14
-  landerGroup.add(landingRing)
-  const padBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowTexture('rgba(140, 255, 190, 0.9)', 'rgba(60, 220, 140, 0)'),
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  }))
-  padBeacon.position.set(0, 6.6, 0)
-  padBeacon.scale.setScalar(7.5)
-  landerGroup.add(padBeacon)
 
   const cargoCapacity = 30
   const cargoMesh = new THREE.InstancedMesh(
@@ -807,10 +935,11 @@ export function createWorld(container: HTMLElement): World {
 
   // ------------------------------------------------------- scene updates
   function updateSpaceScene(game: Game, dt: number) {
-    earthSystem.position.set(game.earthPos.x, game.earthPos.y, game.earthPos.z)
+    const earthPos = game.planetPos[0]
+    earthSystem.position.set(earthPos.x, earthPos.y, earthPos.z)
     clouds.rotation.y += dt * 0.014
 
-    iss.position.set(ISS_ORBIT * Math.cos(game.issAngle), 0, ISS_ORBIT * Math.sin(game.issAngle))
+    iss.position.set(game.issPos.x, game.issPos.y, game.issPos.z)
     iss.rotation.y = -game.issAngle
     for (let i = 0; i < spinningRings.length; i++) {
       spinningRings[i].rotation.z += dt * (i === 0 ? 0.7 : -0.55)
@@ -820,18 +949,24 @@ export function createWorld(container: HTMLElement): World {
     hatch.scale.setScalar(docking ? 1.25 + Math.sin(elapsed * 8) * 0.08 : 1)
     shopGlow.material.opacity = 0.68 + Math.sin(elapsed * 2.4) * 0.2
 
-    moon.position.set(MOON_ORBIT * Math.cos(game.moonAngle), 0, MOON_ORBIT * Math.sin(game.moonAngle))
+    moon.position.set(game.moonPos.x, game.moonPos.y, game.moonPos.z)
+    const marsPos = game.planetPos[2]
+    marsSystem.position.set(marsPos.x, marsPos.y, marsPos.z)
+    mars.rotation.y += dt * 0.02
+    marsMoonlets.rotation.y += dt * 0.11
 
     const ship = game.ship
-    shipModel.group.position.set(ship.x, ship.y, ship.z)
-    shipModel.group.rotation.y = ship.yaw
+    const docked = game.mode === 'docked'
+    if (docked) shipModel.group.position.set(game.dockPos.x, game.dockPos.y, game.dockPos.z)
+    else shipModel.group.position.set(ship.x, ship.y, ship.z)
+    shipModel.group.quaternion.set(ship.q.x, ship.q.y, ship.q.z, ship.q.w)
     const thrust = Math.max(0, ship.thrust)
     const glow = thrust > 0.12 ? (ship.boosting ? 1.5 : 0.85) : 0
     shipModel.thrusterGlow.material.opacity = Math.min(1, glow * 0.9 + 0.05)
     shipModel.thrusterGlow.scale.setScalar(glow * 3.2 + 1.2)
     shipModel.thruster.scale.set(1, Math.max(0.05, glow), 1)
     shipModel.thruster.material.opacity = 0.25 + glow * 0.5
-    shipModel.group.position.y += Math.sin(elapsed * 26) * 0.03 * glow
+    if (!docked) shipModel.group.position.y += Math.sin(elapsed * 26) * 0.03 * glow
 
     // key light comes from the Sun toward the action
     vA.copy(shipModel.group.position).normalize()
@@ -852,8 +987,10 @@ export function createWorld(container: HTMLElement): World {
   }
 
   function updateSurfaceScene(game: Game, dt: number) {
+    const surface = surfaces[game.planetId]
+    if (!surface) return
     const player = game.player
-    const playerRadius = terrainRadius(player.lat, player.lon) + player.h
+    const playerRadius = surface.terrainRadius(player.lat, player.lon) + player.h
     const up = dir(player.lat, player.lon, vA)
     const north = vB.set(
       -Math.sin(player.lat) * Math.cos(player.lon),
@@ -871,7 +1008,7 @@ export function createWorld(container: HTMLElement): World {
       playerGroup.rotateX(-Math.min(0.45, player.h * 0.12))
     }
 
-    const groundRadius = terrainRadius(player.lat, player.lon)
+    const groundRadius = surface.terrainRadius(player.lat, player.lon)
     blobShadow.position.copy(up).multiplyScalar(groundRadius + 0.08)
     blobShadow.quaternion.setFromUnitVectors(Z_AXIS, up)
     blobShadow.scale.setScalar(Math.max(0.4, 1 - Math.min(0.55, player.h * 0.09)))
@@ -882,11 +1019,10 @@ export function createWorld(container: HTMLElement): World {
     scoopRing.material.opacity = 0.2 + Math.sin(elapsed * 3) * 0.06
 
     // lander
-    landerGroup.position.copy(surfacePoint(site.lat, site.lon, terrainRadius(site.lat, site.lon)))
     const inRing = nearLander(game)
-    ringMaterialLander.color.setHex(game.oxygen < OXYGEN_WARN ? 0xffb0a0 : inRing ? 0x9dffb0 : 0x7fffb0)
-    ringMaterialLander.opacity = inRing ? 0.8 : 0.4 + Math.sin(elapsed * 2.2) * 0.1
-    padBeacon.material.opacity = inRing ? 0.95 : 0.45 + Math.sin(elapsed * 2.4) * 0.16
+    surface.ringMaterial.color.setHex(game.oxygen < OXYGEN_WARN ? 0xffb0a0 : inRing ? 0x9dffb0 : 0x7fffb0)
+    surface.ringMaterial.opacity = inRing ? 0.8 : 0.4 + Math.sin(elapsed * 2.2) * 0.1
+    surface.padBeacon.material.opacity = inRing ? 0.95 : 0.45 + Math.sin(elapsed * 2.4) * 0.16
     if (game.transition?.kind === 'takeoff') {
       const t = Math.min(1, game.transition.t / game.transition.duration)
       parked.group.position.set(0, 2.2 + t * t * 30, 0)
@@ -894,6 +1030,18 @@ export function createWorld(container: HTMLElement): World {
     } else {
       parked.group.position.set(0, 2.2, 0)
       parked.group.scale.setScalar(1.3)
+    }
+    if (game.transition?.kind === 'landing') {
+      const t = Math.min(1, game.transition.t / game.transition.duration)
+      surface.landingRing.scale.setScalar(1 + (1 - t) * 0.14 + Math.sin(elapsed * 9) * 0.05)
+    } else {
+      surface.landingRing.scale.setScalar(1)
+    }
+
+    // a puff of wind in the Martian rotors
+    if (surface.windmillBlades.length > 0 && !reducedMotion) {
+      const spin = dt * (0.5 + game.hazards.stormIntensity * 2.2)
+      for (const blades of surface.windmillBlades) blades.rotation.z += spin
     }
 
     // cargo pile beside the pad: what is waiting in the hold
@@ -914,32 +1062,63 @@ export function createWorld(container: HTMLElement): World {
     }
     cargoMesh.instanceMatrix.needsUpdate = true
 
-    // ground junk + beacons
-    const counts: Record<JunkClass, number> = { scrap: 0, tech: 0, hazardous: 0 }
+    // ground junk + beacons for the planet under our feet only
+    const counts: Record<JunkClass, number> = { scrap: 0, tech: 0, hazardous: 0, relic: 0 }
     let beaconCount = 0
+    let relicBeamCount = 0
+    let relicHaloCount = 0
+    let glowPlaced = false
+    for (const glow of relicGlows) glow.visible = false
+    const relicGlow = relicGlows[game.planetId]
     for (const item of game.junk) {
-      if (item.status !== 'ground') continue
-      const radius = terrainRadius(item.lat, item.lon)
+      if (item.status !== 'ground' || item.planet !== game.planetId) continue
+      const radius = surface.terrainRadius(item.lat, item.lon)
       dir(item.lat, item.lon, up)
       dummy.position.copy(up).multiplyScalar(radius + 0.45)
       dummy.quaternion.setFromUnitVectors(UP, up)
       dummy.rotateY(item.yaw + elapsed * item.spin * 0.35)
-      dummy.scale.setScalar(1)
+      dummy.scale.setScalar(item.cls === 'relic' ? 1.2 : 1)
       dummy.updateMatrix()
       const count = counts[item.cls]
       if (count < MAX_JUNK) {
         junkMeshes[item.cls].setMatrixAt(count, dummy.matrix)
         counts[item.cls] = count + 1
       }
-      dummy.position.copy(up).multiplyScalar(radius + 4.6)
-      dummy.quaternion.identity()
-      dummy.updateMatrix()
-      beaconMesh.setMatrixAt(beaconCount, dummy.matrix)
-      beaconMesh.setColorAt(beaconCount, tmpColor.setHex(JUNK_COLORS[item.cls]))
-      beaconCount++
-      if (beaconCount >= MAX_JUNK) break
+      if (beaconCount < MAX_JUNK) {
+        dummy.position.copy(up).multiplyScalar(radius + 4.6)
+        dummy.quaternion.identity()
+        dummy.updateMatrix()
+        beaconMesh.setMatrixAt(beaconCount, dummy.matrix)
+        beaconMesh.setColorAt(beaconCount, tmpColor.setHex(JUNK_COLORS[item.cls]))
+        beaconCount++
+      }
+      if (item.cls !== 'relic') continue
+      if (relicBeamCount < relicBeamMesh.instanceMatrix.count) {
+        dummy.position.copy(up).multiplyScalar(radius + 7.6)
+        dummy.quaternion.setFromUnitVectors(UP, up)
+        dummy.scale.setScalar(1)
+        dummy.updateMatrix()
+        relicBeamMesh.setMatrixAt(relicBeamCount, dummy.matrix)
+        relicBeamCount++
+      }
+      if (relicHaloCount < relicHaloMesh.instanceMatrix.count) {
+        dummy.position.copy(up).multiplyScalar(radius + 2.6 + Math.sin(elapsed * 1.9) * 0.22)
+        dummy.quaternion.setFromUnitVectors(UP, up)
+        dummy.rotateY(elapsed * 1.5)
+        dummy.rotateX(elapsed * 0.9)
+        dummy.scale.setScalar(1)
+        dummy.updateMatrix()
+        relicHaloMesh.setMatrixAt(relicHaloCount, dummy.matrix)
+        relicHaloCount++
+      }
+      if (relicGlow && !glowPlaced) {
+        relicGlow.position.copy(up).multiplyScalar(radius + 1.9 + Math.sin(elapsed * 2.2) * 0.25)
+        relicGlow.material.opacity = 0.55 + Math.sin(elapsed * 3.1) * 0.16
+        relicGlow.visible = true
+        glowPlaced = true
+      }
     }
-    for (const cls of ['scrap', 'tech', 'hazardous'] as JunkClass[]) {
+    for (const cls of JUNK_CLASSES) {
       junkMeshes[cls].count = counts[cls]
       junkMeshes[cls].instanceMatrix.needsUpdate = true
     }
@@ -947,11 +1126,15 @@ export function createWorld(container: HTMLElement): World {
     beaconMesh.instanceMatrix.needsUpdate = true
     if (beaconMesh.instanceColor) beaconMesh.instanceColor.needsUpdate = true
     beaconMaterial.opacity = 0.13 + Math.sin(elapsed * 2.8) * 0.05
+    relicBeamMesh.count = relicBeamCount
+    relicBeamMesh.instanceMatrix.needsUpdate = true
+    relicHaloMesh.count = relicHaloCount
+    relicHaloMesh.instanceMatrix.needsUpdate = true
 
     // carried junk rides on the backpack
     let carried = 0
     for (const item of game.junk) {
-      if (item.status !== 'carried') continue
+      if (item.status !== 'carried' || item.planet !== game.planetId) continue
       dummy.position.set(-0.28 + (carried % 3) * 0.28, 1.75 + Math.floor(carried / 3) * 0.34, -0.52)
       dummy.quaternion.identity()
       dummy.rotation.set(0.3, carried * 0.7, 0.2)
@@ -967,29 +1150,120 @@ export function createWorld(container: HTMLElement): World {
     if (carriedMesh.instanceColor) carriedMesh.instanceColor.needsUpdate = true
 
     sky.rotation.y += dt * 0.004
-    sunSprite.material.opacity = 0.9 + Math.sin(elapsed * 1.6) * 0.06
+    updateSurfaceMood(game)
+    updateMeteorTelegraph(game)
+    updateDustStorm(game, dt)
+  }
+
+  /** Moon hazard: a shadow that tightens under the incoming meteor. */
+  function updateMeteorTelegraph(game: Game) {
+    const surface = surfaces[game.planetId]
+    const hazards = game.hazards
+    const active = game.planetId === 1 && !!surface && hazards.meteorTelegraph >= 0 && hazards.meteorDelay > 0
+    meteorShadow.visible = active
+    meteorRing.visible = active
+    meteorStreak.visible = active
+    if (!active || !surface) return
+    const t = clampValue(hazards.meteorTelegraph / hazards.meteorDelay, 0, 1)
+    const up = dir(hazards.meteorLat, hazards.meteorLon, vA)
+    const radius = surface.terrainRadius(hazards.meteorLat, hazards.meteorLon)
+    const scale = METEOR_RADIUS * (1.6 - 0.6 * t)
+
+    meteorShadow.position.copy(up).multiplyScalar(radius + 0.12)
+    meteorShadow.quaternion.setFromUnitVectors(Z_AXIS, up)
+    meteorShadow.scale.setScalar(scale)
+    meteorShadow.material.opacity = 0.15 + t * 0.7
+
+    meteorRing.position.copy(up).multiplyScalar(radius + 0.3)
+    meteorRing.quaternion.setFromUnitVectors(Z_AXIS, up)
+    meteorRing.scale.setScalar(METEOR_RADIUS * (1.05 + Math.sin(elapsed * 9) * 0.1) * (1.5 - 0.5 * t))
+    meteorRing.material.opacity = 0.3 + t * 0.45 + Math.sin(elapsed * 12) * 0.08
+
+    const positions = meteorStreak.geometry.attributes.position
+    vB.copy(up).multiplyScalar(radius + 34 - t * 10)
+    positions.setXYZ(0, vB.x, vB.y, vB.z)
+    vB.copy(up).multiplyScalar(radius + 15 - t * 5)
+    positions.setXYZ(1, vB.x, vB.y, vB.z)
+    positions.needsUpdate = true
+    meteorStreak.material.opacity = 0.35 + t * 0.5
+  }
+
+  /** Mars hazard: dust that wraps around the janitor, driven by stormIntensity. */
+  function updateDustStorm(game: Game, dt: number) {
+    const intensity = planetById(game.planetId).theme === 'mars'
+      ? clampValue(game.hazards.stormIntensity, 0, 1)
+      : 0
+    if (intensity < 0.02) {
+      dustMesh.visible = false
+      dustMesh.count = 0
+      return
+    }
+    const surface = surfaces[game.planetId]
+    if (!surface) return
+    const player = game.player
+    const up = dir(player.lat, player.lon, vA)
+    const north = vB.set(
+      -Math.sin(player.lat) * Math.cos(player.lon),
+      Math.cos(player.lat),
+      -Math.sin(player.lat) * Math.sin(player.lon),
+    ).normalize()
+    const east = vC.crossVectors(up, north).normalize()
+    const base = surface.terrainRadius(player.lat, player.lon)
+    const drift = (5 + intensity * 22) * dt
+    const count = Math.max(
+      1, Math.round(DUST_COUNT * Math.min(1, intensity * 1.6) * (reducedMotion ? 0.5 : 1)),
+    )
+    for (let i = 0; i < count; i++) {
+      const index = i * 3
+      dustOffsets[index] += drift
+      if (dustOffsets[index] > 38) dustOffsets[index] -= 76
+      dustOffsets[index + 2] += drift * 0.4
+      if (dustOffsets[index + 2] > 38) dustOffsets[index + 2] -= 76
+      dustOffsets[index + 1] += Math.sin(elapsed * 0.8 + i) * dt * 1.6
+      if (dustOffsets[index + 1] > 16.3) dustOffsets[index + 1] = 0.3
+      else if (dustOffsets[index + 1] < 0.3) dustOffsets[index + 1] = 16.3
+      dummy.position.copy(up).multiplyScalar(base + dustOffsets[index + 1])
+        .addScaledVector(east, dustOffsets[index])
+        .addScaledVector(north, dustOffsets[index + 2])
+      dummy.rotation.set(elapsed * 3 + i, elapsed * 2.4 + i * 0.6, 0)
+      dummy.scale.setScalar(dustSizes[i])
+      dummy.updateMatrix()
+      dustMesh.setMatrixAt(i, dummy.matrix)
+    }
+    dustMesh.instanceMatrix.needsUpdate = true
+    dustMesh.count = count
+    dustMesh.visible = true
+    dustMesh.material.opacity = 0.5 * intensity
   }
 
   function updateCamera(game: Game, dt: number, inSpace: boolean) {
     if (inSpace) {
       const ship = game.ship
-      const forward = vA.set(Math.sin(ship.yaw), 0, Math.cos(ship.yaw))
       const docked = game.mode === 'docked'
+      quatForward(ship.q, flightForward)
+      quatUp(ship.q, flightUp)
+      shipForward.set(flightForward.x, flightForward.y, flightForward.z)
+      shipUp.set(flightUp.x, flightUp.y, flightUp.z)
+      if (docked) shipOrigin.set(game.dockPos.x, game.dockPos.y, game.dockPos.z)
+      else shipOrigin.set(ship.x, ship.y, ship.z)
       const distance = docked ? 19 : 13
       const height = docked ? 8 : 4.2
-      vB.set(ship.x - forward.x * distance, ship.y + height, ship.z - forward.z * distance)
-      vC.set(
-        ship.x + forward.x * (docked ? 0 : 6),
-        ship.y + 1.2,
-        ship.z + forward.z * (docked ? 0 : 6),
-      )
-      camera.up.set(0, 1, 0)
+      camWish.copy(shipOrigin).addScaledVector(shipForward, -distance).addScaledVector(shipUp, height)
+      camLook.copy(shipOrigin)
+        .addScaledVector(shipForward, docked ? 0 : 6)
+        .addScaledVector(shipUp, docked ? 0.6 : 1.2)
+      camUpWish.copy(UP).lerp(shipUp, docked ? 0.4 : 0.75).normalize()
       if (firstFrame) {
-        cameraPosition.copy(vB)
-        cameraTarget.copy(vC)
+        cameraPosition.copy(camWish)
+        cameraTarget.copy(camLook)
+        cameraUp.copy(camUpWish)
       } else {
-        cameraPosition.lerp(vB, 1 - Math.pow(0.0022, dt))
-        cameraTarget.lerp(vC, 1 - Math.pow(0.0016, dt))
+        cameraPosition.lerp(camWish, 1 - Math.pow(0.0022, dt))
+        cameraTarget.lerp(camLook, 1 - Math.pow(0.0016, dt))
+        cameraUp.lerp(camUpWish, 1 - Math.pow(docked ? 0.05 : 0.03, dt))
+        // a fully inverted roll can cancel the blend: fall back to the wish up
+        if (cameraUp.lengthSq() < 1e-4) cameraUp.copy(camUpWish)
+        cameraUp.normalize()
       }
     } else {
       const player = game.player
@@ -1002,20 +1276,23 @@ export function createWorld(container: HTMLElement): World {
       const east = vC.crossVectors(up, north).normalize()
       const forward = vD.copy(north).multiplyScalar(Math.cos(player.facing))
         .addScaledVector(east, Math.sin(player.facing)).normalize()
-      const playerPosition = surfacePoint(player.lat, player.lon, terrainRadius(player.lat, player.lon) + player.h)
-      vE.copy(playerPosition).addScaledVector(up, 7.4).addScaledVector(forward, -12.6)
-      const lookAt = new THREE.Vector3().copy(playerPosition).addScaledVector(up, 1.7).addScaledVector(forward, 7)
-      camera.up.copy(up)
+      const playerPosition = surfacePoint(
+        player.lat, player.lon, radiusAt(game.planetId, player.lat, player.lon) + player.h, camLook,
+      )
+      camWish.copy(playerPosition).addScaledVector(up, 7.4).addScaledVector(forward, -12.6)
+      camUpWish.copy(playerPosition).addScaledVector(up, 1.7).addScaledVector(forward, 7)
+      cameraUp.copy(up)
       if (firstFrame) {
-        cameraPosition.copy(vE)
-        cameraTarget.copy(lookAt)
+        cameraPosition.copy(camWish)
+        cameraTarget.copy(camUpWish)
       } else {
-        cameraPosition.lerp(vE, 1 - Math.pow(0.0028, dt))
-        cameraTarget.lerp(lookAt, 1 - Math.pow(0.0015, dt))
+        cameraPosition.lerp(camWish, 1 - Math.pow(0.0028, dt))
+        cameraTarget.lerp(camUpWish, 1 - Math.pow(0.0015, dt))
       }
     }
     firstFrame = false
     camera.position.copy(cameraPosition)
+    camera.up.copy(cameraUp)
     if (shake > 0) {
       const amount = shake * (reducedMotion ? 0.25 : 1)
       camera.position.x += (Math.random() - 0.5) * amount
@@ -1045,6 +1322,8 @@ export function createWorld(container: HTMLElement): World {
         lastMode = game.mode
         firstFrame = true
       }
+      ensureSurfaces(game)
+      if (!inSpace) setActivePlanet(game.planetId)
       updateCamera(game, dt, inSpace)
       if (inSpace) updateSpaceScene(game, dt)
       else updateSurfaceScene(game, dt)
@@ -1058,7 +1337,10 @@ export function createWorld(container: HTMLElement): World {
     },
     burst(event, color, count, speed = 10) {
       if (event.place === 'surface') {
-        const at = surfacePoint(event.lat, event.lon, terrainRadius(event.lat, event.lon) + event.h + 0.8)
+        const planetId = activePlanetId >= 0 ? activePlanetId : 0
+        const at = surfacePoint(
+          event.lat, event.lon, radiusAt(planetId, event.lat, event.lon) + event.h + 0.8, vA,
+        )
         spawnParticles(surfaceParticles, at, color, count, speed, 12, new THREE.Vector3(0, 0, 0))
       } else {
         spawnParticles(
@@ -1076,6 +1358,7 @@ export function createWorld(container: HTMLElement): World {
       reducedMotion = value
     },
     dispose() {
+      disposeSurfaces()
       renderer.dispose()
       renderer.domElement.remove()
     },

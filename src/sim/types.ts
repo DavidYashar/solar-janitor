@@ -2,17 +2,27 @@ export type PlayMode = 'surface' | 'space' | 'docked'
 export type Phase = 'ready' | 'playing' | 'paused' | 'finished'
 export type Outcome = 'none' | 'won' | 'lost'
 export type TransitionKind = 'takeoff' | 'landing'
-export type JunkClass = 'scrap' | 'tech' | 'hazardous'
+export type JunkClass = 'scrap' | 'tech' | 'hazardous' | 'relic'
 export type JunkStatus = 'ground' | 'carried' | 'hold' | 'delivered'
+export type Rank = 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' | 'LEGEND'
 export type EventKind =
   | 'pickup' | 'deposit' | 'deliver' | 'buy' | 'dock' | 'undock'
   | 'takeoff' | 'land' | 'oxygen' | 'refill' | 'rescue' | 'block'
   | 'clean' | 'win' | 'lose' | 'scrape'
+  | 'relic' | 'meteor' | 'storm' | 'hint'
 
 export interface Vec3 {
   x: number
   y: number
   z: number
+}
+
+/** Plain quaternion — sim never imports three.js, so the maths lives here. */
+export interface Quat {
+  x: number
+  y: number
+  z: number
+  w: number
 }
 
 export interface Junk {
@@ -42,12 +52,36 @@ export interface Ship {
   y: number
   z: number
   vx: number
+  vy: number
   vz: number
-  yaw: number
+  /** full-freedom orientation: thrust follows the facing vector */
+  q: Quat
   speed: number
   /** last commanded thrust, -1..1 (visual + audio juice) */
   thrust: number
   boosting: boolean
+}
+
+export interface HazardState {
+  /** seconds until the next meteor volley (Moon) */
+  meteorTimer: number
+  /** -1 idle, otherwise seconds the incoming meteor has been telegraphed */
+  meteorTelegraph: number
+  /** how long the current telegraph lasts (Storm Sense lengthens it) */
+  meteorDelay: number
+  meteorLat: number
+  meteorLon: number
+  /** seconds until the next dust storm (Mars) */
+  stormTimer: number
+  stormActive: boolean
+  /** seconds the current storm has been running */
+  stormTime: number
+  /** has the inbound-storm warning fired for this cycle */
+  stormWarned: boolean
+  /** 0..1 haze strength for the renderer */
+  stormIntensity: number
+  /** which way the storm wind shoves the janitor: -1 or +1 */
+  stormWind: number
 }
 
 export interface Transition {
@@ -71,14 +105,27 @@ export interface GameEvent {
 }
 
 export interface Input {
-  /** -1..1 strafe (surface: east) */
+  /** -1..1 strafe (surface: east, space: unused) */
   x: number
-  /** -1..1 forward (surface: north) */
+  /** -1..1 forward (surface: north, space: thrust) */
   y: number
+  /** -1..1 pitch input (space only) */
+  pitch: number
+  /** -1..1 yaw input (space only) */
+  yaw: number
+  /** -1..1 roll input (space only) */
+  roll: number
   /** Shift (surface: sprint, space: boost) */
   boost: boolean
   /** Space (surface: hop, space: boost) */
   hop: boolean
+}
+
+export interface Stats {
+  planetsCleaned: number
+  junkDelivered: number
+  bestBatch: number
+  trips: number
 }
 
 export interface Game {
@@ -97,22 +144,29 @@ export interface Game {
   oxygenEmptyWarned: boolean
   atLander: boolean
   scrapeTimer: number
+  /** the planet whose surface the janitor is standing on (and the land target in space) */
   planetId: number
   player: Player
   ship: Ship
+  hazards: HazardState
   earthAngle: number
   issAngle: number
   moonAngle: number
-  earthPos: Vec3
+  marsAngle: number
+  /** planet positions in the space map, indexed by planet id */
+  planetPos: Vec3[]
   issPos: Vec3
   dockPos: Vec3
   moonPos: Vec3
   junk: Junk[]
   upgrades: string[]
+  /** tools unlocked by delivering relics (not purchasable) */
+  relicTools: string[]
   delivered: number
   bestBatch: number
   trips: number
   rescued: boolean
+  planetsCleaned: number
   events: GameEvent[]
   nextId: number
 }

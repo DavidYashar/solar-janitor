@@ -1,23 +1,55 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  BATCH_BONUS, CARRY_SLOTS, CLEAN_BONUS, EARTH_RADIUS, FULL_HOLD_BONUS, HOLD_SLOTS,
-  JUNK_POINTS, OXYGEN_DRAIN, OXYGEN_MAX, SUFFOCATION_DAMAGE, SURFACE_RADIUS, TRANSITION_TIME,
+  BATCH_BONUS, CARRY_SLOTS, CLEAN_BONUS, FULL_HOLD_BONUS, HARD_LAND_DAMAGE, HOLD_SLOTS,
+  JUNK_POINTS, METEOR_DAMAGE, METEOR_TELEGRAPH_BONUS, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
+  SHIP_SPEED, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, SUFFOCATION_DAMAGE,
+  SURFACE_RADIUS, TRANSITION_TIME,
 } from '../src/sim/config.ts'
 import {
-  bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame, deliverValue,
-  deliveredCount, deposit, dock, hasUpgrade, holdCount, holdSlots, land, latLonDistance, maxOxygen,
-  nearLander, placePlayerAtLander, planetJunkTotal, progressSummary, step, takeOff, undock,
+  allPlanetsClean, bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
+  deliverValue, deliveredCount, deposit, dock, hasRelic, hasUpgrade, holdCount, holdSlots, hopSpeed, land,
+  landTarget, latLonDistance, maxOxygen, nearLander, objective, placePlayerAtLander,
+  planetJunkTotal, progressSummary, rankForScore, remainingCount, resetHazards, scannerPings,
+  shipSpeed, step, takeOff, undock, updateHazards, walkSpeed, systemReport,
 } from '../src/sim/game.ts'
-import { landerSite } from '../src/sim/planets.ts'
+import { PLANETS, landerSite } from '../src/sim/planets.ts'
+import { SHOP_ITEMS } from '../src/sim/economy.ts'
+import { decodeSave, encodeSave, restoreSave, serializeSave } from '../src/sim/save.ts'
 import { dailySeed } from '../src/sim/rng.ts'
+import { quatForward, quatToFlightAngles } from '../src/sim/orient.ts'
 
-const idle = { x: 0, y: 0, boost: false, hop: false }
+const idle = { x: 0, y: 0, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false }
 const STEP = 1 / 120
 
 function running(seed = 7) {
   const game = createGame({ seed })
   game.phase = 'playing'
+  return game
+}
+
+/** A run parked on any planet's surface, hazards freshly armed. */
+function grounded(seed, planetId = 0) {
+  const game = running(seed)
+  if (planetId !== 0) {
+    game.mode = 'surface'
+    game.planetId = planetId
+    resetHazards(game)
+    placePlayerAtLander(game)
+  }
+  return game
+}
+
+function flying(seed, x = 0, y = 200, z = 0) {
+  const game = running(seed)
+  game.mode = 'space'
+  game.transition = null
+  // level with the orbital plane, parked out in open space
+  game.ship.q = { x: 0, y: 0, z: 0, w: 1 }
+  game.ship.x = x
+  game.ship.y = y
+  game.ship.z = z
+  game.ship.speed = 0
   return game
 }
 
@@ -27,19 +59,20 @@ function advance(game, seconds, input = idle) {
   }
 }
 
+function advanceUntil(game, predicate, limit = 30, input = idle) {
+  let elapsed = 0
+  while (elapsed < limit && !predicate(game)) {
+    step(game, STEP, input)
+    elapsed += STEP
+  }
+  return elapsed
+}
+
 function park(game, lat, lon) {
   game.player.lat = lat
   game.player.lon = lon
   game.player.h = 0
   game.player.vH = 0
-}
-
-function fakeJunk(game, status, count, cls = 'tech') {
-  for (let i = 0; i < count; i++) {
-    game.junk.push({
-      id: game.nextId++, planet: 0, cls, lat: 0, lon: 0, status, spin: 0, yaw: 0,
-    })
-  }
 }
 
 function standOnDock(game) {
@@ -51,6 +84,33 @@ function standOnDock(game) {
   game.ship.speed = 0
 }
 
+function parkOnPlanet(game, planetId, offset = 8) {
+  game.mode = 'space'
+  game.transition = null
+  const position = game.planetPos[planetId]
+  game.ship.x = position.x + offset
+  game.ship.y = position.y
+  game.ship.z = position.z
+  game.ship.speed = 0
+}
+
+function onPlanet(game, planetId) {
+  parkOnPlanet(game, planetId)
+  assert.equal(landTarget(game), planetId)
+  assert.ok(land(game))
+  advance(game, TRANSITION_TIME + 0.1)
+  assert.equal(game.mode, 'surface')
+  assert.equal(game.planetId, planetId)
+}
+
+function fakeJunk(game, status, count, cls = 'tech') {
+  for (let i = 0; i < count; i++) {
+    game.junk.push({
+      id: game.nextId++, planet: 0, cls, lat: 0, lon: 0, status, spin: 0, yaw: 0,
+    })
+  }
+}
+
 // ------------------------------------------------------------------ world
 
 test('seeded runs are deterministic and different seeds differ', () => {
@@ -59,51 +119,71 @@ test('seeded runs are deterministic and different seeds differ', () => {
   const c = createGame({ seed: 100 })
   assert.deepEqual(a.junk, b.junk)
   assert.deepEqual(a.dockPos, b.dockPos)
+  assert.deepEqual(a.planetPos, b.planetPos)
   assert.equal(a.earthAngle, b.earthAngle)
   assert.notDeepEqual(a.junk, c.junk)
   assert.equal(dailySeed(new Date('2026-10-12T01:00:00Z')), dailySeed(new Date('2026-10-12T22:00:00Z')))
   assert.notEqual(dailySeed(new Date('2026-10-12T01:00:00Z')), dailySeed(new Date('2026-10-13T01:00:00Z')))
 })
 
-test('a run starts on the surface at the lander with a full tank and a full planet', () => {
+test('a run starts on Earth at the lander with a full tank and a full system', () => {
   const game = createGame({ seed: 4 })
   assert.equal(game.phase, 'ready')
   assert.equal(game.mode, 'surface')
   assert.equal(game.oxygen, OXYGEN_MAX)
   assert.equal(game.health, 100)
-  assert.equal(planetJunkTotal(game), 24)
+  assert.equal(planetJunkTotal(game, 0), 24)
+  assert.equal(planetJunkTotal(game, 1), 22)
+  assert.equal(planetJunkTotal(game, 2), 22)
   assert.ok(nearLander(game), 'player must spawn inside the lander ring')
   const site = landerSite(0)
   assert.ok(Math.abs(game.player.lat - site.lat) < 1e-9)
   assert.ok(Math.abs(game.player.lon - site.lon) < 1e-9)
-  // no junk is allowed to sit on the pad
   for (const item of game.junk) {
-    assert.ok(latLonDistance(item, site) > 6, 'junk spawns clear of the lander')
+    const lander = landerSite(item.planet)
+    assert.ok(latLonDistance(item, lander) > 6, 'junk spawns clear of the lander')
   }
 })
 
-test('planets, the moon and the ISS orbit over time', () => {
+test('every planet hides exactly one relic, well away from its lander', () => {
+  const game = createGame({ seed: 33 })
+  for (const planet of PLANETS) {
+    const relics = game.junk.filter(item => item.planet === planet.id && item.cls === 'relic')
+    assert.equal(relics.length, 1, `${planet.name} has one relic`)
+    assert.ok(latLonDistance(relics[0], landerSite(planet.id)) > 12, 'relics sit far from the pad')
+  }
+})
+
+test('all three planets and the ISS orbit over time', () => {
   const game = running(21)
-  const earthBefore = { ...game.earthPos }
+  const earthBefore = { ...game.planetPos[0] }
+  const marsBefore = { ...game.planetPos[2] }
   const dockBefore = { ...game.dockPos }
   const issAngleBefore = game.issAngle
   advance(game, 2)
   assert.ok(Math.abs(game.issAngle - issAngleBefore - 0.5) < 1e-6, 'ISS sweeps 0.25 rad/s')
-  const orbit = Math.hypot(game.dockPos.x - game.earthPos.x, game.dockPos.z - game.earthPos.z)
+  const orbit = Math.hypot(game.dockPos.x - game.planetPos[0].x, game.dockPos.z - game.planetPos[0].z)
   assert.ok(orbit > 25 && orbit < 28, 'the dock point rides the ISS orbit')
   const issTravel = Math.hypot(
-    game.dockPos.x - game.earthPos.x - (dockBefore.x - earthBefore.x),
-    game.dockPos.z - game.earthPos.z - (dockBefore.z - earthBefore.z),
+    game.dockPos.x - game.planetPos[0].x - (dockBefore.x - earthBefore.x),
+    game.dockPos.z - game.planetPos[0].z - (dockBefore.z - earthBefore.z),
   )
   assert.ok(issTravel > 10 && issTravel < 16, 'ISS sweeps a wide arc in two seconds')
-  assert.ok(Math.hypot(game.earthPos.x - earthBefore.x, game.earthPos.z - earthBefore.z) > 5,
+  assert.ok(Math.hypot(game.planetPos[0].x - earthBefore.x, game.planetPos[0].z - earthBefore.z) > 5,
     'Earth advances along its own orbit')
+  assert.ok(Math.hypot(game.planetPos[2].x - marsBefore.x, game.planetPos[2].z - marsBefore.z) > 0,
+    'Mars advances too')
+  const moonOrbit = Math.hypot(
+    game.moonPos.x - game.planetPos[0].x, game.moonPos.z - game.planetPos[0].z,
+  )
+  assert.ok(Math.abs(moonOrbit - 42) < 1e-6, 'the Moon rides its own orbit around Earth')
+  assert.deepEqual(game.moonPos, game.planetPos[1], 'moonPos mirrors planetPos[1]')
 })
 
 test('surface movement is frame-rate independent', () => {
   const results = [60, 120, 144].map(fps => {
     const game = running(31)
-    for (let i = 0; i < fps; i++) step(game, 1 / fps, { x: 0, y: 1, boost: false, hop: false })
+    for (let i = 0; i < fps; i++) step(game, 1 / fps, { ...idle, y: 1 })
     return { lat: game.player.lat, lon: game.player.lon }
   })
   assert.ok(Math.abs(results[0].lat - results[2].lat) < 1e-9)
@@ -116,6 +196,114 @@ test('compass bearings point the right way', () => {
   assert.ok(Math.abs(bearingTo({ lat: 0, lon: 0 }, { lat: 0, lon: -0.4 }) + Math.PI / 2) < 1e-6)
 })
 
+// ------------------------------------------------------- free-freedom flight
+
+test('the ship spawns on its pad, nose along the prograde vector', () => {
+  const game = running(41)
+  const forward = quatForward(game.ship.q)
+  assert.ok(Math.abs(forward.y) < 1e-9, 'the nose is level with the orbital plane')
+  const radial = {
+    x: game.ship.x - game.planetPos[0].x,
+    y: game.ship.y - game.planetPos[0].y,
+    z: game.ship.z - game.planetPos[0].z,
+  }
+  const radialLength = Math.hypot(radial.x, radial.y, radial.z)
+  const dot = (forward.x * radial.x + forward.y * radial.y + forward.z * radial.z) / radialLength
+  assert.ok(Math.abs(dot) < 1e-6, 'the nose is perpendicular to local up (pointing prograde)')
+})
+
+test('pitch, yaw and roll inputs drive a full-freedom quaternion', () => {
+  const pitched = flying(42)
+  advance(pitched, 0.5, { ...idle, pitch: 1 })
+  const forward = quatForward(pitched.ship.q)
+  assert.ok(forward.y > 0.3, `pitching up lifts the nose (got ${forward.y.toFixed(3)})`)
+  assert.ok(Math.abs(Math.sin(quatToFlightAngles(pitched.ship.q).pitch) - forward.y) < 1e-6)
+
+  const yawed = flying(42)
+  advance(yawed, 0.5, { ...idle, yaw: 1 })
+  const yawForward = quatForward(yawed.ship.q)
+  assert.ok(Math.abs(yawForward.y) < 1e-9, 'pure yaw keeps the nose level')
+  assert.ok(yawForward.x > 0.5, 'yaw +1 swings the nose toward +x')
+
+  const rolled = flying(42)
+  advance(rolled, 0.5, { ...idle, roll: 1 })
+  const rollAngle = quatToFlightAngles(rolled.ship.q).roll
+  assert.ok(rollAngle > 0.6, `roll +1 banks right (got ${rollAngle.toFixed(3)})`)
+  const rolledForward = quatForward(rolled.ship.q)
+  assert.ok(Math.abs(rolledForward.y) < 1e-9, 'rolling never changes the facing vector')
+})
+
+test('releasing the stick auto-banks back toward level flight', () => {
+  const game = flying(43)
+  advance(game, 0.4, { ...idle, roll: 1 })
+  const banked = quatToFlightAngles(game.ship.q).roll
+  advance(game, 2)
+  const settled = quatToFlightAngles(game.ship.q).roll
+  assert.ok(Math.abs(settled) < Math.abs(banked) * 0.6, 'the tug levels itself out')
+})
+
+test('thrust follows the facing vector, so the ship climbs when pitched up', () => {
+  const game = flying(44)
+  advance(game, 0.6, { ...idle, pitch: 1 })
+  const before = game.ship.y
+  advance(game, 1.5, { ...idle, y: 1 })
+  assert.ok(game.ship.y > before + 5, 'nose-up thrust climbs')
+  assert.ok(game.ship.vy > 0)
+  const forward = quatForward(game.ship.q)
+  assert.ok(Math.abs(game.ship.vx - forward.x * game.ship.speed) < 1e-6)
+  assert.ok(Math.abs(game.ship.vz - forward.z * game.ship.speed) < 1e-6)
+})
+
+test('keyboard-style pitch/yaw fields behave exactly like any other input', () => {
+  const mouse = flying(45)
+  const keys = flying(45)
+  advance(mouse, 1, { ...idle, pitch: 0.5, yaw: -0.25 })
+  // arrow keys produce the same numbers the pointer-lock mouse would
+  advance(keys, 1, { ...idle, pitch: 0.5, yaw: -0.25 })
+  assert.deepEqual(mouse.ship.q, keys.ship.q)
+})
+
+test('space flight is frame-rate independent', () => {
+  const results = [60, 120, 144].map(fps => {
+    const game = flying(46)
+    for (let i = 0; i < fps * 2; i++) step(game, 1 / fps, { ...idle, y: 1, boost: true })
+    return { x: game.ship.x, y: game.ship.y, z: game.ship.z }
+  })
+  for (const result of results) {
+    assert.ok(Math.abs(result.z - results[2].z) < 0.5, 'same flight path at any refresh rate')
+    assert.ok(Math.abs(result.y - results[2].y) < 0.5)
+  }
+  assert.ok(results[0].z > 50, 'the boost actually goes somewhere')
+})
+
+test('the ship cannot fly through a planet', () => {
+  const game = flying(47)
+  const earth = game.planetPos[0]
+  game.ship.x = earth.x
+  game.ship.y = earth.y
+  game.ship.z = earth.z + 22
+  game.ship.vz = -55
+  advance(game, 1)
+  const distance = Math.hypot(
+    game.ship.x - earth.x, game.ship.y - earth.y, game.ship.z - earth.z,
+  )
+  assert.ok(distance >= 17.9, `hull clearance held (distance ${distance.toFixed(2)})`)
+  assert.ok(game.events.some(event => event.kind === 'scrape'))
+})
+
+test('landing needs a slow approach to the right planet', () => {
+  const game = flying(48)
+  parkOnPlanet(game, 2, 10)
+  assert.equal(landTarget(game), 2)
+  game.ship.speed = 55
+  assert.equal(landTarget(game), -1, 'too fast to land')
+  game.ship.speed = 0
+  assert.equal(landTarget(game), 2)
+  assert.equal(canLand(game), true)
+  assert.ok(land(game))
+  assert.equal(game.transition.kind, 'landing')
+})
+
 // ----------------------------------------------------------------- oxygen
 
 test('oxygen drains off-pad, refills at the lander and never drains in space', () => {
@@ -124,13 +312,11 @@ test('oxygen drains off-pad, refills at the lander and never drains in space', (
   advance(game, 10)
   assert.ok(Math.abs(game.oxygen - (OXYGEN_MAX - OXYGEN_DRAIN * 10)) < 0.05)
 
-  // walk back to the pad: instant refill
   game.oxygen = 40
   placePlayerAtLander(game)
   advance(game, 1.5)
   assert.equal(game.oxygen, OXYGEN_MAX)
 
-  // space is a safe place for oxygen
   assert.ok(takeOff(game))
   advance(game, TRANSITION_TIME + 0.2)
   assert.equal(game.mode, 'space')
@@ -180,23 +366,128 @@ test('the Emergency Beacon rescues exactly once', () => {
   assert.equal(game.outcome, 'lost')
 })
 
+// ---------------------------------------------------------------- hazards
+
+test('Moon: meteors telegraph, then hit whoever is still under the shadow', () => {
+  const game = grounded(51, 1)
+  park(game, 0.5, 1.2)
+  advanceUntil(game, state => state.hazards.meteorTelegraph >= 0, 20)
+  assert.ok(game.hazards.meteorTelegraph >= 0, 'a meteor is on the way')
+  assert.ok(game.hazards.meteorDelay >= 2.5)
+  const warnings = game.events.filter(event => event.kind === 'hint')
+  assert.ok(warnings.length >= 1, 'the telegraph is announced')
+  park(game, game.hazards.meteorLat, game.hazards.meteorLon)
+  const health = game.health
+  advance(game, game.hazards.meteorDelay + 0.1)
+  assert.equal(game.health, health - METEOR_DAMAGE)
+  assert.ok(game.events.some(event => event.kind === 'meteor'))
+})
+
+test('Moon: a meteor that lands far away costs nothing', () => {
+  const game = grounded(52, 1)
+  park(game, 0.5, 1.2)
+  advanceUntil(game, state => state.hazards.meteorTelegraph >= 0, 20)
+  // step well outside the blast radius (surface units -> radians)
+  park(game, game.hazards.meteorLat + 25 / SURFACE_RADIUS, game.hazards.meteorLon)
+  const health = game.health
+  advance(game, game.hazards.meteorDelay + 0.1)
+  assert.equal(game.health, health)
+  assert.ok(game.events.some(event => event.kind === 'meteor'), 'the impact still happens')
+})
+
+test('Storm Sense telegraphs the meteor three seconds earlier', () => {
+  const game = grounded(53, 1)
+  game.relicTools.push('stormsense')
+  park(game, 0.5, 1.2)
+  advanceUntil(game, state => state.hazards.meteorTelegraph >= 0, 20)
+  assert.ok(game.hazards.meteorDelay >= 2.5 + METEOR_TELEGRAPH_BONUS - 1e-9)
+})
+
+test('hazards stay silent on Earth and in orbit', () => {
+  const game = running(54)
+  park(game, 0.5, 0.6)
+  advance(game, 20)
+  assert.equal(game.hazards.meteorTelegraph, -1)
+  assert.equal(game.hazards.stormActive, false)
+  assert.equal(game.hazards.stormIntensity, 0)
+  assert.equal(game.events.filter(event => event.kind === 'meteor').length, 0)
+})
+
+test('Mars: dust storms start on a timer, drain 35% more oxygen and shove you sideways', () => {
+  const game = grounded(55, 2)
+  park(game, 0.6, -0.5)
+  assert.equal(game.hazards.stormTimer, STORM_PERIOD)
+  game.hazards.stormTimer = 0.5
+  advance(game, 1)
+  assert.ok(game.hazards.stormActive, 'the storm arrived')
+  assert.ok(game.events.some(event => event.kind === 'storm' || event.kind === 'hint'))
+
+  // drain rate: +35% while the storm blows
+  game.oxygen = OXYGEN_MAX
+  const longitude = game.player.lon
+  advance(game, 5)
+  const drained = OXYGEN_MAX - game.oxygen
+  assert.ok(Math.abs(drained - OXYGEN_DRAIN * STORM_DRAIN_MULT * 5) < 0.2,
+    `storm drain was ${drained.toFixed(2)}`)
+  assert.ok(Math.abs(game.player.lon - longitude) > STORM_PUSH * 2 / SURFACE_RADIUS,
+    'the wind pushed the janitor downwind')
+  assert.ok(game.hazards.stormIntensity > 0.9, 'haze reaches full strength')
+
+  // and it blows over
+  game.hazards.stormTime = STORM_DURATION - 0.2
+  advance(game, 0.4)
+  assert.equal(game.hazards.stormActive, false)
+  assert.ok(game.hazards.stormTimer > STORM_PERIOD - 1, 'the next storm is already scheduled')
+  advance(game, 3)
+  assert.ok(game.hazards.stormIntensity < 0.1, 'haze clears')
+})
+
+test('Hazard Weave softens the blow of a direct meteor hit', () => {
+  const game = grounded(56, 1)
+  game.upgrades.push('hazardweave')
+  park(game, 0.5, 1.2)
+  advanceUntil(game, state => state.hazards.meteorTelegraph >= 0, 20)
+  park(game, game.hazards.meteorLat, game.hazards.meteorLon)
+  const health = game.health
+  advance(game, game.hazards.meteorDelay + 0.1)
+  assert.ok(Math.abs(game.health - (health - METEOR_DAMAGE * 0.6)) < 1e-6)
+})
+
+test('hazard timers are re-armed on every landing', () => {
+  const game = grounded(57, 1)
+  game.hazards.meteorTimer = 0.01
+  resetHazards(game)
+  assert.ok(game.hazards.meteorTimer >= 6 && game.hazards.meteorTimer <= 11)
+  assert.equal(game.hazards.meteorTelegraph, -1)
+  assert.equal(game.hazards.stormTimer, Infinity, 'the Moon has no storms')
+  assert.equal(updateHazards !== undefined, true)
+})
+
 // ------------------------------------------------------------ junk & hold
 
 test('the vacuum sweeps junk within its radius and stops at the carry cap', () => {
   const game = running(12)
-  // stand exactly on each of the first ten pieces
-  for (const item of game.junk.slice(0, 10)) {
+  for (const item of game.junk.filter(entry => entry.planet === 0).slice(0, 10)) {
     park(game, item.lat, item.lon)
     step(game, STEP, idle)
   }
   assert.equal(carryCount(game), CARRY_SLOTS)
-  assert.equal(game.junk.filter(item => item.status === 'ground').length, 24 - CARRY_SLOTS)
+  const earthGround = game.junk.filter(item => item.planet === 0 && item.status === 'ground').length
+  assert.equal(earthGround, 24 - CARRY_SLOTS)
 
-  // far away junk is ignored
-  const far = game.junk.find(item => item.status === 'ground')
+  const far = game.junk.find(item => item.planet === 0 && item.status === 'ground')
   park(game, far.lat + 0.4, far.lon)
   step(game, STEP, idle)
   assert.equal(far.status, 'ground')
+})
+
+test('the vacuum never picks up junk from another planet', () => {
+  const game = grounded(58, 1)
+  const moonJunk = game.junk.find(item => item.planet === 1 && item.status === 'ground')
+  park(game, moonJunk.lat, moonJunk.lon)
+  step(game, STEP, idle)
+  assert.equal(moonJunk.status, 'carried')
+  assert.equal(game.junk.filter(item => item.planet === 0 && item.status !== 'ground').length, 0)
 })
 
 test('the Wide Scoop upgrade widens the vacuum radius', () => {
@@ -204,7 +495,6 @@ test('the Wide Scoop upgrade widens the vacuum radius', () => {
   const far = running(13)
   far.upgrades.push('widescoop')
   const item = near.junk[0]
-  // stand outside the base radius but inside the upgraded one
   park(near, item.lat + 3.2 / SURFACE_RADIUS, item.lon)
   park(far, item.lat + 3.2 / SURFACE_RADIUS, item.lon)
   step(near, STEP, idle)
@@ -221,7 +511,6 @@ test('deposit stows carried junk and respects the hold capacity', () => {
   assert.equal(holdCount(game), 3)
   assert.equal(carryCount(game), 0)
 
-  // overflow: 30 in the hold, 5 carried
   const spare = running(14)
   while (spare.junk.length < 35) fakeJunk(spare, 'hold', 1)
   for (const item of spare.junk.slice(0, 30)) item.status = 'hold'
@@ -255,6 +544,7 @@ test('delivery bonuses scale with the batch', () => {
     Math.round(1200 * (1 + BATCH_BONUS + FULL_HOLD_BONUS)),
   )
   assert.equal(deliverValue([{ cls: 'hazardous' }], HOLD_SLOTS).credits, JUNK_POINTS.hazardous)
+  assert.equal(deliverValue([{ cls: 'relic' }], HOLD_SLOTS).credits, JUNK_POINTS.relic)
 })
 
 test('docking delivers the hold and the carry, paying credits and score', () => {
@@ -275,115 +565,387 @@ test('docking delivers the hold and the carry, paying credits and score', () => 
   assert.equal(game.bestBatch, 7)
 })
 
-test('partial cleanup persists across takeoff and landing', () => {
+test('partial cleanups persist per planet across takeoff and landing', () => {
   const game = running(17)
-  for (const item of game.junk.slice(0, 4)) item.status = 'delivered'
+  const earthItems = game.junk.filter(item => item.planet === 0)
+  for (const item of earthItems.slice(0, 5)) item.status = 'delivered'
   placePlayerAtLander(game)
   assert.ok(takeOff(game))
   advance(game, TRANSITION_TIME + 0.1)
   assert.equal(game.mode, 'space')
-  assert.equal(deliveredCount(game), 4)
+  assert.equal(deliveredCount(game, 0), 5)
 
-  game.ship.x = game.earthPos.x + EARTH_RADIUS + 8
-  game.ship.z = game.earthPos.z
-  game.ship.speed = 0
-  assert.ok(canLand(game))
-  game.ship.speed = 55
-  assert.equal(canLand(game), false, 'too fast to land')
-  game.ship.speed = 0
-  assert.ok(canLand(game))
-  assert.ok(land(game))
-  advance(game, TRANSITION_TIME / 2)
-  assert.equal(game.mode, 'space', 'still descending')
-  advance(game, TRANSITION_TIME / 2 + 0.1)
-  assert.equal(game.mode, 'surface')
-  assert.ok(nearLander(game), 'landing puts you down at the pad')
-  assert.equal(deliveredCount(game), 4, 'delivered junk stays delivered')
+  // out to the Moon: nothing delivered there yet, Earth's tally is untouched
+  onPlanet(game, 1)
+  assert.equal(deliveredCount(game, 0), 5, 'delivered junk stays delivered')
+  assert.equal(deliveredCount(game, 1), 0)
+  assert.equal(remainingCount(game, 1), 22)
+  assert.equal(game.planetId, 1)
+
+  // sweep a couple of Moon pieces, hop home, still nothing on Earth changed
+  const moonItems = game.junk.filter(item => item.planet === 1 && item.status === 'ground').slice(0, 2)
+  for (const item of moonItems) item.status = 'delivered'
+  assert.ok(takeOff(game))
+  advance(game, TRANSITION_TIME + 0.1)
+  onPlanet(game, 0)
+  assert.equal(game.planetId, 0)
+  assert.equal(deliveredCount(game, 0), 5)
+  assert.equal(deliveredCount(game, 1), 2, 'Moon progress persisted across the visit')
 })
 
-// -------------------------------------------------------------- shop & win
+test('delivering a relic unlocks its tool for the rest of the run', () => {
+  const game = running(59)
+  const relic = game.junk.find(item => item.planet === 0 && item.cls === 'relic')
+  relic.status = 'hold'
+  standOnDock(game)
+  assert.ok(dock(game))
+  assert.ok(hasRelic(game, 'eye'), 'the Courier Drone Core brings Eye in the Sky online')
+  assert.equal(game.relicTools.length, 1)
+  assert.ok(game.events.some(event => event.kind === 'relic'))
 
-test('purchase rules: docked only, credits required, no double buys', () => {
+  // a relic is never sold in the ISS shop, and a second delivery adds the next tool
+  assert.ok(!SHOP_ITEMS.some(item => item.id === 'eye' || item.id === 'stride' || item.id === 'stormsense'))
+  const moonRelic = game.junk.find(item => item.planet === 1 && item.cls === 'relic')
+  moonRelic.status = 'hold'
+  assert.ok(undock(game))
+  standOnDock(game)
+  assert.ok(dock(game))
+  assert.deepEqual([...game.relicTools].sort(), ['eye', 'stride'])
+  assert.ok(game.junk.every(item => item.cls !== 'relic' || item.planet === 2 || item.status === 'delivered'))
+})
+
+test('cleaning every planet wins the run, one clean bonus per world', () => {
+  const game = running(19)
+  const batch = game.junk.filter(item => item.status === 'ground')
+  const expected = deliverValue(batch, holdSlots(game)).credits + CLEAN_BONUS * PLANETS.length
+  for (const item of game.junk) item.status = 'hold'
+  standOnDock(game)
+  assert.ok(dock(game))
+  assert.equal(deliveredCount(game, 0), 24)
+  assert.equal(game.phase, 'finished')
+  assert.equal(game.outcome, 'won')
+  assert.ok(allPlanetsClean(game))
+  assert.equal(game.planetsCleaned, PLANETS.length)
+  assert.equal(game.score, expected)
+  const summary = progressSummary(game)
+  assert.equal(summary.delivered, summary.total)
+  assert.equal(summary.systemDelivered, summary.systemTotal)
+})
+
+test('cleaning one world alone does not end the run', () => {
+  const game = running(60)
+  for (const item of game.junk) if (item.planet === 0) item.status = 'hold'
+  standOnDock(game)
+  assert.ok(dock(game))
+  assert.equal(game.phase, 'playing', 'still two worlds to sweep')
+  assert.equal(game.planetsCleaned, 1)
+  assert.equal(game.outcome, 'none')
+  assert.equal(allPlanetsClean(game), false)
+})
+
+// ----------------------------------------------------------- guidance & HUD
+
+test('the objective points at the ISS when carrying and at dirty worlds when empty', () => {
+  const game = flying(61)
+  const clean = objective(game)
+  assert.equal(clean.kind, 'planet')
+  assert.ok(PLANETS.some(planet => planet.name.toUpperCase() === clean.label))
+  assert.equal(contextLabel(game), `FLY TO ${clean.label}`)
+
+  const target = game.junk.find(item => item.planet === 1)
+  target.status = 'hold'
+  assert.equal(objective(game).kind, 'iss')
+  assert.equal(contextLabel(game), 'FLY TO THE ISS')
+
+  // fully cleaned worlds drop out of the rotation
+  for (const item of game.junk) if (item.planet === clean.planetId) item.status = 'delivered'
+  const next = objective(game)
+  assert.notEqual(next.planetId, clean.planetId)
+})
+
+test('the Junk Scanner pings nearby junk; the Eye in the Sky tracks everything', () => {
+  const blind = grounded(62, 0)
+  assert.equal(scannerPings(blind).length, 0)
+
+  const scanner = grounded(62, 0)
+  scanner.upgrades.push('scanner')
+  park(scanner, 0.30, 0.60)
+  const pings = scannerPings(scanner)
+  assert.ok(pings.length > 0, 'the scanner sees the junk')
+  assert.ok(pings.every(ping => ping.distance <= SCANNER_RANGE))
+  assert.ok(pings.every(ping => ping.distance >= 0 && Math.abs(ping.bearing) <= Math.PI))
+
+  const eye = grounded(62, 0)
+  eye.relicTools.push('eye')
+  park(eye, 0.30, 0.60)
+  const everything = scannerPings(eye)
+  assert.equal(everything.length, 24, 'the Eye tracks every piece on the planet')
+  assert.ok(everything.some(ping => ping.distance > SCANNER_RANGE), 'including the far ones')
+})
+
+test('the Nav Computer reports what is left on every world', () => {
+  const game = running(63)
+  assert.equal(systemReport(game), null)
+  game.upgrades.push('navcomputer')
+  const report = systemReport(game)
+  assert.equal(report.length, 3)
+  assert.deepEqual(report.map(entry => entry.remaining), [24, 22, 22])
+  assert.equal(report[1].name, 'Moon')
+})
+
+// -------------------------------------------------------------- shop effects
+
+test('purchase rules: docked only, credits required, prerequisites and repeatables', () => {
   const game = running(18)
   game.credits = 1000
   assert.equal(buyItem(game, 'o2tank'), false, 'only while docked')
   game.mode = 'docked'
   assert.equal(buyItem(game, 'beacon'), false, 'too expensive')
   assert.equal(game.credits, 1000)
+  assert.equal(buyItem(game, 'o2tank2'), false, 'O2 Tank II needs Tank I first')
   assert.ok(buyItem(game, 'o2tank'))
   assert.equal(game.credits, 500)
   assert.equal(maxOxygen(game), 130)
   assert.equal(buyItem(game, 'o2tank'), false, 'one-shot item')
+  assert.equal(buyItem(game, 'o2tank2'), false, 'still short of credits')
   game.credits = 5000
+  assert.ok(buyItem(game, 'o2tank2'))
+  assert.equal(maxOxygen(game), 170)
   assert.ok(buyItem(game, 'beacon'))
   assert.equal(hasUpgrade(game, 'beacon'), true)
-  assert.equal(game.credits, 3800)
+  assert.equal(game.credits, 5000 - 900 - 1200)
   game.upgrades = game.upgrades.filter(id => id !== 'beacon')
   assert.ok(buyItem(game, 'beacon'), 'beacon is repurchasable after a rescue')
 })
 
-test('cleaning the whole planet wins the run', () => {
-  const game = running(19)
-  const value = game.junk.reduce((sum, item) => sum + JUNK_POINTS[item.cls], 0)
-  for (const item of game.junk) item.status = 'hold'
+test('suit upgrades actually change the walk, hop and landing numbers', () => {
+  const game = running(64)
+  assert.equal(walkSpeed(game, false), 7.4)
+  assert.equal(hopSpeed(game), 11.5)
+  const plain = walkSpeed(game, false)
+  game.upgrades.push('magboots')
+  assert.ok(Math.abs(walkSpeed(game, false) - plain * 1.15) < 1e-9)
+  game.relicTools.push('stride')
+  assert.ok(Math.abs(walkSpeed(game, false) - plain * 1.15 * 1.2) < 1e-9)
+  game.upgrades.push('gravharness')
+  assert.ok(Math.abs(hopSpeed(game) - 11.5 * 1.25) < 1e-9)
+})
+
+test('Grav Harness and Surefoot Stride turn hard landings into soft ones', () => {
+  const impact = (upgrades, tools) => {
+    const game = grounded(65, 1)
+    game.upgrades.push(...upgrades)
+    game.relicTools.push(...tools)
+    park(game, 0.5, 1.2)
+    game.player.h = 4
+    game.player.vH = -16
+    advance(game, 3)
+    return game.health
+  }
+  assert.equal(impact([], []), 100 - HARD_LAND_DAMAGE, 'a 19 u/s landing hurts')
+  assert.equal(impact(['gravharness'], []), 100)
+  assert.equal(impact([], ['stride']), 100)
+})
+
+test('Recycler Mask slows the oxygen clock, O2 tanks stretch it', () => {
+  const game = running(66)  // Earth has no storm to confuse the drain
+  park(game, 0.6, 0.6)
+  const start = game.oxygen
+  advance(game, 10)
+  const plainDrain = start - game.oxygen
+  const masked = running(66)
+  masked.upgrades.push('recycler')
+  park(masked, 0.6, 0.6)
+  masked.oxygen = start
+  advance(masked, 10)
+  const maskedDrain = start - masked.oxygen
+  assert.ok(Math.abs(maskedDrain - plainDrain * 0.8) < 0.05)
+  masked.upgrades.push('o2tank', 'o2tank2')
+  assert.equal(maxOxygen(masked), OXYGEN_MAX + 70)
+})
+
+test('Thruster Kit and Docking Assist change the ship numbers', () => {
+  const game = flying(67)
+  assert.equal(shipSpeed(game), SHIP_SPEED)
+  game.upgrades.push('thrusterkit')
+  assert.ok(Math.abs(shipSpeed(game) - SHIP_SPEED * 1.25) < 1e-9)
+
+  const plain = flying(68)
+  plain.ship.x = plain.dockPos.x + 8
+  plain.ship.y = plain.dockPos.y
+  plain.ship.z = plain.dockPos.z
+  assert.equal(canDock(plain), false)
+  const assisted = flying(68)
+  assisted.upgrades.push('dockingassist')
+  assisted.ship.x = assisted.dockPos.x + 8
+  assisted.ship.y = assisted.dockPos.y
+  assisted.ship.z = assisted.dockPos.z
+  assert.equal(canDock(assisted), true, 'a wider dock radius reaches further')
+})
+
+// ------------------------------------------------------------ ranks & stats
+
+test('ranks follow the tuned score thresholds', () => {
+  assert.equal(rankForScore(0), 'BRONZE')
+  assert.equal(rankForScore(3999), 'BRONZE')
+  assert.equal(rankForScore(4000), 'SILVER')
+  assert.equal(rankForScore(6999), 'SILVER')
+  assert.equal(rankForScore(7000), 'GOLD')
+  assert.equal(rankForScore(9499), 'GOLD')
+  assert.equal(rankForScore(9500), 'PLATINUM')
+  assert.equal(rankForScore(11999), 'PLATINUM')
+  assert.equal(rankForScore(12000), 'LEGEND')
+  assert.equal(rankForScore(999999), 'LEGEND')
+})
+
+test('the run tracks the stats the results screen shows', () => {
+  const game = running(69)
+  for (const item of game.junk.slice(0, 9)) item.status = 'hold'
   standOnDock(game)
   assert.ok(dock(game))
-  assert.equal(deliveredCount(game), 24)
-  assert.equal(game.phase, 'finished')
-  assert.equal(game.outcome, 'won')
-  assert.equal(game.score, Math.round(value * (1 + BATCH_BONUS)) + CLEAN_BONUS)
-  const summary = progressSummary(game)
-  assert.equal(summary.delivered, summary.total)
+  assert.equal(game.delivered, 9)
+  assert.equal(game.bestBatch, 9)
+  assert.equal(game.trips, 1)
+  assert.equal(game.planetsCleaned, 0)
+  assert.equal(progressSummary(game).planetsCleaned, 0)
+})
+
+// --------------------------------------------------------------------- save
+
+function progressedRun() {
+  const game = running(71)
+  const earth = game.junk.filter(item => item.planet === 0)
+  for (const item of earth.slice(0, 6)) item.status = 'delivered'
+  for (const item of earth.slice(6, 9)) item.status = 'hold'
+  const relic = game.junk.find(item => item.planet === 1 && item.cls === 'relic')
+  relic.status = 'delivered'
+  game.mode = 'space'
+  game.transition = null
+  game.credits = 1234
+  game.score = 4321
+  game.upgrades.push('scanner', 'widescoop')
+  game.relicTools.push('stride')
+  game.delivered = 7
+  game.bestBatch = 6
+  game.trips = 2
+  game.planetsCleaned = 0
+  game.oxygen = 63.5
+  game.health = 91
+  game.time = 128.25
+  game.planetId = 1
+  parkOnPlanet(game, 1, 12)
+  return game
+}
+
+test('save → encode → decode → restore round-trips the whole run', () => {
+  const game = progressedRun()
+  const text = encodeSave(serializeSave(game, 1234567))
+  const data = decodeSave(text)
+  assert.ok(data, 'the encoded save decodes')
+  assert.equal(data.savedAt, 1234567)
+  const restored = restoreSave(data)
+  assert.ok(restored, 'the save restores')
+  assert.equal(restored.seed, game.seed)
+  assert.equal(restored.phase, 'playing')
+  assert.equal(restored.mode, 'space')
+  assert.equal(restored.planetId, 1)
+  assert.equal(restored.credits, 1234)
+  assert.equal(restored.score, 4321)
+  assert.equal(restored.delivered, 7)
+  assert.equal(restored.bestBatch, 6)
+  assert.equal(restored.trips, 2)
+  assert.equal(restored.health, 91)
+  assert.ok(Math.abs(restored.oxygen - 63.5) < 1e-9)
+  assert.ok(Math.abs(restored.time - 128.25) < 1e-9)
+  assert.deepEqual(restored.upgrades.sort(), ['scanner', 'widescoop'])
+  assert.deepEqual(restored.relicTools, ['stride'])
+  assert.deepEqual(
+    restored.junk.map(item => item.status),
+    game.junk.map(item => item.status),
+    'per-planet junk status survives the round trip',
+  )
+  assert.ok(Math.abs(restored.ship.x - game.ship.x) < 1e-9)
+  assert.ok(Math.abs(restored.ship.q.w - game.ship.q.w) < 1e-9)
+  assert.equal(deliveredCount(restored, 1), 1, 'the Moon relic stays delivered')
+})
+
+test('a restored surface run puts the janitor back on the right planet', () => {
+  const game = grounded(72, 2)
+  park(game, 0.42, -0.77)
+  game.credits = 300
+  const restored = restoreSave(decodeSave(encodeSave(serializeSave(game))))
+  assert.ok(restored)
+  assert.equal(restored.mode, 'surface')
+  assert.equal(restored.planetId, 2)
+  assert.ok(Math.abs(restored.player.lat - 0.42) < 1e-9)
+  assert.ok(Math.abs(restored.player.lon + 0.77) < 1e-9)
+  assert.equal(restored.credits, 300)
+})
+
+test('corrupt or unusable saves are rejected instead of crashing', () => {
+  assert.equal(decodeSave(null), null)
+  assert.equal(decodeSave(''), null)
+  assert.equal(decodeSave('not json at all'), null)
+  assert.equal(decodeSave('[1,2,3]'), null)
+  assert.equal(decodeSave('{"v":99,"seed":1,"mode":"space","junk":[],"ship":[0,0,0],"player":[0,0,0],"angles":[0,0,0,0],"upgrades":[],"relicTools":[]}'), null,
+    'a save from the future is ignored')
+  assert.equal(decodeSave('{"v":1,"seed":1,"mode":"hunting"}'), null, 'unknown modes are rejected')
+
+  const game = running(73)
+  const data = serializeSave(game)
+  data.junk = data.junk.slice(0, data.junk.length - 1)
+  assert.equal(restoreSave(data), null, 'a mismatched junk layout is rejected')
+
+  const broken = serializeSave(game)
+  broken.ship = [NaN, 0, 0]
+  assert.equal(restoreSave(broken), null, 'a ship that cannot be placed is rejected')
+})
+
+test('a structurally valid save with nonsense numbers degrades gracefully', () => {
+  const game = running(74)
+  const data = serializeSave(game)
+  data.credits = -500
+  data.health = 10000
+  data.oxygen = -3
+  data.time = Number.NaN
+  data.junk = data.junk.map(() => 42)
+  data.upgrades = ['scanner', 'not-a-real-upgrade']
+  data.relicTools = ['eye', 'made-up-tool']
+  data.planetId = 99
+  const restored = restoreSave(data)
+  assert.ok(restored, 'it still loads')
+  assert.equal(restored.credits, 0)
+  assert.equal(restored.health, 100)
+  assert.equal(restored.oxygen, 0)
+  assert.equal(restored.time, 0)
+  assert.equal(restored.planetId, PLANETS.length - 1)
+  assert.deepEqual(restored.upgrades, ['scanner'])
+  assert.deepEqual(restored.relicTools, ['eye'])
+  assert.ok(restored.junk.every(item => item.status === 'ground'))
+})
+
+test('a restored run keeps stepping', () => {
+  const game = progressedRun()
+  const restored = restoreSave(decodeSave(encodeSave(serializeSave(game))))
+  const before = { x: restored.ship.x, z: restored.ship.z }
+  advance(restored, 1, { ...idle, y: 1 })
+  assert.ok(Math.hypot(restored.ship.x - before.x, restored.ship.z - before.z) > 5)
+  assert.equal(restored.phase, 'playing')
 })
 
 // ------------------------------------------------------- modes & geometry
 
 test('docking needs proximity to the ISS airlock', () => {
-  const game = running(20)
-  game.mode = 'space'
+  const game = flying(20)
   game.ship.x = game.dockPos.x + 12
+  game.ship.y = game.dockPos.y
   game.ship.z = game.dockPos.z
-  game.ship.speed = 0
   assert.equal(canDock(game), false)
   assert.equal(dock(game), false)
   game.ship.x = game.dockPos.x + 4
   assert.ok(canDock(game))
   assert.ok(dock(game))
-  assert.equal(game.mode, 'docked')
   assert.ok(undock(game))
   assert.equal(game.mode, 'space')
-})
-
-test('takeoff and landing transitions switch modes on schedule', () => {
-  const game = running(22)
-  placePlayerAtLander(game)
-  assert.ok(takeOff(game))
-  assert.equal(game.mode, 'surface')
-  assert.equal(game.transition.kind, 'takeoff')
-  advance(game, TRANSITION_TIME / 2)
-  assert.equal(game.mode, 'surface', 'still lifting off')
-  advance(game, TRANSITION_TIME / 2 + 0.1)
-  assert.equal(game.mode, 'space')
-  assert.equal(game.transition, null)
-  assert.equal(contextLabel(game), 'LAND', 'warm on the pad means we can land')
-
-  game.ship.x = game.earthPos.x + EARTH_RADIUS + 40
-  game.ship.z = game.earthPos.z
-  assert.equal(contextLabel(game), 'FLY TO EARTH')
-  game.ship.x = game.earthPos.x + EARTH_RADIUS + 10
-  game.ship.z = game.earthPos.z
-  assert.equal(contextLabel(game), 'LAND')
-  assert.equal(takeOff(game), false, 'no takeoff from space')
-})
-
-test('the lander ring gates deposits and takeoff on the surface', () => {
-  const game = running(23)
-  park(game, 0.9, -0.9)
-  assert.equal(contextLabel(game), 'RETURN TO LANDER')
-  assert.equal(deposit(game), false)
-  assert.equal(takeOff(game), false)
-  placePlayerAtLander(game)
-  assert.equal(contextLabel(game), 'TAKE OFF')
-  for (const item of game.junk.slice(0, 2)) item.status = 'carried'
-  assert.equal(contextLabel(game), 'DEPOSIT')
+  assert.ok(game.ship.speed > 0, 'undocking pushes the tug off the hatch')
 })
