@@ -13,6 +13,8 @@ export interface ShipModel {
   group: THREE.Group
   thruster: THREE.Mesh<THREE.ConeGeometry, THREE.MeshBasicMaterial>
   thrusterGlow: THREE.Sprite
+  /** short-range fill light that keeps the hull readable in space */
+  heroLight: THREE.PointLight
 }
 
 type Pt = [number, number]
@@ -161,6 +163,12 @@ const accentMaterial = new THREE.MeshBasicMaterial({ color: 0x63e2ff })
 export function buildShip(): ShipModel {
   const group = new THREE.Group()
 
+  // hero fill: a short-range point light along for the ride, so the hull reads
+  // in space where the sun key only lights the far side (range keeps it off planets)
+  const heroLight = new THREE.PointLight(0xdfe9ff, 14, 18, 2)
+  heroLight.position.set(2.4, 3.6, 3.0)
+  group.add(heroLight)
+
   // ---------------------------------------------------------------- hull
   group.add(new THREE.Mesh(loft([
     { z: 3.5, w: 0.05, h: 0.05, b: 0.05 },
@@ -183,12 +191,33 @@ export function buildShip(): ShipModel {
   canopy.position.y = 0.36
   group.add(canopy)
 
-  // dark dorsal deck under the glass, carried back to the engine pod
-  const deck = new THREE.Mesh(plate([
-    [0.82, 1.85], [0.9, 0.1], [0.72, -1.5], [-0.72, -1.5], [-0.9, 0.1], [-0.82, 1.85],
-  ], 0.16, 'xz'), darkMaterial)
-  deck.position.y = 0.34
-  group.add(deck)
+  // dark dorsal spine that hugs the hull ridge from the canopy to the pod
+  group.add(new THREE.Mesh(loft([
+    { z: 0.16, w: 0.3, h: 0.5, b: -0.2 },
+    { z: -0.5, w: 0.46, h: 0.62, b: -0.24 },
+    { z: -1.4, w: 0.44, h: 0.54, b: -0.22 },
+    { z: -2.2, w: 0.38, h: 0.44, b: -0.18 },
+    { z: -2.72, w: 0.3, h: 0.36, b: -0.14 },
+  ]), darkMaterial))
+
+  // dark anti-glare panel ahead of the glass, as on the reference nose
+  const glare = new THREE.Mesh(plate([
+    [0.34, 2.45], [0.42, 1.72], [-0.42, 1.72], [-0.34, 2.45],
+  ], 0.1, 'xz'), darkMaterial)
+  glare.position.y = 0.2
+  glare.rotation.x = 0.1
+  group.add(glare)
+
+  // fitted dark collar the canopy sits in
+  const collar = new THREE.Mesh(loft([
+    { z: 1.66, w: 0.22, h: 0.22, b: -0.1 },
+    { z: 1.3, w: 0.6, h: 0.28, b: -0.14 },
+    { z: 0.72, w: 0.72, h: 0.3, b: -0.16 },
+    { z: 0.3, w: 0.56, h: 0.26, b: -0.12 },
+    { z: 0.08, w: 0.28, h: 0.18, b: -0.08 },
+  ]), darkMaterial)
+  collar.position.y = 0.3
+  group.add(collar)
 
   const lip = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.05, 0.16), accentMaterial)
   lip.position.set(0, 0.72, 1.28)
@@ -229,33 +258,45 @@ export function buildShip(): ShipModel {
   }
 
   // ------------------------------------------------------------ tail fin
+  // sits right behind the canopy, as on the reference, clear of the pod
   const fin = new THREE.Mesh(plate([
-    [-1.15, 0.42], [-2.6, 0.5], [-2.88, 1.6], [-2.12, 1.84],
+    [-0.5, 0.4], [-1.55, 0.48], [-1.98, 1.72], [-1.16, 2.0],
   ], 0.12, 'yz'), hullMaterial)
   fin.rotation.z = 0.07
   group.add(fin)
   const finCap = new THREE.Mesh(plate([
-    [-2.16, 1.72], [-2.84, 1.48], [-2.94, 1.76], [-2.32, 1.95],
+    [-1.2, 1.86], [-1.94, 1.6], [-2.06, 1.9], [-1.36, 2.12],
   ], 0.14, 'yz'), darkMaterial)
   finCap.rotation.z = 0.07
   group.add(finCap)
 
   // ------------------------------------------------------- top engine pod
-  const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.44, 1.5, 14), darkMaterial)
+  // mid-grey barrel with darker collars, tucked low behind the fin
+  const podBody = new THREE.MeshStandardMaterial({ color: 0x5b6674, roughness: 0.5, metalness: 0.42 })
+  const podBand = new THREE.MeshStandardMaterial({ color: 0x3c4553, roughness: 0.6, metalness: 0.4 })
+  const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 1.0), podBand)
+  pylon.position.set(0, 0.62, -2.4)
+  group.add(pylon)
+
+  const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.5, 16), podBody)
   pod.rotation.x = Math.PI / 2
-  pod.position.set(0, 0.84, -2.1)
+  pod.position.set(0, 0.86, -2.5)
   group.add(pod)
-  const podRib = new THREE.Mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.26, 14), darkMaterial)
-  podRib.rotation.x = Math.PI / 2
-  podRib.position.set(0, 0.84, -1.6)
-  group.add(podRib)
-  const podRing = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.16, 14), accentMaterial)
+  const podCollarA = new THREE.Mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.18, 16), podBand)
+  podCollarA.rotation.x = Math.PI / 2
+  podCollarA.position.set(0, 0.86, -1.95)
+  group.add(podCollarA)
+  const podCollarB = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.22, 16), podBand)
+  podCollarB.rotation.x = Math.PI / 2
+  podCollarB.position.set(0, 0.86, -2.9)
+  group.add(podCollarB)
+  const podRing = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.12, 16), accentMaterial)
   podRing.rotation.x = Math.PI / 2
-  podRing.position.set(0, 0.84, -2.78)
+  podRing.position.set(0, 0.86, -3.17)
   group.add(podRing)
-  const podCore = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.1, 12), accentMaterial)
+  const podCore = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 12), accentMaterial)
   podCore.rotation.x = Math.PI / 2
-  podCore.position.set(0, 0.84, -2.9)
+  podCore.position.set(0, 0.86, -3.26)
   group.add(podCore)
 
   // ---------------------------------------------------- rear main nozzles
@@ -286,5 +327,5 @@ export function buildShip(): ShipModel {
   thrusterGlow.scale.setScalar(3.4)
   group.add(thrusterGlow)
 
-  return { group, thruster, thrusterGlow }
+  return { group, thruster, thrusterGlow, heroLight }
 }

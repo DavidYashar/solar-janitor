@@ -680,6 +680,7 @@ export function createWorld(container: HTMLElement): World {
   const parked = buildShip()
   parked.group.scale.setScalar(1.3)
   parked.group.position.set(0, 2.2, 0)
+  parked.heroLight.intensity = 0   // daylight surface needs no fill, and it would pool on the ground
   parked.thrusterGlow.visible = false
   parked.thruster.scale.setScalar(0.001)
 
