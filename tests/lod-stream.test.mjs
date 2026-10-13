@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { LOD_FRAME_BUDGET_MS, LOD_URGENT_BUDGET_MS, LOD_SPACE_TUNING } from '../src/sim/config.ts'
+import { LOD_FRAME_BUDGET_MS, LOD_URGENT_BUDGET_MS, LOD_SPACE_TUNING, SPACE_SCALE } from '../src/sim/config.ts'
 import { createLodStreamer } from '../src/render/lod.ts'
 
 /**
@@ -102,13 +102,13 @@ test('a world starts as its impostor and refines as the janitor closes in', () =
 
   // far away: nothing to build
   clock = 0
-  streamer.update([query(0, 2000)], 1 / 60)
+  streamer.update([query(0, 2000 * SPACE_SCALE)], 1 / 60)
   assert.equal(streamer.tierOf(0), 0)
   assert.equal(streamer.pending(), 0)
   assert.equal(streamer.lastSpend(), 0, 'an out-of-range world costs nothing')
 
   // inside the stand-in band: the low tier appears across frames, not in one go
-  const frames = pump(streamer, [query(0, 500)], () => streamer.tierOf(0) >= 1)
+  const frames = pump(streamer, [query(0, 500 * SPACE_SCALE)], () => streamer.tierOf(0) >= 1)
   assert.ok(frames >= 2, `the stand-in took ${frames} frames of slices`)
   assert.equal(streamer.shownOf(0), 1)
   const low = subject.state.layers.get(1)
@@ -121,13 +121,13 @@ test('a world starts as its impostor and refines as the janitor closes in', () =
 
   // the tier below fades out instead of blinking off
   clock = 0
-  streamer.update([query(0, 500)], 0.5)
+  streamer.update([query(0, 500 * SPACE_SCALE)], 0.5)
   assert.equal(subject.state.impostorMaterial.opacity, 0, 'the impostor faded away')
   assert.equal(subject.state.impostorObject.visible, false)
   assert.equal(low.object.scale.value, 1, 'the reveal settled')
 
   // close enough for the detail tier
-  pump(streamer, [query(0, 120)], () => streamer.tierOf(0) >= 2)
+  pump(streamer, [query(0, 120 * SPACE_SCALE)], () => streamer.tierOf(0) >= 2)
   assert.equal(streamer.tierOf(0), 2)
   assert.equal(subject.state.layers.get(2).object.visible, true)
   assert.equal(low.object.visible, false, 'the stand-in makes way once the detail is up')
@@ -137,15 +137,15 @@ test('flying away demotes the tier and the impostor comes back at full strength'
   const streamer = createLodStreamer()
   const subject = fakeSubject(7, fakeObject())
   streamer.register(subject)
-  pump(streamer, [query(7, 100)], () => streamer.tierOf(7) >= 2)
+  pump(streamer, [query(7, 100 * SPACE_SCALE)], () => streamer.tierOf(7) >= 2)
   assert.equal(streamer.tierOf(7), 2)
   clock = 0
-  streamer.update([query(7, 100)], 0.6) // let the impostor fade fully out
+  streamer.update([query(7, 100 * SPACE_SCALE)], 0.6) // let the impostor fade fully out
   assert.equal(subject.state.impostorMaterial.opacity, 0)
 
   // way out past the exit band: the glow is what you see again
   clock = 0
-  streamer.update([query(7, 5000)], 1 / 60)
+  streamer.update([query(7, 5000 * SPACE_SCALE)], 1 / 60)
   assert.equal(streamer.tierOf(7), 2, 'built geometry is kept, never re-generated')
   assert.equal(streamer.shownOf(7), 0, 'but the scheduler demotes what is on screen')
   assert.equal(streamer.pending(), 0)
@@ -161,7 +161,7 @@ test('the frame budget spreads a long build over several frames', () => {
   let frames = 0
   while (streamer.tierOf(3) < 2 && frames < 200) {
     clock = 0
-    streamer.update([query(3, 120, 2)], 1 / 60)
+    streamer.update([query(3, 120 * SPACE_SCALE, 2)], 1 / 60)
     const spent = streamer.lastSpend()
     assert.ok(
       spent <= LOD_URGENT_BUDGET_MS + sliceCost,
@@ -171,7 +171,7 @@ test('the frame budget spreads a long build over several frames', () => {
   }
   assert.ok(frames >= 4, `an 80-slice build took ${frames} frames, not one long stall`)
   clock = 0
-  streamer.update([query(3, 120, 2)], 1 / 60)
+  streamer.update([query(3, 120 * SPACE_SCALE, 2)], 1 / 60)
   assert.equal(streamer.pending(), 0, 'the queue empties once the world is warm')
   assert.equal(streamer.lastSpend(), 0)
   assert.equal(streamer.tierOf(3), 2)
@@ -183,10 +183,10 @@ test('reduced motion skips the reveal and fade animation', () => {
   const subject = fakeSubject(5, fakeObject())
   streamer.register(subject)
   streamer.setReducedMotion(true)
-  pump(streamer, [query(5, 200)], () => streamer.tierOf(5) >= 2, 40, 1 / 60)
+  pump(streamer, [query(5, 200 * SPACE_SCALE)], () => streamer.tierOf(5) >= 2, 40, 1 / 60)
   assert.equal(streamer.tierOf(5), 2)
   clock = 0
-  streamer.update([query(5, 200)], 1 / 60)
+  streamer.update([query(5, 200 * SPACE_SCALE)], 1 / 60)
   assert.equal(subject.state.impostorMaterial.opacity, 0, 'the swap is instant, not animated')
   assert.equal(subject.state.layers.get(2).object.scale.value, 1, 'and nothing scales in')
 })
@@ -196,7 +196,7 @@ test('unregister stops the work and takes the layers off screen', () => {
   const subject = fakeSubject(9, fakeObject())
   streamer.register(subject)
   clock = 0
-  streamer.update([query(9, 200)], 1 / 60)
+  streamer.update([query(9, 200 * SPACE_SCALE)], 1 / 60)
   assert.equal(streamer.pending(), 1, 'the promotion is in flight')
   streamer.unregister(9)
   assert.equal(streamer.pending(), 0, 'a gone object leaves nothing queued')
@@ -206,7 +206,7 @@ test('unregister stops the work and takes the layers off screen', () => {
   assert.equal(subject.state.impostorObject.visible, false)
   // a stale query for a gone object is ignored rather than throwing
   clock = 0
-  streamer.update([query(9, 200)], 1 / 60)
+  streamer.update([query(9, 200 * SPACE_SCALE)], 1 / 60)
   assert.equal(streamer.pending(), 0)
   assert.equal(streamer.lastSpend(), 0)
 })
@@ -215,10 +215,10 @@ test('registration is monotonic: a settled world costs nothing to keep', () => {
   const streamer = createLodStreamer()
   const subject = fakeSubject(4, fakeObject())
   streamer.register(subject)
-  pump(streamer, [query(4, 90)], () => streamer.tierOf(4) >= 2)
+  pump(streamer, [query(4, 90 * SPACE_SCALE)], () => streamer.tierOf(4) >= 2)
   assert.equal(streamer.tierOf(4), 2)
   clock = 0
-  for (let i = 0; i < 30; i++) streamer.update([query(4, 90)], 1 / 60)
+  for (let i = 0; i < 30; i++) streamer.update([query(4, 90 * SPACE_SCALE)], 1 / 60)
   assert.equal(streamer.lastSpend(), 0, 'a warm world costs no build time at all')
   assert.ok(LOD_FRAME_BUDGET_MS < LOD_URGENT_BUDGET_MS, 'urgent frames get the wider budget')
 })

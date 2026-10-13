@@ -1,10 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  BATCH_BONUS, CARRY_SLOTS, CLEAN_BONUS, FULL_HOLD_BONUS, HARD_LAND_DAMAGE, HOLD_SLOTS,
-  JUNK_POINTS, METEOR_DAMAGE, METEOR_TELEGRAPH_BONUS, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
-  SHIP_SPEED, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, SUFFOCATION_DAMAGE,
-  SURFACE_RADIUS, TRANSITION_TIME,
+  BATCH_BONUS, BODY_CLEARANCE, CARRY_SLOTS, CLEAN_BONUS, EARTH_RADIUS, FULL_HOLD_BONUS,
+  HARD_LAND_DAMAGE, HOLD_SLOTS, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_POINTS, METEOR_DAMAGE,
+  METEOR_TELEGRAPH_BONUS, MOON_ORBIT, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
+  SHIP_SPEED, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH,
+  SUFFOCATION_DAMAGE, SURFACE_RADIUS, TRANSITION_TIME,
 } from '../src/sim/config.ts'
 import {
   allPlanetsClean, bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
@@ -41,7 +42,7 @@ function grounded(seed, planetId = 0) {
   return game
 }
 
-function flying(seed, x = 0, y = 200, z = 0) {
+function flying(seed, x = 0, y = 200 * SPACE_SCALE, z = 0) {
   const game = running(seed)
   game.mode = 'space'
   game.transition = null
@@ -85,7 +86,7 @@ function standOnDock(game) {
   game.ship.speed = 0
 }
 
-function parkOnPlanet(game, planetId, offset = 8) {
+function parkOnPlanet(game, planetId, offset = 8 * SPACE_SCALE) {
   game.mode = 'space'
   game.transition = null
   const position = game.planetPos[planetId]
@@ -164,12 +165,12 @@ test('all three planets and the ISS orbit over time', () => {
   advance(game, 2)
   assert.ok(Math.abs(game.issAngle - issAngleBefore - 0.5) < 1e-6, 'ISS sweeps 0.25 rad/s')
   const orbit = Math.hypot(game.dockPos.x - game.planetPos[0].x, game.dockPos.z - game.planetPos[0].z)
-  assert.ok(orbit > 25 && orbit < 28, 'the dock point rides the ISS orbit')
+  assert.ok(orbit > ISS_ORBIT && orbit < ISS_ORBIT + ISS_DOCK_OFFSET + 1, 'the dock point rides the ISS orbit')
   const issTravel = Math.hypot(
     game.dockPos.x - game.planetPos[0].x - (dockBefore.x - earthBefore.x),
     game.dockPos.z - game.planetPos[0].z - (dockBefore.z - earthBefore.z),
   )
-  assert.ok(issTravel > 10 && issTravel < 16, 'ISS sweeps a wide arc in two seconds')
+  assert.ok(issTravel > orbit * 0.4 && issTravel < orbit * 0.75, 'ISS sweeps a wide arc in two seconds')
   assert.ok(Math.hypot(game.planetPos[0].x - earthBefore.x, game.planetPos[0].z - earthBefore.z) > 5,
     'Earth advances along its own orbit')
   assert.ok(Math.hypot(game.planetPos[2].x - marsBefore.x, game.planetPos[2].z - marsBefore.z) > 0,
@@ -177,7 +178,7 @@ test('all three planets and the ISS orbit over time', () => {
   const moonOrbit = Math.hypot(
     game.moonPos.x - game.planetPos[0].x, game.moonPos.z - game.planetPos[0].z,
   )
-  assert.ok(Math.abs(moonOrbit - 42) < 1e-6, 'the Moon rides its own orbit around Earth')
+  assert.ok(Math.abs(moonOrbit - MOON_ORBIT) < 1e-6, 'the Moon rides its own orbit around Earth')
   assert.deepEqual(game.moonPos, game.planetPos[1], 'moonPos mirrors planetPos[1]')
 })
 
@@ -283,21 +284,22 @@ test('the ship cannot fly through a planet', () => {
   const earth = game.planetPos[0]
   game.ship.x = earth.x
   game.ship.y = earth.y
-  game.ship.z = earth.z + 22
-  game.ship.vz = -55
+  game.ship.z = earth.z + 22 * SPACE_SCALE
+  game.ship.vz = -55 * SPACE_SCALE
   advance(game, 1)
   const distance = Math.hypot(
     game.ship.x - earth.x, game.ship.y - earth.y, game.ship.z - earth.z,
   )
-  assert.ok(distance >= 17.9, `hull clearance held (distance ${distance.toFixed(2)})`)
+  const shell = EARTH_RADIUS + BODY_CLEARANCE
+  assert.ok(distance >= shell - 0.2, `hull clearance held (distance ${distance.toFixed(2)})`)
   assert.ok(game.events.some(event => event.kind === 'scrape'))
 })
 
 test('landing needs a slow approach to the right planet', () => {
   const game = flying(48)
-  parkOnPlanet(game, 2, 10)
+  parkOnPlanet(game, 2, 10 * SPACE_SCALE)
   assert.equal(landTarget(game), 2)
-  game.ship.speed = 55
+  game.ship.speed = SHIP_SPEED
   assert.equal(landTarget(game), -1, 'too fast to land')
   assert.equal(landingZone(game), 2, 'but still inside the zone')
   assert.equal(contextLabel(game), 'SLOW DOWN TO LAND')

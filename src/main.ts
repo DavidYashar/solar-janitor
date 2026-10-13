@@ -1,5 +1,5 @@
 import {
-  BEST_KEY, JUNK_COLORS, JUNK_POINTS, MUTE_KEY, OXYGEN_WARN, SAVE_KEY, SCANNER_RANGE,
+  BEST_KEY, JUNK_COLORS, JUNK_POINTS, MUTE_KEY, OXYGEN_WARN, SAVE_KEY, SCANNER_RANGE, SPACE_SCALE,
 } from './sim/config.ts'
 import {
   bearingTo, buyItem, canDock, canLand, contextAction, contextLabel, createGame, hasRelic,
@@ -660,7 +660,7 @@ if (import.meta.env.DEV) {
       return true
     },
     /** put the ship in orbit right above a planet (0 Earth, 1 Moon, 2 Mars) */
-    teleportTo: (planetId: number, offset = 28) => {
+    teleportTo: (planetId: number, offset = 28 * SPACE_SCALE) => {
       const position = game.planetPos[planetId]
       game.mode = 'space'
       game.transition = null
@@ -687,7 +687,7 @@ if (import.meta.env.DEV) {
       const position = game.planetPos[game.planetId]
       game.mode = 'space'
       game.transition = null
-      game.ship.x = position.x + 8
+      game.ship.x = position.x + 8 * SPACE_SCALE
       game.ship.y = position.y
       game.ship.z = position.z
       game.ship.speed = 0

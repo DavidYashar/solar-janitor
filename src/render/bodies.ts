@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { TAU } from '../sim/config.ts'
+import { SPACE_SCALE, TAU } from '../sim/config.ts'
 import { planetById } from '../sim/planets.ts'
 import { canvasBuild, canvasTexture, finishTexture, glowTexture } from './surfaces.ts'
 
@@ -287,7 +287,7 @@ function* earthDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator
     cloudMaterial.needsUpdate = true
   })
   const clouds = new THREE.Mesh(
-    new THREE.SphereGeometry(planet.spaceRadius + 0.35, 48, 32),
+    new THREE.SphereGeometry(planet.spaceRadius + 0.35 * SPACE_SCALE, 48, 32),
     cloudMaterial,
   )
   into.add(clouds, buildAtmosphere(id, 1.06))
@@ -434,17 +434,18 @@ function* marsDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator<
   spun.push({ object: globe, rate: 0.02 })
   yield
 
-  // Phobos and Deimos, two lumpy pebbles that keep the red planet company
+  // Phobos and Deimos, two lumpy pebbles that keep the red planet company.
+  // They are worlds too, so they follow SPACE_SCALE with everything else.
   const moonlets = new THREE.Group()
-  const pebble = new THREE.IcosahedronGeometry(1, 0)
+  const pebble = new THREE.IcosahedronGeometry(SPACE_SCALE, 0)
   const pebbleMaterial = new THREE.MeshStandardMaterial({ color: 0x9a9187, flatShading: true, roughness: 1 })
   const phobos = new THREE.Mesh(pebble, pebbleMaterial)
   phobos.scale.set(1.5, 1.1, 1.25)
-  phobos.position.set(planet.spaceRadius + 6.5, 1.4, 0)
+  phobos.position.set(planet.spaceRadius + 6.5 * SPACE_SCALE, 1.4 * SPACE_SCALE, 0)
   moonlets.add(phobos)
   const deimos = new THREE.Mesh(pebble, pebbleMaterial)
   deimos.scale.set(0.95, 0.78, 0.9)
-  deimos.position.set(-(planet.spaceRadius + 11), -2.2, 3.6)
+  deimos.position.set(-(planet.spaceRadius + 11 * SPACE_SCALE), -2.2 * SPACE_SCALE, 3.6 * SPACE_SCALE)
   moonlets.add(deimos)
   into.add(moonlets, buildAtmosphere(id, 1.07))
   spun.push({ object: moonlets, rate: 0.11 })
@@ -457,7 +458,7 @@ export function createSpaceBody(id: number, root: THREE.Group): SpaceBody {
   const planet = planetById(id)
   const glow = buildGlow(id)
   const label = makeLabel(planet.name.toUpperCase(), planet.theme === 'mars' ? '#ffbf94' : '#dfe6ff')
-  label.position.set(0, planet.spaceRadius + 12, 0)
+  label.position.set(0, planet.spaceRadius + 12 * SPACE_SCALE, 0)
   root.add(label)
   const spun: Spinner[] = []
 

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  LOD_FRAME_BUDGET_MS, LOD_SPACE_TUNING, LOD_SURFACE_TUNING, LOD_TERRAIN_SLICE, LOD_URGENT_BUDGET_MS,
+  LOD_FRAME_BUDGET_MS, LOD_SPACE_TUNING, LOD_SURFACE_TUNING, LOD_TERRAIN_SLICE, LOD_URGENT_BUDGET_MS, SPACE_SCALE,
 } from '../src/sim/config.ts'
 import {
   approachDistance, createLodState, lodBudgetLeft, lodDesiredOf, lodDrop, lodFrame, lodFinish,
@@ -98,7 +98,7 @@ test('approach distance looks ahead only while closing', () => {
 
   const state = createLodState()
   // 700 units out but boosting at 110 u/s is treated as a 40 unit approach
-  const tasks = lodFrame(state, [target(2, 700, 110)], LOD_FRAME_BUDGET_MS)
+  const tasks = lodFrame(state, [target(2, 700 * SPACE_SCALE, 110 * SPACE_SCALE)], LOD_FRAME_BUDGET_MS)
   assert.equal(tasks.length, 1)
   assert.equal(tasks[0].to, 2, 'the world refines before the janitor gets there')
   assert.ok(Math.abs(tasks[0].eta - 700 / 110) < 1e-6, 'eta is the real arrival time')
@@ -109,8 +109,8 @@ test('approach distance looks ahead only while closing', () => {
 test('the queue warms whatever the janitor is flying at first', () => {
   const state = createLodState()
   // drifting away from a nearby world vs. boosting at a far one
-  const receding = target(0, 260, -30)
-  const arriving = target(2, 700, 110)
+  const receding = target(0, 260 * SPACE_SCALE, -30 * SPACE_SCALE)
+  const arriving = target(2, 700 * SPACE_SCALE, 110 * SPACE_SCALE)
   const tasks = lodFrame(state, [receding, arriving], LOD_FRAME_BUDGET_MS)
   assert.deepEqual(tasks.map(task => task.id), [2, 0], 'the approach target is queued first')
   assert.ok(tasks[0].urgency < tasks[1].urgency)
@@ -120,13 +120,13 @@ test('the queue warms whatever the janitor is flying at first', () => {
   assert.equal(lodUrgentPending(state, 7), true, 'six and a bit seconds out is urgent soon enough')
   assert.equal(lodUrgentPending(state, 3), false, 'but not yet, three seconds out')
   const crawling = createLodState()
-  lodFrame(crawling, [target(0, 900, 1)], LOD_FRAME_BUDGET_MS)
+  lodFrame(crawling, [target(0, 900 * SPACE_SCALE, 10)], LOD_FRAME_BUDGET_MS)
   assert.equal(lodUrgentPending(crawling, 3), false, 'a far, slow approach is not urgent')
 })
 
 test('a game-logic floor forces a tier the distance rule would not ask for', () => {
   const state = createLodState()
-  const tasks = lodFrame(state, [target(1, 5000, 0, 2, 2)], LOD_FRAME_BUDGET_MS)
+  const tasks = lodFrame(state, [target(1, 5000 * SPACE_SCALE, 0, 2, 2)], LOD_FRAME_BUDGET_MS)
   assert.equal(tasks.length, 1)
   assert.equal(tasks[0].from, 0)
   assert.equal(tasks[0].to, 2)
@@ -137,13 +137,13 @@ test('a game-logic floor forces a tier the distance rule would not ask for', () 
 
   // once the first tier lands the object stays in the queue for the next climb
   lodFinish(state, 1, 1)
-  const next = lodFrame(state, [target(1, 5000, 0, 2, 2)], LOD_FRAME_BUDGET_MS)
+  const next = lodFrame(state, [target(1, 5000 * SPACE_SCALE, 0, 2, 2)], LOD_FRAME_BUDGET_MS)
   assert.equal(next.length, 1)
   assert.equal(next[0].from, 1)
   assert.equal(next[0].to, 2)
 
   // the floor disappears: the scheduler goes back to wanting nothing
-  lodFrame(state, [target(1, 5000, 0, 0, 2)], LOD_FRAME_BUDGET_MS)
+  lodFrame(state, [target(1, 5000 * SPACE_SCALE, 0, 0, 2)], LOD_FRAME_BUDGET_MS)
   assert.equal(lodDesiredOf(state, 1), 0)
 })
 
@@ -152,7 +152,7 @@ test('a game-logic floor forces a tier the distance rule would not ask for', () 
 test('the frame budget cuts the build list mid-way and the rest resumes next frame', () => {
   const state = createLodState()
   // all three sit in the stand-in band, so each promotion is a single tier
-  const targets = [target(0, 400, 0), target(1, 500, 0), target(2, 600, 0)]
+  const targets = [target(0, 400 * SPACE_SCALE, 0), target(1, 500 * SPACE_SCALE, 0), target(2, 600 * SPACE_SCALE, 0)]
   const jobs = new Map([[0, 2], [1, 2], [2, 2]])
   const budget = 2.5
   const log = []
@@ -179,7 +179,7 @@ test('the frame budget cuts the build list mid-way and the rest resumes next fra
   assert.equal(lodBudgetLeft(state), budget, 'a fresh frame gets the whole budget back')
 
   // every task climbed exactly one tier: flying closer queues the next climb
-  const closer = [target(0, 150, 0), target(1, 160, 0), target(2, 170, 0)]
+  const closer = [target(0, 150 * SPACE_SCALE, 0), target(1, 160 * SPACE_SCALE, 0), target(2, 170 * SPACE_SCALE, 0)]
   const second = lodFrame(state, closer, budget)
   assert.deepEqual(second.map(task => [task.id, task.from, task.to]), [[0, 1, 2], [1, 1, 2], [2, 1, 2]])
 })
@@ -192,9 +192,9 @@ test('build order is identical every time the same world is streamed', () => {
     for (let frame = 0; frame < 12; frame++) {
       // a world flying in: closing fast on 2, drifting past 0, parked near 1
       const targets = [
-        target(0, 300 + frame * 12, -12),
-        target(1, 240 - frame * 2, 2),
-        target(2, 900 - frame * 55, 55),
+        target(0, (300 + frame * 12) * SPACE_SCALE, -12 * SPACE_SCALE),
+        target(1, (240 - frame * 2) * SPACE_SCALE, 2 * SPACE_SCALE),
+        target(2, (900 - frame * 55) * SPACE_SCALE, 55 * SPACE_SCALE),
       ]
       runFrame(state, targets, LOD_FRAME_BUDGET_MS, jobs, log)
     }
@@ -209,14 +209,14 @@ test('build order is identical every time the same world is streamed', () => {
 
 test('a new run drops everything and the schedule rebuilds from the glow', () => {
   const state = createLodState()
-  lodFrame(state, [target(0, 100), target(1, 200)], LOD_FRAME_BUDGET_MS)
+  lodFrame(state, [target(0, 100 * SPACE_SCALE), target(1, 200 * SPACE_SCALE)], LOD_FRAME_BUDGET_MS)
   lodFinish(state, 0, 2)
   lodFinish(state, 1, 2)
   assert.equal(lodTierOf(state, 0), 2)
 
   lodDrop(state, 1)
   assert.equal(lodTierOf(state, 1), 0)
-  const requeued = lodFrame(state, [target(1, 200)], LOD_FRAME_BUDGET_MS)
+  const requeued = lodFrame(state, [target(1, 200 * SPACE_SCALE)], LOD_FRAME_BUDGET_MS)
   assert.equal(requeued.length, 1)
   assert.equal(requeued[0].to, 2, 'the distance rule asks for the detail tier again')
 

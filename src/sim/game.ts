@@ -9,7 +9,7 @@ import {
   O2_TANK2_BONUS, O2_TANK_BONUS, OXYGEN_DRAIN, OXYGEN_MAX, OXYGEN_REFILL, OXYGEN_WARN, POLE_CLAMP,
   RANKS, RECYCLER_REDUCTION, SCANNER_RANGE, SCOOP_RADIUS, SHIP_ACCEL_K, SHIP_BOOST_SPEED,
   SHIP_LEVEL_K, SHIP_PITCH_RATE, SHIP_REVERSE_SPEED, SHIP_ROLL_RATE, SHIP_SPEED, SHIP_YAW_RATE,
-  SPRINT_MULTIPLIER, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
+  SPRINT_MULTIPLIER, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
   STORM_WARN_LEAD_BONUS, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
   THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS,
   SHIP_STRAFE_SPEED, SURFACE_TURN_RATE,
@@ -451,7 +451,7 @@ export function placeShipOnPad(game: Game) {
   const planet = planetById(game.planetId)
   const centre = game.planetPos[game.planetId]
   const site = landerSite(game.planetId)
-  const pad = surfaceToWorld(centre, site.lat, site.lon, planet.spaceRadius + 12)
+  const pad = surfaceToWorld(centre, site.lat, site.lon, planet.spaceRadius + 12 * SPACE_SCALE)
   const ship = game.ship
   ship.x = pad.x
   ship.y = pad.y

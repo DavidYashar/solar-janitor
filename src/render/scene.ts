@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import {
   EARTH_ORBIT, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_COLORS, LOD_COST_DETAIL, LOD_COST_STANDIN,
   LOD_SPACE_TUNING, LOD_SURFACE_TUNING, MARS_ORBIT, METEOR_RADIUS, MOON_ORBIT, OXYGEN_WARN,
-  SUN_RADIUS, SURFACE_RADIUS, TAU,
+  SPACE_SCALE, SUN_RADIUS, SURFACE_RADIUS, TAU,
 } from '../sim/config.ts'
 import { canDock, canLand, holdCount, landTarget, nearLander, scoopRadius } from '../sim/game.ts'
 import { quatForward, quatUp } from '../sim/orient.ts'
@@ -112,7 +112,9 @@ export function createWorld(container: HTMLElement): World {
   renderer.toneMappingExposure = 1.08
   container.appendChild(renderer.domElement)
 
-  const camera = new THREE.PerspectiveCamera(58, 1, 0.4, 4200)
+  // near plane stays tight for the tug's fine detail, far has to reach the
+  // scaled-out starfield (SPACE_SCALE) without breaking depth precision
+  const camera = new THREE.PerspectiveCamera(58, 1, 0.6, 30000)
   let maxPixelRatio = 1.75
   let reducedMotion = false
   let shake = 0
@@ -174,7 +176,7 @@ export function createWorld(container: HTMLElement): World {
         y /= length
         z /= length
       }
-      const distance = 1000 + rnd() * 900
+      const distance = (1000 + rnd() * 900) * SPACE_SCALE
       positions[i * 3] = x * distance
       positions[i * 3 + 1] = y * distance
       positions[i * 3 + 2] = z * distance
@@ -312,6 +314,9 @@ export function createWorld(container: HTMLElement): World {
 
   const issLabel = makeLabel('ISS', '#ffe1a3')
   issLabel.position.set(0, 7.4, 0)
+  // the station is one of the two things SPACE_SCALE does not touch, so its
+  // label is sized against the real world, not the scaled one
+  issLabel.userData.scaleRef = 1
   iss.add(issLabel)
   const bodyLabels = [...earthBody.labels, ...moonBody.labels, ...marsBody.labels]
   const labels = [issLabel, ...bodyLabels]
@@ -956,7 +961,11 @@ export function createWorld(container: HTMLElement): World {
     for (const label of labels) {
       label.getWorldPosition(vB)
       const distance = vB.distanceTo(cameraPosition)
-      const scale = clampValue(distance * 0.028, 5, 30)
+      // labels hold their on-screen size: the reference is the world the object
+      // belongs to, so a scaled planet's plate grows with it and the station's
+      // does not
+      const ref = (label.userData.scaleRef as number | undefined) ?? SPACE_SCALE
+      const scale = clampValue((distance / ref) * 0.028, 5, 30) * ref
       label.scale.set(scale, scale * 0.3, 1)
     }
   }

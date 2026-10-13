@@ -3,6 +3,16 @@ import type { JunkClass, Rank } from './types.ts'
 
 export const TAU = Math.PI * 2
 
+/**
+ * Space-map world scale. The Sun, the planets, their orbits and every space-only
+ * distance are multiplied by this, while the tug and the ISS keep their real
+ * size — so the ship reads as a speck against worlds that deserve the name.
+ * Ship speeds and the landing limit scale with it too, which keeps every trip
+ * the same length in seconds and every approach the same handful of seconds.
+ * The surface planes have their own radius and speeds and never see it.
+ */
+export const SPACE_SCALE = 10
+
 // ---------------------------------------------------------------- surface
 export const SURFACE_RADIUS = 55
 /** Players walk anywhere except the last 30 degrees to each pole (keeps the maths sane). */
@@ -46,11 +56,11 @@ export const SUFFOCATION_DAMAGE = 8
 export const HEALTH_MAX = 100
 
 // -------------------------------------------------------------------- ship
-export const SHIP_SPEED = 55
-export const SHIP_BOOST_SPEED = 110
-export const SHIP_REVERSE_SPEED = 24
+export const SHIP_SPEED = 55 * SPACE_SCALE
+export const SHIP_BOOST_SPEED = 110 * SPACE_SCALE
+export const SHIP_REVERSE_SPEED = 24 * SPACE_SCALE
 /** lateral thruster speed for arrow-key strafing */
-export const SHIP_STRAFE_SPEED = 34
+export const SHIP_STRAFE_SPEED = 34 * SPACE_SCALE
 /** exponential velocity blend rate - heavy damping, no drift-fighter float */
 export const SHIP_ACCEL_K = 3.1
 /** angular rates, radians per second, applied in the ship's local frame */
@@ -59,33 +69,34 @@ export const SHIP_PITCH_RATE = 1.7
 export const SHIP_ROLL_RATE = 2.6
 /** gentle auto-bank that rolls the ship back level with the orbital plane */
 export const SHIP_LEVEL_K = 0.55
+/** ship-relative, so these do not follow SPACE_SCALE */
 export const DOCK_RADIUS = 5
 export const DOCK_ASSIST_RADIUS = 9
 /** within this range the Docking Assist upgrade auto-aligns the ship to the hatch */
 export const DOCK_ASSIST_RANGE = 14
 export const DOCK_ASSIST_TURN = 3.4
-export const LAND_ZONE_HEIGHT = 16
-export const LAND_MAX_SPEED = 30
-export const BODY_CLEARANCE = 2
+export const LAND_ZONE_HEIGHT = 16 * SPACE_SCALE
+export const LAND_MAX_SPEED = 30 * SPACE_SCALE
+export const BODY_CLEARANCE = 2 * SPACE_SCALE
 
 // -------------------------------------------------------------- transitions
 export const TRANSITION_TIME = 1.7
 
 // -------------------------------------------------------------- space map
-export const SUN_RADIUS = 70
-export const EARTH_ORBIT = 520
+export const SUN_RADIUS = 70 * SPACE_SCALE
+export const EARTH_ORBIT = 520 * SPACE_SCALE
 export const EARTH_ORBIT_RATE = 0.011
-export const EARTH_RADIUS = 16
-export const ISS_ORBIT = 22
+export const EARTH_RADIUS = 16 * SPACE_SCALE
+export const ISS_ORBIT = 22 * SPACE_SCALE
 export const ISS_ORBIT_RATE = 0.25
 /** airlock sits on the outward face of the station, away from Earth */
 export const ISS_DOCK_OFFSET = 4.5
-export const MOON_ORBIT = 42
+export const MOON_ORBIT = 42 * SPACE_SCALE
 export const MOON_ORBIT_RATE = 0.2
-export const MOON_RADIUS = 8
-export const MARS_ORBIT = 900
+export const MOON_RADIUS = 8 * SPACE_SCALE
+export const MARS_ORBIT = 900 * SPACE_SCALE
 export const MARS_ORBIT_RATE = 0.0075
-export const MARS_RADIUS = 13
+export const MARS_RADIUS = 13 * SPACE_SCALE
 
 // ---------------------------------------------------------------- hazards
 /** seconds between meteor volleys on the Moon */
@@ -139,14 +150,14 @@ export const LOD_URGENT_ETA = 3
 export const LOD_LEAD_TIME = 6
 /** space map: 0 = glow impostor, 1 = low-poly sphere, 2 = detailed globe */
 export const LOD_SPACE_TUNING: LodTuning = {
-  enter: [0, 620, 300],
-  exit: [0, 720, 390],
+  enter: [0, 620 * SPACE_SCALE, 300 * SPACE_SCALE],
+  exit: [0, 720 * SPACE_SCALE, 390 * SPACE_SCALE],
   leadTime: LOD_LEAD_TIME,
 }
 /** landable worlds: 0 = nothing, 1 = stand-in crust, 2 = full terrain + props */
 export const LOD_SURFACE_TUNING: LodTuning = {
-  enter: [0, 520, 150],
-  exit: [0, 620, 260],
+  enter: [0, 520 * SPACE_SCALE, 150 * SPACE_SCALE],
+  exit: [0, 620 * SPACE_SCALE, 260 * SPACE_SCALE],
   leadTime: LOD_LEAD_TIME,
 }
 /** vertices of the 112×72 surface sphere handled per build slice */
