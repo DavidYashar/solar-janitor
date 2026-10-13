@@ -1,16 +1,22 @@
 import * as THREE from 'three'
 import {
-  EARTH_ORBIT, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_COLORS, MARS_ORBIT, METEOR_RADIUS, MOON_ORBIT,
-  MOON_RADIUS, OXYGEN_WARN, SUN_RADIUS, SURFACE_RADIUS, TAU,
+  EARTH_ORBIT, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_COLORS, LOD_COST_DETAIL, LOD_COST_STANDIN,
+  LOD_SPACE_TUNING, LOD_SURFACE_TUNING, MARS_ORBIT, METEOR_RADIUS, MOON_ORBIT, OXYGEN_WARN,
+  SUN_RADIUS, SURFACE_RADIUS, TAU,
 } from '../sim/config.ts'
-import { canDock, canLand, holdCount, nearLander, scoopRadius } from '../sim/game.ts'
+import { canDock, canLand, holdCount, landTarget, nearLander, scoopRadius } from '../sim/game.ts'
 import { quatForward, quatUp } from '../sim/orient.ts'
 import { PLANETS, planetById } from '../sim/planets.ts'
 import type { PlanetTheme } from '../sim/planets.ts'
 import type { Game, GameEvent, JunkClass, Vec3 } from '../sim/types.ts'
+import { createSpaceBody, makeLabel } from './bodies.ts'
+import type { SpaceBody } from './bodies.ts'
+import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
+import type { LodBuild, LodQuery } from './lod.ts'
 import {
-  buildSurface, canvasTexture, clampValue, dir, glowTexture, makeRnd, surfacePoint, type SurfaceBuild,
+  canvasTexture, clampValue, createSurfaceJob, dir, glowTexture, makeRnd, surfacePoint,
 } from './surfaces.ts'
+import type { SurfaceBuild, SurfaceJob } from './surfaces.ts'
 
 const MAX_PARTICLES = 300
 const MAX_JUNK = 160
@@ -24,8 +30,24 @@ export interface World {
   burst(event: GameEvent, color: number, count: number, speed?: number): void
   setQuality(low: boolean): void
   setReducedMotion(value: boolean): void
+  /** live view of the LOD streamer, for browser playtests and debug output */
+  lodStats(): LodStats
   dispose(): void
 }
+
+/** What the streamer is doing right now: built tiers, what is on screen, cost. */
+export interface LodStats {
+  /** tier generated per world: 0 glow · 1 stand-in · 2 detail */
+  built: Record<string, number>
+  /** tier actually on screen (never higher than what is built) */
+  shown: Record<string, number>
+  /** promotions still queued */
+  pending: number
+  /** ms of streaming work done in the last frame */
+  spendMs: number
+}
+
+const LOD_NAMES = ['earth', 'moon', 'mars']
 
 interface Particle {
   position: THREE.Vector3
@@ -52,26 +74,6 @@ interface ThemeLook {
 }
 
 // --------------------------------------------------------------- utilities
-
-function makeLabel(text: string, color = '#dff2ff'): THREE.Sprite {
-  const texture = canvasTexture(320, 96, ctx => {
-    ctx.fillStyle = 'rgba(5, 12, 24, 0.62)'
-    ctx.beginPath()
-    ctx.roundRect(8, 18, 304, 60, 14)
-    ctx.fill()
-    ctx.strokeStyle = 'rgba(160, 220, 255, 0.35)'
-    ctx.lineWidth = 3
-    ctx.stroke()
-    ctx.font = '700 40px "Segoe UI", system-ui, sans-serif'
-    ctx.fillStyle = color
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(text, 160, 49)
-  })
-  return new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, depthTest: false }),
-  )
-}
 
 function basisFor(up: THREE.Vector3, forward: THREE.Vector3, right: THREE.Vector3): THREE.Matrix4 {
   right.crossVectors(up, forward).normalize()
@@ -127,7 +129,7 @@ export function createWorld(container: HTMLElement): World {
   spaceFill.position.set(-1, 0.6, -0.8)
   spaceScene.add(spaceFill)
 
-  // starfield
+  // starfield: one Points cloud, no per-star objects to allocate or cull
   {
     const starCount = 2200
     const positions = new Float32Array(starCount * 3)
@@ -137,10 +139,23 @@ export function createWorld(container: HTMLElement): World {
       return state / 4294967296
     }
     for (let i = 0; i < starCount; i++) {
-      const v = new THREE.Vector3(rnd() * 2 - 1, rnd() * 2 - 1, rnd() * 2 - 1)
-      if (v.lengthSq() < 1e-6) v.set(0, 1, 0)
-      v.normalize().multiplyScalar(1000 + rnd() * 900)
-      positions.set([v.x, v.y, v.z], i * 3)
+      let x = rnd() * 2 - 1
+      let y = rnd() * 2 - 1
+      let z = rnd() * 2 - 1
+      const length = Math.hypot(x, y, z)
+      if (length < 1e-3) {
+        x = 0
+        y = 1
+        z = 0
+      } else {
+        x /= length
+        y /= length
+        z /= length
+      }
+      const distance = 1000 + rnd() * 900
+      positions[i * 3] = x * distance
+      positions[i * 3 + 1] = y * distance
+      positions[i * 3 + 2] = z * distance
     }
     const stars = new THREE.Points(
       new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)),
@@ -175,79 +190,8 @@ export function createWorld(container: HTMLElement): World {
   // ---------------------------------------------------------- earth system
   const earthSystem = new THREE.Group()
   spaceScene.add(earthSystem)
-  const earthDef = planetById(0)
-
-  const earthTexture = canvasTexture(512, 256, (ctx, rnd) => {
-    const ocean = ctx.createLinearGradient(0, 0, 0, 256)
-    ocean.addColorStop(0, '#1d4f9c')
-    ocean.addColorStop(0.5, '#2f7fd0')
-    ocean.addColorStop(1, '#1b4a8f')
-    ctx.fillStyle = ocean
-    ctx.fillRect(0, 0, 512, 256)
-    for (let blob = 0; blob < 22; blob++) {
-      const cx = 30 + rnd() * 452
-      const cy = 40 + rnd() * 176
-      const scale = 0.5 + rnd() * 1.1
-      ctx.fillStyle = rnd() < 0.35 ? '#8fbf5a' : '#3f9a52'
-      for (let piece = 0; piece < 9; piece++) {
-        const angle = rnd() * TAU
-        const distance = rnd() * 34 * scale
-        const radius = (8 + rnd() * 20) * scale
-        ctx.beginPath()
-        ctx.ellipse(cx + Math.cos(angle) * distance, cy + Math.sin(angle) * distance, radius, radius * 0.7, rnd() * TAU, 0, TAU)
-        ctx.fill()
-      }
-    }
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.92)'
-    ctx.fillRect(0, 0, 512, 18)
-    ctx.fillRect(0, 238, 512, 18)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)'
-    for (let i = 0; i < 40; i++) {
-      ctx.beginPath()
-      ctx.ellipse(rnd() * 512, 30 + rnd() * 196, 10 + rnd() * 26, 4 + rnd() * 7, rnd() * TAU, 0, TAU)
-      ctx.fill()
-    }
-  })
-  const earth = new THREE.Mesh(
-    new THREE.SphereGeometry(earthDef.spaceRadius, 64, 48),
-    new THREE.MeshStandardMaterial({ map: earthTexture, roughness: 0.92, metalness: 0 }),
-  )
-  earthSystem.add(earth)
-
-  const clouds = new THREE.Mesh(
-    new THREE.SphereGeometry(earthDef.spaceRadius + 0.35, 48, 32),
-    new THREE.MeshStandardMaterial({
-      map: canvasTexture(512, 256, (ctx, rnd) => {
-        ctx.clearRect(0, 0, 512, 256)
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.72)'
-        for (let i = 0; i < 90; i++) {
-          const cx = rnd() * 512
-          const cy = 20 + rnd() * 216
-          for (let piece = 0; piece < 6; piece++) {
-            ctx.beginPath()
-            ctx.ellipse(cx + (rnd() - 0.5) * 40, cy + (rnd() - 0.5) * 18, 6 + rnd() * 20, 3 + rnd() * 8, 0, 0, TAU)
-            ctx.fill()
-          }
-        }
-      }),
-      transparent: true, opacity: 0.82, depthWrite: false, roughness: 1,
-    }),
-  )
-  earthSystem.add(clouds)
-
-  earthSystem.add(new THREE.Mesh(
-    new THREE.SphereGeometry(earthDef.spaceRadius * 1.06, 32, 24),
-    new THREE.MeshBasicMaterial({
-      color: earthDef.atmosphere, transparent: true, opacity: 0.2, side: THREE.BackSide,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }),
-  ))
-  const earthGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowTexture('rgba(120, 190, 255, 0.38)', 'rgba(60, 120, 255, 0)'),
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  }))
-  earthGlow.scale.setScalar(earthDef.spaceRadius * 4.2)
-  earthSystem.add(earthGlow)
+  const earthBody = createSpaceBody(0, earthSystem)
+  earthSystem.add(earthBody.glow)
 
   function orbitRing(radius: number, color: number, opacity: number): THREE.Line {
     const points: THREE.Vector3[] = []
@@ -263,116 +207,18 @@ export function createWorld(container: HTMLElement): World {
   earthSystem.add(orbitRing(ISS_ORBIT, 0x7fd0ff, 0.26))
   earthSystem.add(orbitRing(MOON_ORBIT, 0xa9b7ff, 0.18))
 
-  const moon = new THREE.Mesh(
-    new THREE.SphereGeometry(MOON_RADIUS, 32, 24),
-    new THREE.MeshStandardMaterial({
-      map: canvasTexture(256, 128, (ctx, rnd) => {
-        ctx.fillStyle = '#b9bfc9'
-        ctx.fillRect(0, 0, 256, 128)
-        for (let i = 0; i < 60; i++) {
-          const x = rnd() * 256
-          const y = rnd() * 128
-          const r = 2 + rnd() * 9
-          ctx.fillStyle = `rgba(${120 + rnd() * 40 | 0}, ${126 + rnd() * 40 | 0}, ${140 + rnd() * 40 | 0}, 0.75)`
-          ctx.beginPath()
-          ctx.arc(x, y, r, 0, TAU)
-          ctx.fill()
-          ctx.strokeStyle = 'rgba(236, 240, 248, 0.5)'
-          ctx.lineWidth = 1.4
-          ctx.stroke()
-        }
-      }),
-      roughness: 1,
-    }),
-  )
-
   // --------------------------------------------------------- moon & mars
   // the moon is its own body: the sim hands us a world position that already
   // includes Earth's orbit, so it lives at the root of the space scene.
-  spaceScene.add(moon)
-  const moonLabel = makeLabel('MOON', '#dfe6ff')
-  moonLabel.position.set(0, MOON_RADIUS + 5, 0)
-  moon.add(moonLabel)
+  const moonRoot = new THREE.Group()
+  spaceScene.add(moonRoot)
+  const moonBody = createSpaceBody(1, moonRoot)
+  moonRoot.add(moonBody.glow)
 
   const marsSystem = new THREE.Group()
   spaceScene.add(marsSystem)
-  const marsDef = planetById(2)
-
-  const mars = new THREE.Mesh(
-    new THREE.SphereGeometry(marsDef.spaceRadius, 64, 48),
-    new THREE.MeshStandardMaterial({
-      map: canvasTexture(512, 256, (ctx, rnd) => {
-        ctx.fillStyle = '#a34a2b'
-        ctx.fillRect(0, 0, 512, 256)
-        for (let blob = 0; blob < 26; blob++) {
-          ctx.fillStyle = `rgba(${86 + rnd() * 34 | 0}, ${42 + rnd() * 22 | 0}, ${28 + rnd() * 18 | 0}, 0.55)`
-          const cx = rnd() * 512
-          const cy = 30 + rnd() * 196
-          for (let piece = 0; piece < 7; piece++) {
-            ctx.beginPath()
-            ctx.ellipse(
-              cx + (rnd() - 0.5) * 74, cy + (rnd() - 0.5) * 52,
-              16 + rnd() * 46, 10 + rnd() * 26, rnd() * TAU, 0, TAU,
-            )
-            ctx.fill()
-          }
-        }
-        for (let streak = 0; streak < 20; streak++) {
-          ctx.fillStyle = `rgba(${216 + rnd() * 34 | 0}, ${148 + rnd() * 44 | 0}, ${104 + rnd() * 34 | 0}, 0.26)`
-          ctx.beginPath()
-          ctx.ellipse(rnd() * 512, 20 + rnd() * 216, 22 + rnd() * 72, 8 + rnd() * 22, rnd() * 0.7, 0, TAU)
-          ctx.fill()
-        }
-        ctx.fillStyle = 'rgba(242, 247, 255, 0.92)'
-        ctx.fillRect(0, 0, 512, 13)
-        ctx.fillRect(0, 243, 512, 13)
-        ctx.fillStyle = 'rgba(242, 247, 255, 0.45)'
-        for (let i = 0; i < 26; i++) {
-          ctx.beginPath()
-          ctx.ellipse(rnd() * 512, 6 + rnd() * 14, 14 + rnd() * 28, 4 + rnd() * 8, 0, 0, TAU)
-          ctx.fill()
-          ctx.beginPath()
-          ctx.ellipse(rnd() * 512, 236 + rnd() * 14, 14 + rnd() * 28, 4 + rnd() * 8, 0, 0, TAU)
-          ctx.fill()
-        }
-      }),
-      roughness: 0.96,
-      metalness: 0,
-    }),
-  )
-  marsSystem.add(mars)
-
-  marsSystem.add(new THREE.Mesh(
-    new THREE.SphereGeometry(marsDef.spaceRadius * 1.07, 32, 24),
-    new THREE.MeshBasicMaterial({
-      color: marsDef.atmosphere, transparent: true, opacity: 0.18, side: THREE.BackSide,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }),
-  ))
-  const marsGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowTexture('rgba(255, 168, 108, 0.34)', 'rgba(190, 80, 34, 0)'),
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  }))
-  marsGlow.scale.setScalar(marsDef.spaceRadius * 4.2)
-  marsSystem.add(marsGlow)
-
-  // Phobos and Deimos, two lumpy pebbles that keep the red planet company
-  const marsMoonlets = new THREE.Group()
-  const moonletGeometry = new THREE.IcosahedronGeometry(1, 0)
-  const moonletMaterial = new THREE.MeshStandardMaterial({ color: 0x9a9187, flatShading: true, roughness: 1 })
-  const phobos = new THREE.Mesh(moonletGeometry, moonletMaterial)
-  phobos.scale.set(1.5, 1.1, 1.25)
-  phobos.position.set(marsDef.spaceRadius + 6.5, 1.4, 0)
-  marsMoonlets.add(phobos)
-  const deimos = new THREE.Mesh(moonletGeometry, moonletMaterial)
-  deimos.scale.set(0.95, 0.78, 0.9)
-  deimos.position.set(-(marsDef.spaceRadius + 11), -2.2, 3.6)
-  marsMoonlets.add(deimos)
-  marsSystem.add(marsMoonlets)
-
-  const marsLabel = makeLabel('MARS', '#ffbf94')
-  marsLabel.position.set(0, marsDef.spaceRadius + 12, 0)
-  marsSystem.add(marsLabel)
+  const marsBody = createSpaceBody(2, marsSystem)
+  marsSystem.add(marsBody.glow)
 
   // mars tracks its own lane around the Sun
   spaceScene.add(orbitRing(EARTH_ORBIT, 0x6f9fd0, 0.1))
@@ -437,10 +283,8 @@ export function createWorld(container: HTMLElement): World {
   const issLabel = makeLabel('ISS', '#ffe1a3')
   issLabel.position.set(0, 7.4, 0)
   iss.add(issLabel)
-  const earthLabel = makeLabel('EARTH')
-  earthLabel.position.set(0, earthDef.spaceRadius + 12, 0)
-  earthSystem.add(earthLabel)
-  const labels = [issLabel, earthLabel, moonLabel, marsLabel]
+  const bodyLabels = [...earthBody.labels, ...moonBody.labels, ...marsBody.labels]
+  const labels = [issLabel, ...bodyLabels]
 
   // ------------------------------------------------------------------ ship
   function buildShip(): {
@@ -561,14 +405,32 @@ export function createWorld(container: HTMLElement): World {
   sunSprite.scale.setScalar(130)
   surfaceScene.add(sunSprite)
 
-  // three landable worlds, built once from the sim seed and toggled by planetId
-  let terrainSeed = -1
-  let activePlanetId = -1
-  const surfaces: SurfaceBuild[] = []
+  // the LOD streamer: one queue, one per-frame budget, every world in the game
+  const lod = createLodStreamer()
+  const SURFACE_ID_BASE = 10
+
+  // space bodies: impostor → low-poly globe → hand-painted detail, all streamed
+  const spaceBodies: SpaceBody[] = [earthBody, moonBody, marsBody]
+  for (const body of spaceBodies) {
+    lod.register({
+      id: body.id,
+      tuning: LOD_SPACE_TUNING,
+      root: body.root,
+      impostor: { object: body.glow, fade: [body.glow.material] },
+      build(tier) {
+        if (tier === 1) return oneshotBuild(1, { object: body.makeLowTier() })
+        const group = new THREE.Group()
+        return generatorBuild(2, { object: group }, body.detailBuilder(group))
+      },
+      estimate(tier) {
+        return tier === 1 ? LOD_COST_STANDIN : LOD_COST_DETAIL
+      },
+    })
+  }
 
   function radiusAt(planetId: number, lat: number, lon: number): number {
-    const surface = surfaces[planetId]
-    return surface ? surface.terrainRadius(lat, lon) : SURFACE_RADIUS
+    const build = surfaceBuild(planetId)
+    return build ? build.terrainRadius(lat, lon) : SURFACE_RADIUS
   }
 
   function applyPlanetTheme(planetId: number) {
@@ -585,12 +447,25 @@ export function createWorld(container: HTMLElement): World {
     blobShadow.material.color.setHex(planet.theme === 'earth' ? 0x102415 : 0x14161c)
   }
 
-  function disposeSurfaces() {
+  // three landable worlds, streamed in ahead of the janitor (plan §9)
+  let terrainSeed = -1
+  let activePlanetId = -1
+  const surfaceRoots: THREE.Group[] = []
+  const surfaceJobs: SurfaceJob[] = []
+
+  function surfaceBuild(planetId: number): SurfaceBuild | null {
+    return surfaceJobs[planetId]?.build ?? null
+  }
+
+  function disposeSurfaceJobs() {
     cargoMesh.removeFromParent()
     parked.group.removeFromParent()
-    for (const surface of surfaces) {
-      surfaceScene.remove(surface.group)
-      surface.group.traverse(object => {
+    for (let planetId = 0; planetId < surfaceRoots.length; planetId++) {
+      lod.unregister(SURFACE_ID_BASE + planetId)
+      const root = surfaceRoots[planetId]
+      if (!root) continue
+      surfaceScene.remove(root)
+      root.traverse(object => {
         if (object instanceof THREE.Mesh || object instanceof THREE.Points || object instanceof THREE.Line) {
           object.geometry.dispose()
         }
@@ -606,35 +481,104 @@ export function createWorld(container: HTMLElement): World {
         }
       })
     }
-    surfaces.length = 0
+    surfaceRoots.length = 0
+    surfaceJobs.length = 0
     activePlanetId = -1
   }
 
-  function ensureSurfaces(game: Game) {
+  /** New seed = new worlds: throw the old surfaces away and queue the new ones. */
+  function syncSurfaceJobs(game: Game) {
     const seed = game.seed >>> 0
-    if (surfaces.length === 3 && terrainSeed === seed) return
-    disposeSurfaces()
+    if (surfaceJobs.length === PLANETS.length && terrainSeed === seed) return
+    disposeSurfaceJobs()
     terrainSeed = seed
     for (let planetId = 0; planetId < PLANETS.length; planetId++) {
-      const surface = buildSurface(planetId, seed)
-      surface.group.visible = false
-      surfaceScene.add(surface.group)
-      surfaces[planetId] = surface
+      const job = createSurfaceJob(planetId, seed)
+      const root = new THREE.Group()
+      root.visible = false
+      root.add(job.standIn)
+      surfaceScene.add(root)
+      surfaceRoots[planetId] = root
+      surfaceJobs[planetId] = job
+      lod.register({
+        id: SURFACE_ID_BASE + planetId,
+        tuning: LOD_SURFACE_TUNING,
+        root,
+        impostor: { object: job.standIn, fade: [job.standIn.material] },
+        build: (): LodBuild => ({
+          to: 2,
+          layer: { object: job.detail, pop: 1 },
+          slice: () => job.slice(),
+          commit: () => {},
+        }),
+        estimate: () => job.costMs,
+      })
     }
-    setActivePlanet(game.planetId)
+  }
+
+  /**
+   * The hard guarantee behind the warm-ahead queue: whoever we are standing on
+   * is real, whatever the scheduler was busy with. In practice the queue got
+   * there first (the approach was queued seconds before the landing zone), so
+   * this only fires on a cold boot or an instant "START".
+   */
+  function ensureActiveSurface(game: Game) {
+    const job = surfaceJobs[game.planetId]
+    if (!job || job.build) return
+    let guard = 0
+    while (!job.slice() && guard++ < 4096) {
+      /* run the whole build out in one go */
+    }
   }
 
   function setActivePlanet(planetId: number) {
-    const surface = surfaces[planetId]
-    if (!surface || activePlanetId === planetId) return
+    if (activePlanetId === planetId) return
+    const build = surfaceBuild(planetId)
+    if (!build) return
     activePlanetId = planetId
-    for (let i = 0; i < surfaces.length; i++) {
-      surfaces[i].group.visible = i === planetId
-    }
+    for (let i = 0; i < surfaceRoots.length; i++) surfaceRoots[i].visible = i === planetId
     // the parked tug and the waiting cargo pile live on the active lander pad
-    surface.lander.add(cargoMesh)
-    surface.lander.add(parked.group)
+    build.lander.add(cargoMesh)
+    build.lander.add(parked.group)
     applyPlanetTheme(planetId)
+  }
+
+  // -------------------------------------------------------------- LOD feed
+  const viewerPos = new THREE.Vector3()
+  const bodyOffset = new THREE.Vector3()
+  const spaceQueries: LodQuery[] = PLANETS.map((_, id) => ({ id, distance: 0, closing: 0, minTier: 0 }))
+  const surfaceQueries: LodQuery[] = PLANETS.map((_, id) => ({
+    id: SURFACE_ID_BASE + id, distance: 0, closing: 0, minTier: 0,
+  }))
+  const lodQueries: LodQuery[] = [...spaceQueries, ...surfaceQueries]
+
+  /**
+   * Tell the streamer where the janitor is and how fast the worlds are coming
+   * at him. The ship always holds a valid world position — parked on a pad, on
+   * the launch rail or docked — so one measurement covers every mode.
+   */
+  function updateLod(game: Game, dt: number) {
+    const ship = game.ship
+    viewerPos.set(ship.x, ship.y, ship.z)
+    const landing = landTarget(game)
+    for (let id = 0; id < PLANETS.length; id++) {
+      const pos = game.planetPos[id]
+      bodyOffset.set(pos.x - viewerPos.x, pos.y - viewerPos.y, pos.z - viewerPos.z)
+      const distance = bodyOffset.length()
+      const closing = distance > 1e-3
+        ? (ship.vx * bodyOffset.x + ship.vy * bodyOffset.y + ship.vz * bodyOffset.z) / distance
+        : 0
+      const space = spaceQueries[id]
+      space.distance = distance
+      space.closing = closing
+      space.minTier = 0
+      const surface = surfaceQueries[id]
+      surface.distance = distance
+      surface.closing = closing
+      // standing on a world, or cleared to land on it: full detail is not optional
+      surface.minTier = (game.mode === 'surface' && game.planetId === id) || landing === id ? 2 : 0
+    }
+    lod.update(lodQueries, dt)
   }
 
   /** Sky, fog and light follow the planet, and get eaten by a Mars storm. */
@@ -937,7 +881,7 @@ export function createWorld(container: HTMLElement): World {
   function updateSpaceScene(game: Game, dt: number) {
     const earthPos = game.planetPos[0]
     earthSystem.position.set(earthPos.x, earthPos.y, earthPos.z)
-    clouds.rotation.y += dt * 0.014
+    earthBody.spin(dt)
 
     // issPos is a world (Sun-centred) position but iss is a child of
     // earthSystem, which already sits at Earth - so subtract to get local
@@ -955,11 +899,10 @@ export function createWorld(container: HTMLElement): World {
     hatch.scale.setScalar(docking ? 1.25 + Math.sin(elapsed * 8) * 0.08 : 1)
     shopGlow.material.opacity = 0.68 + Math.sin(elapsed * 2.4) * 0.2
 
-    moon.position.set(game.moonPos.x, game.moonPos.y, game.moonPos.z)
+    moonRoot.position.set(game.moonPos.x, game.moonPos.y, game.moonPos.z)
     const marsPos = game.planetPos[2]
     marsSystem.position.set(marsPos.x, marsPos.y, marsPos.z)
-    mars.rotation.y += dt * 0.02
-    marsMoonlets.rotation.y += dt * 0.11
+    marsBody.spin(dt)
 
     const ship = game.ship
     const docked = game.mode === 'docked'
@@ -993,7 +936,7 @@ export function createWorld(container: HTMLElement): World {
   }
 
   function updateSurfaceScene(game: Game, dt: number) {
-    const surface = surfaces[game.planetId]
+    const surface = surfaceBuild(game.planetId)
     if (!surface) return
     const player = game.player
     const playerRadius = surface.terrainRadius(player.lat, player.lon) + player.h
@@ -1163,7 +1106,7 @@ export function createWorld(container: HTMLElement): World {
 
   /** Moon hazard: a shadow that tightens under the incoming meteor. */
   function updateMeteorTelegraph(game: Game) {
-    const surface = surfaces[game.planetId]
+    const surface = surfaceBuild(game.planetId)
     const hazards = game.hazards
     const active = game.planetId === 1 && !!surface && hazards.meteorTelegraph >= 0 && hazards.meteorDelay > 0
     meteorShadow.visible = active
@@ -1204,7 +1147,7 @@ export function createWorld(container: HTMLElement): World {
       dustMesh.count = 0
       return
     }
-    const surface = surfaces[game.planetId]
+    const surface = surfaceBuild(game.planetId)
     if (!surface) return
     const player = game.player
     const up = dir(player.lat, player.lon, vA)
@@ -1329,8 +1272,13 @@ export function createWorld(container: HTMLElement): World {
         lastMode = game.mode
         firstFrame = true
       }
-      ensureSurfaces(game)
-      if (!inSpace) setActivePlanet(game.planetId)
+      syncSurfaceJobs(game)
+      updateLod(game, dt)
+      if (!inSpace) {
+        // the ground underfoot is never allowed to be missing
+        ensureActiveSurface(game)
+        setActivePlanet(game.planetId)
+      }
       updateCamera(game, dt, inSpace)
       if (inSpace) updateSpaceScene(game, dt)
       else updateSurfaceScene(game, dt)
@@ -1363,9 +1311,22 @@ export function createWorld(container: HTMLElement): World {
     },
     setReducedMotion(value) {
       reducedMotion = value
+      lod.setReducedMotion(value)
+    },
+    lodStats() {
+      const built: Record<string, number> = {}
+      const shown: Record<string, number> = {}
+      for (let id = 0; id < LOD_NAMES.length; id++) {
+        built[LOD_NAMES[id]] = lod.tierOf(id)
+        shown[LOD_NAMES[id]] = lod.shownOf(id)
+        built[`${LOD_NAMES[id]}-surface`] = lod.tierOf(SURFACE_ID_BASE + id)
+        shown[`${LOD_NAMES[id]}-surface`] = lod.shownOf(SURFACE_ID_BASE + id)
+      }
+      return { built, shown, pending: lod.pending(), spendMs: Math.round(lod.lastSpend() * 1000) / 1000 }
     },
     dispose() {
-      disposeSurfaces()
+      disposeSurfaceJobs()
+      lod.reset()
       renderer.dispose()
       renderer.domElement.remove()
     },

@@ -620,6 +620,7 @@ if (import.meta.env.DEV) {
     continueRun,
     toMenu,
     world,
+    lodStats: () => world.lodStats(),
     hud,
     audio,
     contextAction: onContext,
