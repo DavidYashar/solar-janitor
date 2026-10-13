@@ -489,8 +489,11 @@ function syncMode() {
   fadeOut = game.mode === 'docked' ? 0.5 : 1
   if (game.mode === 'space') spaceHintUntil = performance.now() + 12000
   if (game.mode === 'docked') {
-    shopOpen = true
-    hud.showShop(game)
+    // winning by delivering the last piece at the ISS must keep the results up
+    if (game.phase === 'playing') {
+      shopOpen = true
+      hud.showShop(game)
+    }
   } else if (previous === 'docked') {
     shopOpen = false
     if (game.phase === 'playing') hud.hideOverlay()
