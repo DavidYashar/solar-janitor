@@ -16,6 +16,7 @@ import { createHud } from './ui/hud.ts'
 import type { CompassState, HazardHud, HudFrame, RadarBlip, RadarState } from './ui/hud.ts'
 import { createInput } from './input.ts'
 import { createAudio } from './audio.ts'
+import { createPerf, formatPerf } from './perf.ts'
 
 const STEP = 1 / 120
 const CONJUGATE = { x: 0, y: 0, z: 0, w: 1 }
@@ -27,6 +28,7 @@ const fadeEl = document.getElementById('fade')
 
 const world = createWorld(sceneRoot)
 const audio = createAudio()
+const perf = createPerf()
 
 const PICKUP_COLORS: Record<number, number> = {
   [JUNK_POINTS.scrap]: JUNK_COLORS.scrap,
@@ -112,6 +114,8 @@ let shopOpen = false
 let fadeOut = 0
 let spaceHintUntil = 0
 let saveAvailable = loadSave() !== null
+let perfVisible = false
+let perfShownAt = 0
 
 function recordBest() {
   if (game.score <= best) return false
@@ -266,6 +270,10 @@ const input = createInput({
   confirm: onConfirm,
   togglePause,
   toggleMute,
+  togglePerf: () => {
+    perfVisible = !perfVisible
+    if (!perfVisible) hud.setPerf(null)
+  },
   boost: () => {
     if (game.phase === 'playing' && game.mode === 'space') audio.play('thrust', 0.6)
   },
@@ -510,6 +518,7 @@ function frame(now: number) {
   requestAnimationFrame(frame)
   const dt = Math.min(0.25, Math.max(0, (now - lastFrame) / 1000))
   lastFrame = now
+  perf.sample(dt)
   const command: Input = input.read({ mode: game.mode, facing: game.player.facing })
 
   if (game.phase === 'playing') {
@@ -542,6 +551,17 @@ function frame(now: number) {
   }
   world.update(game, dt)
   hud.update(frameData)
+
+  // debug overlay: refreshed a few times a second so that watching the numbers
+  // costs far less than the thing it is measuring
+  if (perfVisible && now - perfShownAt > 250) {
+    perfShownAt = now
+    const render = world.renderStats()
+    hud.setPerf(formatPerf(perf.report(), [
+      `draws ${render.calls}   tris ${(render.triangles / 1000).toFixed(0)}k   tex ${render.textures}   prog ${render.programs}`,
+      `${render.drawingBuffer.width}x${render.drawingBuffer.height} @${render.pixelRatio.toFixed(2)}   ${render.quality}   webgl2 ${render.webgl2}`,
+    ]))
+  }
   const touch = input.isTouch()
   hud.setTouch(touch && game.phase !== 'ready')
   hud.setLookHint(game.mode === 'space' && game.phase === 'playing' && !touch && performance.now() < spaceHintUntil)
@@ -621,6 +641,9 @@ if (import.meta.env.DEV) {
     toMenu,
     world,
     lodStats: () => world.lodStats(),
+    perf: () => ({ frames: perf.report(), render: world.renderStats() }),
+    perfReset: () => perf.reset(),
+    perfOverlay: (on: boolean) => { perfVisible = on; if (!on) hud.setPerf(null) },
     hud,
     audio,
     contextAction: onContext,
@@ -675,6 +698,19 @@ if (import.meta.env.DEV) {
       return game.credits
     },
   }
+}
+
+// Read-only diagnostics, available in the shipped build too: `__solarPerf.report()`
+// in the console gives the same frame-time window and renderer counters the debug
+// overlay shows — the way to check a real machine without a dev server.
+;(window as unknown as { __solarPerf: unknown }).__solarPerf = {
+  report: () => ({ frames: perf.report(), render: world.renderStats() }),
+  reset: () => perf.reset(),
+  overlay: (on: boolean) => {
+    perfVisible = on
+    if (!on) hud.setPerf(null)
+  },
+  lod: () => world.lodStats(),
 }
 
 requestAnimationFrame(frame)

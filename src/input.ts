@@ -6,6 +6,7 @@ export interface InputActions {
   confirm(): void
   togglePause(): void
   toggleMute(): void
+  togglePerf(): void
   boost(): void
 }
 
@@ -87,7 +88,12 @@ export function createInput(actions: InputActions): InputSource {
       actions.togglePause()
       return
     }
-    if (code === 'KeyM') actions.toggleMute()
+    if (code === 'KeyM') {
+      actions.toggleMute()
+      return
+    }
+    // backquote: the debug performance overlay
+    if (code === 'Backquote') actions.togglePerf()
   }
 
   function onKeyUp(event: KeyboardEvent) {

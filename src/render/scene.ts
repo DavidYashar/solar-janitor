@@ -33,7 +33,28 @@ export interface World {
   setReducedMotion(value: boolean): void
   /** live view of the LOD streamer, for browser playtests and debug output */
   lodStats(): LodStats
+  /** what the GPU was actually asked to do last frame (plan §9 budgets) */
+  renderStats(): RenderStats
   dispose(): void
+}
+
+/** Per-frame renderer counters plus the device limits behind them. */
+export interface RenderStats {
+  calls: number
+  triangles: number
+  points: number
+  lines: number
+  programs: number
+  geometries: number
+  textures: number
+  pixelRatio: number
+  drawingBuffer: { width: number; height: number }
+  maxTextureSize: number
+  maxRenderbuffer: number
+  maxAttributes: number
+  anisotropy: number
+  webgl2: boolean
+  quality: 'low' | 'high'
 }
 
 /** What the streamer is doing right now: built tiers, what is on screen, cost. */
@@ -403,6 +424,9 @@ export function createWorld(container: HTMLElement): World {
   let activePlanetId = -1
   const surfaceRoots: THREE.Group[] = []
   const surfaceJobs: SurfaceJob[] = []
+  /** worlds whose shaders and textures have already been handed to the GPU */
+  const warmedSurfaces = new Set<number>()
+  const warmCamera = new THREE.PerspectiveCamera()
 
   function surfaceBuild(planetId: number): SurfaceBuild | null {
     return surfaceJobs[planetId]?.build ?? null
@@ -530,6 +554,45 @@ export function createWorld(container: HTMLElement): World {
       surface.minTier = (game.mode === 'surface' && game.planetId === id) || landing === id ? 2 : 0
     }
     lod.update(lodQueries, dt)
+
+    // Pre-warm a world the streamer has finished building but the GPU has never
+    // seen: the first render of a surface costs ~120 ms of shader compiles and
+    // texture uploads, which would otherwise land mid-landing. Compiling on the
+    // approach moves that cost somewhere nobody is looking at a fade.
+    for (let id = 0; id < PLANETS.length; id++) {
+      if (warmedSurfaces.has(id) || lod.tierOf(SURFACE_ID_BASE + id) < 2) continue
+      const build = surfaceBuild(id)
+      if (!build) continue
+      warmedSurfaces.add(id)
+      // the shared surface dressing (sky, dust, meteors) only needs warming once
+      if (warmedSurfaces.size === 1) warmSurface(surfaceScene)
+      warmSurface(build.group)
+    }
+  }
+
+  /**
+   * Hand the GPU a scene's programs and textures ahead of the first draw.
+   * `compile` walks only visible objects, so the root is shown for the walk and
+   * hidden again — no rendering happens, so nothing reaches the screen.
+   */
+  function warmSurface(root: THREE.Object3D) {
+    if (reducedMotion) return
+    const wasVisible = root.visible
+    root.visible = true
+    renderer.compile(root, warmCamera)
+    root.traverse((object: THREE.Object3D) => {
+      const mesh = object as THREE.Mesh
+      const material = mesh.material as THREE.Material | THREE.Material[] | undefined
+      if (!material) return
+      for (const entry of Array.isArray(material) ? material : [material]) {
+        const maps = entry as unknown as Record<string, THREE.Texture | undefined>
+        for (const key of ['map', 'alphaMap', 'emissiveMap', 'normalMap', 'roughnessMap', 'aoMap']) {
+          const texture = maps[key]
+          if (texture) renderer.initTexture(texture)
+        }
+      }
+    })
+    root.visible = wasVisible
   }
 
   /** Sky, fog and light follow the planet, and get eaten by a Mars storm. */
@@ -1272,6 +1335,28 @@ export function createWorld(container: HTMLElement): World {
         shown[`${LOD_NAMES[id]}-surface`] = lod.shownOf(SURFACE_ID_BASE + id)
       }
       return { built, shown, pending: lod.pending(), spendMs: Math.round(lod.lastSpend() * 1000) / 1000 }
+    },
+    renderStats() {
+      const gl = renderer.getContext()
+      const info = renderer.info
+      const capabilities = renderer.capabilities
+      return {
+        calls: info.render.calls,
+        triangles: info.render.triangles,
+        points: info.render.points,
+        lines: info.render.lines,
+        programs: info.programs?.length ?? 0,
+        geometries: info.memory.geometries,
+        textures: info.memory.textures,
+        pixelRatio: renderer.getPixelRatio(),
+        drawingBuffer: { width: gl.drawingBufferWidth, height: gl.drawingBufferHeight },
+        maxTextureSize: gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
+        maxRenderbuffer: gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number,
+        maxAttributes: gl.getParameter(gl.MAX_VERTEX_ATTRIBS) as number,
+        anisotropy: capabilities.getMaxAnisotropy(),
+        webgl2: capabilities.isWebGL2,
+        quality: maxPixelRatio === 1 ? 'low' : 'high',
+      }
     },
     dispose() {
       disposeSurfaceJobs()

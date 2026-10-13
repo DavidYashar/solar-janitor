@@ -124,6 +124,55 @@ low-quality mode), 300 particles and 320 dust motes per scene, both starfields
 are `Points` clouds (2 200 + 700, allocation-free), and every repeated object —
 junk, beacons, relic beams, cargo, trees, boulders, rocks — is an `InstancedMesh`.
 
+## Performance: how to tell whether it runs smoothly
+
+A browser never publishes "the maximum power available", so the answer is to
+measure what actually happened and hold it against budgets. Press <kbd>`</kbd>
+(backquote) in game for the overlay, or call `__solarPerf.report()` from the
+console of a **shipped** build — both give the same numbers:
+
+```
+ 60 fps   median 16.7 ms   p95 16.8   p99 16.9   max 17
+jank 0/900   stutter 0   long tasks 2 (128 ms)
+heap 37 / 4192 MB
+draws 56   tris 25k   tex 12   prog 47
+1254x745 @1.75   high   webgl2 true
+```
+
+What each one is for:
+
+| Number | Why it matters | Budget |
+|---|---|---|
+| **p95 / p99 frame time** | the stutter a player actually feels; a mean hides it | p95 ≤ 16.7 ms (60 fps lock), p99 ≤ 33 ms |
+| **jank / stutter counts** | frames over 1.5x / 2x the 16.7 ms budget | 0 in steady state |
+| **long tasks** | main-thread blocks over 50 ms (Chromium) that freeze input | 0 while playing |
+| **heap** | runaway allocation; mobile Safari kills tabs near ~200 MB | ≤ 150 MB |
+| **draw calls** | CPU cost of submitting the scene | ≤ 200 |
+| **triangles** | GPU vertex cost; this game stays tiny | ≤ 500 k |
+| **textures / programs** | VRAM and shader-compile cost | textures ≤ 40, programs ≤ 60 |
+| **drawing buffer @ pixel ratio** | fill rate is the usual bottleneck on integrated GPUs | ratio capped at 1.75, 1.0 in low quality |
+
+Measured on this machine (Chromium, 1254x745 buffer, 1.75 ratio) with the
+production build:
+
+| Phase | median | p95 | p99 | max | jank | long tasks | heap | draws | tris |
+|---|---|---|---|---|---|---|---|---|---|
+| cold boot (menu, FCP 364 ms) | 16.7 | 16.8 | 133 | 233 | 2 | 3 | 29 MB | 61 | 31 k |
+| cruising between worlds | 16.7 | 16.8 | 16.9 | 33 | 2 | 0 | 32 MB | 49 | 15 k |
+| Mars surface, walking | 16.7 | 16.8 | 16.8 | **17** | **0** | **0** | 30 MB | 72 | 25 k |
+
+The only real spikes are the boot (three long tasks, all before the title is
+interactive) and the first render of a world. The bootstrap cost is why
+`render/scene.ts` warms a surface the moment the streamer finishes building it:
+`warmSurface()` compiles its programs and uploads its textures off-screen while
+the ship is still on approach, which took the worst landing frame from ~217 ms
+to ~66 ms in the dev harness (where every number is worse than production).
+
+Tuning levers, in the order to reach for them: `world.setQuality(true)` (drops
+the pixel ratio to 1), the reduced-motion setting (skips the warm-up and all
+shake), and the per-world texture resolution (`public/textures` — Earth's set is
+397 kB at 2K, or 280 kB for all four bodies at 1K).
+
 ## Credits & licences
 
 Earth's colour, night-lights and cloud maps in `public/textures/` are from the

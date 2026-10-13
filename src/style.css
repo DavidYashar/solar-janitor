@@ -603,3 +603,21 @@ kbd {
   .fill.oxygen.low, .fill.health.low, .compass.danger, .hazard { animation: none; }
   .toast { transition: none; }
 }
+
+/* debug overlay: proves what the frame actually cost (toggle with backquote) */
+.perf {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  margin: 0;
+  font-family: Consolas, ui-monospace, monospace;
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: pre;
+  color: #bfe6ff;
+  background: rgba(4, 10, 20, 0.72);
+  border: 1px solid var(--panel-edge);
+  border-radius: 8px;
+  padding: 7px 10px;
+  pointer-events: none;
+}

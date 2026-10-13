@@ -69,6 +69,7 @@ export interface Hud {
   setMuted(muted: boolean): void
   setTouch(enabled: boolean): void
   setLookHint(visible: boolean): void
+  setPerf(text: string | null): void
   overlayVisible(): boolean
 }
 
@@ -117,6 +118,7 @@ export function createHud(callbacks: HudCallbacks): Hud {
   const radarWrap = pick('radar-wrap')
   const radarNote = pick('radar-note')
   const lookHint = document.getElementById('look-hint')
+  const perfEl = pick<HTMLPreElement>('perf')
   const muteButton = pick<HTMLButtonElement>('mute')
   const pauseButton = pick<HTMLButtonElement>('pause')
 
@@ -491,6 +493,11 @@ export function createHud(callbacks: HudCallbacks): Hud {
 
     setLookHint(visible) {
       lookHint?.classList.toggle('hidden', !visible)
+    },
+
+    setPerf(text) {
+      perfEl.textContent = text ?? ''
+      perfEl.classList.toggle('hidden', text === null)
     },
 
     overlayVisible() {
