@@ -124,6 +124,10 @@ export function createWorld(container: HTMLElement): World {
   const cameraPosition = new THREE.Vector3()
   const cameraTarget = new THREE.Vector3()
   const cameraUp = new THREE.Vector3(0, 1, 0)
+  const followForward = new THREE.Vector3(0, 0, 1)
+  const followUp = new THREE.Vector3(0, 1, 0)
+  let followDistance = 13
+  let followHeight = 4.2
   let firstFrame = true
 
   // scratch vectors (reused every frame, no per-frame allocation)
@@ -1232,18 +1236,26 @@ export function createWorld(container: HTMLElement): World {
       else shipOrigin.set(ship.x, ship.y, ship.z)
       const distance = docked ? 19 : 13
       const height = docked ? 8 : 4.2
-      camWish.copy(shipOrigin).addScaledVector(shipForward, -distance).addScaledVector(shipUp, height)
+      // The offset itself is rigid: lagging the camera behind a target that
+      // outruns it is what pulled the view off the tug at boost (the gap grows
+      // with speed). The ease lives in the smoothed basis and in the pull-back
+      // into dock, so framing holds at a crawl and at full throttle alike.
+      const basisBlend = firstFrame ? 1 : 1 - Math.pow(0.0022, dt)
+      followForward.lerp(shipForward, basisBlend).normalize()
+      followUp.lerp(shipUp, basisBlend).normalize()
+      const rangeBlend = firstFrame ? 1 : 1 - Math.pow(0.004, dt)
+      followDistance += (distance - followDistance) * rangeBlend
+      followHeight += (height - followHeight) * rangeBlend
+      camWish.copy(shipOrigin).addScaledVector(followForward, -followDistance).addScaledVector(followUp, followHeight)
       camLook.copy(shipOrigin)
-        .addScaledVector(shipForward, docked ? 0 : 6)
-        .addScaledVector(shipUp, docked ? 0.6 : 1.2)
+        .addScaledVector(followForward, docked ? 0 : 6)
+        .addScaledVector(followUp, docked ? 0.6 : 1.2)
       camUpWish.copy(UP).lerp(shipUp, docked ? 0.4 : 0.75).normalize()
+      cameraPosition.copy(camWish)
+      cameraTarget.copy(camLook)
       if (firstFrame) {
-        cameraPosition.copy(camWish)
-        cameraTarget.copy(camLook)
         cameraUp.copy(camUpWish)
       } else {
-        cameraPosition.lerp(camWish, 1 - Math.pow(0.0022, dt))
-        cameraTarget.lerp(camLook, 1 - Math.pow(0.0016, dt))
         cameraUp.lerp(camUpWish, 1 - Math.pow(docked ? 0.05 : 0.03, dt))
         // a fully inverted roll can cancel the blend: fall back to the wish up
         if (cameraUp.lengthSq() < 1e-4) cameraUp.copy(camUpWish)
@@ -1304,8 +1316,10 @@ export function createWorld(container: HTMLElement): World {
       elapsed += dt
       const inSpace = game.mode !== 'surface'
       if (game.mode !== lastMode) {
+        // only a change of world resets the framing; docking eases into place
+        const worldChanged = (lastMode === 'surface') !== (game.mode === 'surface')
         lastMode = game.mode
-        firstFrame = true
+        if (worldChanged) firstFrame = true
       }
       syncSurfaceJobs(game)
       updateLod(game, dt)
