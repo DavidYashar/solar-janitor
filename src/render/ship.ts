@@ -311,21 +311,23 @@ export function buildShip(): ShipModel {
   ]), hullMaterial))
 
   // -------------------------------------------------------------- canopy
-  // greenhouse faired into the deck: the fairing's ends taper down to the
-  // hull's surface fore and aft, and the glass is set flush into its top
+  // greenhouse faired into the deck. The fairing reuses the hull's own
+  // section table (slightly inside in width and belly, level with the ridge
+  // at its fore end) and only swells upward under the panes, so its flanks
+  // stay buried in the hull and it reads as one body rather than a box
+  // dropped on the deck.
   const fairing = new THREE.Mesh(loft([
-    { z: 1.78, w: 0.3, h: 0.1, b: -0.06 },
-    { z: 1.35, w: 0.6, h: 0.26, b: -0.14 },
-    { z: 0.85, w: 0.78, h: 0.4, b: -0.2 },
-    { z: 0.35, w: 0.8, h: 0.42, b: -0.22 },
-    { z: 0.02, w: 0.62, h: 0.34, b: -0.18 },
-    { z: -0.18, w: 0.34, h: 0.2, b: -0.1 },
+    { z: 1.9, w: 0.588, h: 0.328, b: 0.277 },
+    { z: 1.62, w: 0.673, h: 0.4, b: 0.31 },
+    { z: 1.5, w: 0.709, h: 0.46, b: 0.325 },
+    { z: 0.85, w: 0.906, h: 0.596, b: 0.404 },
+    { z: 0.15, w: 1.024, h: 0.614, b: 0.453 },
+    { z: -0.18, w: 1.042, h: 0.496, b: 0.444 },
   ]), darkMaterial)
-  fairing.position.y = 0.24
   group.add(fairing)
 
   const canopy = new THREE.Mesh(loft([
-    { z: 1.62, w: 0.14, h: 0.1, b: -0.06 },
+    { z: 1.62, w: 0.14, h: 0.1, b: -0.01 },
     { z: 1.3, w: 0.42, h: 0.3, b: -0.12 },
     { z: 0.85, w: 0.58, h: 0.42, b: -0.16 },
     { z: 0.4, w: 0.5, h: 0.36, b: -0.14 },
