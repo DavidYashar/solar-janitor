@@ -13,6 +13,7 @@ import { createSpaceBody, makeLabel } from './bodies.ts'
 import type { SpaceBody } from './bodies.ts'
 import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
+import { buildShip } from './ship.ts'
 import {
   canvasTexture, clampValue, createSurfaceJob, dir, glowTexture, makeRnd, surfacePoint,
 } from './surfaces.ts'
@@ -287,58 +288,8 @@ export function createWorld(container: HTMLElement): World {
   const labels = [issLabel, ...bodyLabels]
 
   // ------------------------------------------------------------------ ship
-  function buildShip(): {
-    group: THREE.Group
-    thruster: THREE.Mesh<THREE.ConeGeometry, THREE.MeshBasicMaterial>
-    thrusterGlow: THREE.Sprite
-  } {
-    const group = new THREE.Group()
-    const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xf2c94c, roughness: 0.5, metalness: 0.25 })
-    const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x3a4256, roughness: 0.7, metalness: 0.3 })
-    const hull = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.1, 3.4), bodyMaterial)
-    group.add(hull)
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.8, 1.5), bodyMaterial)
-    nose.position.set(0, 0.05, 2.3)
-    group.add(nose)
-    const canopy = new THREE.Mesh(
-      new THREE.SphereGeometry(0.62, 16, 12),
-      new THREE.MeshStandardMaterial({
-        color: 0x9fe8ff, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.72,
-      }),
-    )
-    canopy.position.set(0, 0.6, 0.75)
-    canopy.scale.set(1, 0.8, 1.25)
-    group.add(canopy)
-    const pod = new THREE.CylinderGeometry(0.5, 0.5, 2.6, 10)
-    for (const side of [-1, 1]) {
-      const cargo = new THREE.Mesh(pod, darkMaterial)
-      cargo.rotation.x = Math.PI / 2
-      cargo.position.set(side * 1.5, -0.1, -0.2)
-      group.add(cargo)
-      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.9, 1.3), bodyMaterial)
-      fin.position.set(side * 1.35, 0.5, -1.3)
-      group.add(fin)
-      const claw = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 1.5), darkMaterial)
-      claw.position.set(side * 0.5, -0.35, 2.6)
-      claw.rotation.x = 0.32
-      group.add(claw)
-    }
-    const thruster = new THREE.Mesh(
-      new THREE.ConeGeometry(0.62, 1.5, 12),
-      new THREE.MeshBasicMaterial({ color: 0x8fd3ff, transparent: true, opacity: 0.75 }),
-    )
-    thruster.rotation.x = -Math.PI / 2
-    thruster.position.set(0, -0.05, -2.6)
-    group.add(thruster)
-    const thrusterGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: glowTexture('rgba(190, 235, 255, 0.9)', 'rgba(90, 150, 255, 0)'),
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    }))
-    thrusterGlow.position.set(0, -0.05, -3.1)
-    thrusterGlow.scale.setScalar(3.4)
-    group.add(thrusterGlow)
-    return { group, thruster, thrusterGlow }
-  }
+  // the tug itself lives in render/ship.ts: procedural faceted hull, canopy,
+  // swept wings, tail fin and engine pod, with the plume at -Z for the loop
 
   const shipModel = buildShip()
   spaceScene.add(shipModel.group)
@@ -912,7 +863,7 @@ export function createWorld(container: HTMLElement): World {
     const thrust = Math.max(0, ship.thrust)
     const glow = thrust > 0.12 ? (ship.boosting ? 1.5 : 0.85) : 0
     shipModel.thrusterGlow.material.opacity = Math.min(1, glow * 0.9 + 0.05)
-    shipModel.thrusterGlow.scale.setScalar(glow * 3.2 + 1.2)
+    shipModel.thrusterGlow.scale.setScalar(glow * 2.3 + 0.9)
     shipModel.thruster.scale.set(1, Math.max(0.05, glow), 1)
     shipModel.thruster.material.opacity = 0.25 + glow * 0.5
     if (!docked) shipModel.group.position.y += Math.sin(elapsed * 26) * 0.03 * glow
