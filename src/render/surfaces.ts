@@ -1,5 +1,7 @@
 import * as THREE from 'three'
-import { LANDER_RING_RADIUS, SURFACE_RADIUS, TAU } from '../sim/config.ts'
+import {
+  LANDER_RING_RADIUS, LOD_COST_SURFACE, LOD_PROP_SLICE, LOD_TERRAIN_SLICE, SURFACE_RADIUS, TAU,
+} from '../sim/config.ts'
 import { cratersFor, landerSite, planetById, terrainHeight } from '../sim/planets.ts'
 import type { PlanetDef } from '../sim/planets.ts'
 
@@ -22,6 +24,24 @@ export interface SurfaceBuild {
   terrainRadius(lat: number, lon: number): number
 }
 
+/**
+ * A surface that streams in across frames (plan §9). `standIn` holds the
+ * horizon while `detail` is still on the build queue; `build` only appears once
+ * the last slice reports done, so callers can tell "warm" from "not yet".
+ */
+export interface SurfaceJob {
+  planetId: number
+  /** tier 0: a smooth crust that sits just under the terrain's deepest valley */
+  standIn: THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>
+  /** tier 2: terrain, props and the lander pad all live here */
+  detail: THREE.Group
+  build: SurfaceBuild | null
+  /** estimated ms for the whole surface */
+  readonly costMs: number
+  /** run one bounded slice of work; true when the surface is ready */
+  slice(): boolean
+}
+
 // --------------------------------------------------------------- utilities
 
 /** Tiny deterministic RNG so props land in the same spot on every reload. */
@@ -37,19 +57,33 @@ export function clampValue(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-export function canvasTexture(
-  width: number, height: number, draw: (ctx: CanvasRenderingContext2D, rnd: () => number) => void,
-): THREE.CanvasTexture {
+/** A half-drawn canvas, so a heavy texture can be painted across several frames. */
+export interface CanvasBuild {
+  canvas: HTMLCanvasElement
+  ctx: CanvasRenderingContext2D | null
+  rnd: () => number
+}
+
+export function canvasBuild(width: number, height: number, seed = 991): CanvasBuild {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
-  const ctx = canvas.getContext('2d')
-  const rnd = makeRnd(991)
-  if (ctx) draw(ctx, rnd)
+  return { canvas, ctx: canvas.getContext('2d'), rnd: makeRnd(seed) }
+}
+
+export function finishTexture(canvas: HTMLCanvasElement): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   texture.anisotropy = 2
   return texture
+}
+
+export function canvasTexture(
+  width: number, height: number, draw: (ctx: CanvasRenderingContext2D, rnd: () => number) => void,
+): THREE.CanvasTexture {
+  const build = canvasBuild(width, height)
+  if (build.ctx) draw(build.ctx, build.rnd)
+  return finishTexture(build.canvas)
 }
 
 export function glowTexture(inner: string, outer: string): THREE.CanvasTexture {
@@ -104,9 +138,15 @@ function placeGroup(
 
 // ----------------------------------------------------------------- terrain
 
-function buildTerrain(planet: PlanetDef, seed: number): THREE.Mesh {
+/**
+ * The displaced, vertex-coloured planet sphere: 8 249 vertices of terrain
+ * noise, generated `LOD_TERRAIN_SLICE` vertices at a time. The geometry is
+ * rewritten in place, so the original directions are copied out first.
+ */
+function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Generator<void, void, void> {
   const geometry = new THREE.SphereGeometry(SURFACE_RADIUS, 112, 72)
   const position = geometry.attributes.position
+  const source = Float32Array.from(position.array as ArrayLike<number>)
   const colors = new Float32Array(position.count * 3)
   const low = new THREE.Color(planet.groundLow)
   const high = new THREE.Color(planet.groundHigh)
@@ -116,32 +156,39 @@ function buildTerrain(planet: PlanetDef, seed: number): THREE.Mesh {
   const shade = new THREE.Color(0x2a2e38)
   const vertex = new THREE.Vector3()
   const color = new THREE.Color()
-  for (let i = 0; i < position.count; i++) {
-    vertex.fromBufferAttribute(position, i).normalize()
-    const lat = Math.asin(clampValue(vertex.y, -1, 1))
-    const lon = Math.atan2(vertex.z, vertex.x)
-    const height = terrainHeight(lat, lon, seed, planet.id)
-    const radius = SURFACE_RADIUS + height
-    position.setXYZ(i, vertex.x * radius, vertex.y * radius, vertex.z * radius)
-    const t = clampValue((height + 2.2) / 4.4, 0, 1)
-    color.copy(low).lerp(high, t)
-    if (planet.theme === 'earth') {
-      if (height > 1.4) color.lerp(sand, 0.55)
-      if (lon > 2.2 && lon < 3.1 && Math.abs(lat) < 0.5) color.lerp(rock, 0.5)
-    } else if (planet.theme === 'moon') {
-      if (height < -0.4) color.lerp(shade, clampValue((-height - 0.4) / 2.6, 0, 0.45))
-    } else {
-      if (height > 0.8) color.lerp(accent, 0.35)
-      if (height < -0.9) color.lerp(shade, 0.3)
+
+  for (let start = 0; start < position.count; start += LOD_TERRAIN_SLICE) {
+    const end = Math.min(position.count, start + LOD_TERRAIN_SLICE)
+    for (let i = start; i < end; i++) {
+      vertex.set(source[i * 3], source[i * 3 + 1], source[i * 3 + 2]).normalize()
+      const lat = Math.asin(clampValue(vertex.y, -1, 1))
+      const lon = Math.atan2(vertex.z, vertex.x)
+      const height = terrainHeight(lat, lon, seed, planet.id)
+      const radius = SURFACE_RADIUS + height
+      position.setXYZ(i, vertex.x * radius, vertex.y * radius, vertex.z * radius)
+      const t = clampValue((height + 2.2) / 4.4, 0, 1)
+      color.copy(low).lerp(high, t)
+      if (planet.theme === 'earth') {
+        if (height > 1.4) color.lerp(sand, 0.55)
+        if (lon > 2.2 && lon < 3.1 && Math.abs(lat) < 0.5) color.lerp(rock, 0.5)
+      } else if (planet.theme === 'moon') {
+        if (height < -0.4) color.lerp(shade, clampValue((-height - 0.4) / 2.6, 0, 0.45))
+      } else {
+        if (height > 0.8) color.lerp(accent, 0.35)
+        if (height < -0.9) color.lerp(shade, 0.3)
+      }
+      colors.set([color.r, color.g, color.b], i * 3)
     }
-    colors.set([color.r, color.g, color.b], i * 3)
+    yield
   }
+
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geometry.computeVertexNormals()
-  return new THREE.Mesh(
+  group.add(new THREE.Mesh(
     geometry,
     new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 }),
-  )
+  ))
+  yield
 }
 
 /** Sharp stars for the airless Moon sky. */
@@ -165,9 +212,9 @@ function buildStarField(): THREE.Points {
 
 // ------------------------------------------------------------------- props
 
-function buildEarthProps(
+function* earthPropStage(
   planet: PlanetDef, seed: number, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
-) {
+): Generator<void, void, void> {
   const rnd = makeRnd(seed ^ 0x51a7c3)
   const site = landerSite(planet.id)
   const dummy = new THREE.Object3D()
@@ -202,6 +249,7 @@ function buildEarthProps(
     dummy.updateMatrix()
     canopyMesh.setMatrixAt(trees, dummy.matrix)
     trees++
+    if (trees % LOD_PROP_SLICE === 0) yield
   }
   trunkMesh.count = trees
   canopyMesh.count = trees
@@ -209,7 +257,7 @@ function buildEarthProps(
   canopyMesh.instanceMatrix.needsUpdate = true
 
   const rockMesh = new THREE.InstancedMesh(
-    new THREE.IcosahedronGeometry(0.95, 0),
+    new THREE.IcosahedronGeometry(0.9, 0),
     new THREE.MeshStandardMaterial({ color: planet.rock, flatShading: true }),
     110,
   )
@@ -218,9 +266,11 @@ function buildEarthProps(
     const lon = rnd() * TAU
     placeProp(dummy, radiusOf, lat, lon, 0.25, 0.6 + rnd() * 1.5, rnd)
     rockMesh.setMatrixAt(i, dummy.matrix)
+    if ((i + 1) % LOD_PROP_SLICE === 0) yield
   }
   rockMesh.instanceMatrix.needsUpdate = true
   group.add(trunkMesh, canopyMesh, rockMesh)
+  yield
 }
 
 /** A dead rover: flat hull, four wheels, a tilted deck and a bent mast. */
@@ -250,9 +300,9 @@ function buildRoverWreck(): THREE.Group {
   return group
 }
 
-function buildMoonProps(
+function* moonPropStage(
   planet: PlanetDef, seed: number, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
-) {
+): Generator<void, void, void> {
   const rnd = makeRnd(seed ^ 0x2f9a11)
   const site = landerSite(planet.id)
   const dummy = new THREE.Object3D()
@@ -272,6 +322,7 @@ function buildMoonProps(
       placeProp(dummy, radiusOf, lat, lon, 0.16, 0.5 + rnd() * 0.8, rnd)
       boulderMesh.setMatrixAt(boulders++, dummy.matrix)
       if (boulders >= boulderMesh.count) break
+      if (boulders % LOD_PROP_SLICE === 0) yield
     }
   }
   for (let i = 0; i < 90; i++) {
@@ -280,10 +331,12 @@ function buildMoonProps(
     if (padDistance(lat, lon, site) < 0.24) continue
     placeProp(dummy, radiusOf, lat, lon, 0.2, 0.6 + rnd() * 1.7, rnd)
     boulderMesh.setMatrixAt(boulders++, dummy.matrix)
+    if (boulders % LOD_PROP_SLICE === 0) yield
   }
   boulderMesh.count = boulders
   boulderMesh.instanceMatrix.needsUpdate = true
   group.add(boulderMesh)
+  yield
 
   for (let i = 0; i < 2; i++) {
     const wreck = buildRoverWreck()
@@ -291,6 +344,7 @@ function buildMoonProps(
     const lon = site.lon + (i === 0 ? 0.23 : -0.19)
     placeGroup(wreck, radiusOf, lat, lon, 0.1, rnd() * TAU)
     group.add(wreck)
+    yield
   }
 
   const fragmentMesh = new THREE.InstancedMesh(
@@ -306,6 +360,7 @@ function buildMoonProps(
   }
   fragmentMesh.instanceMatrix.needsUpdate = true
   group.add(fragmentMesh)
+  yield
 }
 
 /** A snapped windmill: thin mast, a bent strut and three battered blades. */
@@ -360,9 +415,10 @@ function buildProbeWreck(): THREE.Group {
   return group
 }
 
-function buildMarsProps(
+function* marsPropStage(
   planet: PlanetDef, seed: number, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
-): THREE.Group[] {
+  windmillBlades: THREE.Group[],
+): Generator<void, void, void> {
   const rnd = makeRnd(seed ^ 0x7c3d55)
   const site = landerSite(planet.id)
   const dummy = new THREE.Object3D()
@@ -377,11 +433,12 @@ function buildMarsProps(
     const lon = rnd() * TAU
     placeProp(dummy, radiusOf, lat, lon, 0.2, 0.5 + rnd() * 1.9, rnd)
     rockMesh.setMatrixAt(i, dummy.matrix)
+    if ((i + 1) % LOD_PROP_SLICE === 0) yield
   }
   rockMesh.instanceMatrix.needsUpdate = true
   group.add(rockMesh)
+  yield
 
-  const windmillBlades: THREE.Group[] = []
   for (let i = 0; i < 3; i++) {
     const windmill = buildWindmill()
     let lat = site.lat
@@ -394,6 +451,7 @@ function buildMarsProps(
     placeGroup(windmill.group, radiusOf, lat, lon, 0, rnd() * TAU)
     group.add(windmill.group)
     windmillBlades.push(windmill.blades)
+    yield
   }
 
   for (let i = 0; i < 2; i++) {
@@ -402,38 +460,39 @@ function buildMarsProps(
     const lon = site.lon + (i === 0 ? 0.34 : -0.28)
     placeGroup(wreck, radiusOf, lat, lon, -0.35, rnd() * TAU)
     group.add(wreck)
+    yield
   }
-  return windmillBlades
 }
 
 // ------------------------------------------------------------------ lander
 
-function buildLander(
-  planet: PlanetDef, radiusOf: (lat: number, lon: number) => number,
-): {
-  group: THREE.Group
+interface LanderParts {
+  lander: THREE.Group
   landingRing: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>
   ringMaterial: THREE.MeshBasicMaterial
   padBeacon: THREE.Sprite
-} {
-  const site = landerSite(planet.id)
-  const group = new THREE.Group()
-  placeGroup(group, radiusOf, site.lat, site.lon, 0, 0)
+}
 
-  const legMaterial = new THREE.MeshStandardMaterial({ color: 0x4a5162, roughness: 0.7, flatShading: true })
+function buildLander(
+  planet: PlanetDef, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
+): LanderParts {
+  const site = landerSite(planet.id)
+  const lander = new THREE.Group()
+  placeGroup(lander, radiusOf, site.lat, site.lon, 0, 0)
+  const legMaterial = new THREE.MeshStandardMaterial({ color: 0xd8a24a, flatShading: true, roughness: 0.6 })
   for (const angle of [0, 1, 2, 3]) {
     const leg = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.6, 0.28), legMaterial)
     const a = (angle / 4) * TAU + Math.PI / 4
     leg.position.set(Math.cos(a) * 2.2, 0.75, Math.sin(a) * 2.2)
     leg.rotation.set(Math.sin(a) * 0.45, 0, -Math.cos(a) * 0.45)
-    group.add(leg)
+    lander.add(leg)
   }
 
   const ringMaterial = new THREE.MeshBasicMaterial({ color: 0x7fffb0, transparent: true, opacity: 0.5 })
   const landingRing = new THREE.Mesh(new THREE.TorusGeometry(LANDER_RING_RADIUS, 0.2, 8, 64), ringMaterial)
   landingRing.rotation.x = -Math.PI / 2
   landingRing.position.y = 0.14
-  group.add(landingRing)
+  lander.add(landingRing)
 
   const padBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: glowTexture('rgba(140, 255, 190, 0.9)', 'rgba(60, 220, 140, 0)'),
@@ -441,41 +500,82 @@ function buildLander(
   }))
   padBeacon.position.set(0, 6.6, 0)
   padBeacon.scale.setScalar(7.5)
-  group.add(padBeacon)
+  lander.add(padBeacon)
 
-  return { group, landingRing, ringMaterial, padBeacon }
+  group.add(lander)
+  return { lander, landingRing, ringMaterial, padBeacon }
 }
 
 // ------------------------------------------------------------------- build
 
-export function buildSurface(planetId: number, seed: number): SurfaceBuild {
+/**
+ * A surface that streams in across frames: a stand-in crust appears straight
+ * away and the terrain, props and lander pad are generated under the frame
+ * budget. The stand-in sits below the terrain's deepest valley, so the finished
+ * world never leaves a grey dome poking out of a crater.
+ */
+export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {
   const planet = planetById(planetId)
-  const group = new THREE.Group()
+  const detail = new THREE.Group()
+  const standIn = new THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>(
+    new THREE.SphereGeometry(SURFACE_RADIUS - 2.6, 40, 26),
+    new THREE.MeshStandardMaterial({
+      color: planet.groundLow, flatShading: true, roughness: 1, transparent: true, opacity: 1,
+    }),
+  )
   const terrainRadius = (lat: number, lon: number) => SURFACE_RADIUS + terrainHeight(lat, lon, seed, planetId)
+  const windmillBlades: THREE.Group[] = []
+  let lander: LanderParts | null = null
 
-  group.add(buildTerrain(planet, seed))
-  if (planet.theme === 'moon') group.add(buildStarField())
-
-  let windmillBlades: THREE.Group[] = []
+  const stages: (() => Generator<void, void, void>)[] = [
+    () => terrainStage(planet, seed, detail),
+  ]
+  if (planet.theme === 'moon') {
+    stages.push(function* moonSky() {
+      detail.add(buildStarField())
+    })
+  }
   if (planet.theme === 'earth') {
-    buildEarthProps(planet, seed, terrainRadius, group)
+    stages.push(() => earthPropStage(planet, seed, terrainRadius, detail))
   } else if (planet.theme === 'moon') {
-    buildMoonProps(planet, seed, terrainRadius, group)
+    stages.push(() => moonPropStage(planet, seed, terrainRadius, detail))
   } else {
-    windmillBlades = buildMarsProps(planet, seed, terrainRadius, group)
+    stages.push(() => marsPropStage(planet, seed, terrainRadius, detail, windmillBlades))
   }
+  stages.push(function* padStage() {
+    lander = buildLander(planet, terrainRadius, detail)
+  })
 
-  const lander = buildLander(planet, terrainRadius)
-  group.add(lander.group)
-
-  return {
+  let index = 0
+  let current: Generator<void, void, void> | null = null
+  const job: SurfaceJob = {
     planetId,
-    group,
-    lander: lander.group,
-    landingRing: lander.landingRing,
-    ringMaterial: lander.ringMaterial,
-    padBeacon: lander.padBeacon,
-    windmillBlades,
-    terrainRadius,
+    standIn,
+    detail,
+    build: null,
+    costMs: LOD_COST_SURFACE,
+    slice() {
+      while (index < stages.length) {
+        current = current ?? stages[index]()
+        const step = current.next()
+        if (!step.done) return false
+        current = null
+        index++
+      }
+      if (!job.build && lander) {
+        job.build = {
+          planetId,
+          group: detail,
+          lander: lander.lander,
+          landingRing: lander.landingRing,
+          ringMaterial: lander.ringMaterial,
+          padBeacon: lander.padBeacon,
+          windmillBlades,
+          terrainRadius,
+        }
+      }
+      return true
+    },
   }
+  return job
 }
