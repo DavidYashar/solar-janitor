@@ -1,6 +1,7 @@
 /**
  * The janitor's tug (plan §8): a faceted white / blue-grey spaceplane built
- * entirely from procedural geometry - no asset files, nothing to download.
+ * entirely from procedural geometry and a code-painted hull texture - no asset
+ * files, nothing to download.
  *
  * Orientation contract, shared with the sim and `scene.ts`:
  *   nose points +Z (the sim's forward axis), the engine and its plume sit at -Z
@@ -36,57 +37,163 @@ function panelTint(seed: number): THREE.Color {
   return new THREE.Color(PANELS[Math.floor(pick * PANELS.length) % PANELS.length])
 }
 
-/** Push a triangle wound so its normal points along `n`. */
-function tri(
-  a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3,
-  n: THREE.Vector3, pos: number[], col: number[], tint: THREE.Color,
-) {
-  const flip = b.clone().sub(a).cross(c.clone().sub(a)).dot(n) < 0
-  const verts = flip ? [a, c, b] : [a, b, c]
-  for (const v of verts) {
-    pos.push(v.x, v.y, v.z)
-    col.push(tint.r, tint.g, tint.b)
+/** Small deterministic generator for the texture grain. */
+function rng(seed: number): () => number {
+  let state = seed >>> 0
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0
+    return state / 4294967296
   }
 }
 
-function finish(pos: number[], col: number[]): THREE.BufferGeometry {
+/**
+ * The hull skin: mostly white so the per-facet tints show through, with panel
+ * seams, a few service hatches, a warm hazard band at the tail and the tug's
+ * number on both flanks (the port one mirrored so it reads the right way).
+ */
+function hullTexture(): THREE.CanvasTexture {
+  const size = 512
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('2d canvas unavailable')
+  const random = rng(0x5eed)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, size, size)
+
+  // faint lengthwise grain
+  for (let i = 0; i < 110; i++) {
+    ctx.fillStyle = `rgba(122,134,152,${0.02 + random() * 0.05})`
+    ctx.fillRect(random() * size, 0, 1 + random() * 2, size)
+  }
+
+  // panel seams: frames around the hull, stringers along it
+  // (canvas y is flipped against hull v, so v is measured from the tail as 1 - v)
+  const Y = (v: number) => (1 - v) * size
+  ctx.strokeStyle = 'rgba(98,110,126,0.5)'
+  ctx.lineWidth = 1.5
+  for (const v of [0.055, 0.125, 0.2, 0.285, 0.365, 0.45, 0.535, 0.62, 0.705, 0.795, 0.88, 0.95]) {
+    ctx.beginPath()
+    ctx.moveTo(0, Y(v))
+    ctx.lineTo(size, Y(v))
+    ctx.stroke()
+  }
+  for (const u of [0.055, 0.165, 0.28, 0.4, 0.5, 0.6, 0.72, 0.835, 0.945]) {
+    ctx.beginPath()
+    ctx.moveTo(u * size, 0)
+    ctx.lineTo(u * size, size)
+    ctx.stroke()
+  }
+
+  // service hatches and vents
+  ctx.fillStyle = 'rgba(104,116,132,0.32)'
+  for (const [u, v, w, h] of [
+    [0.11, 0.53, 0.07, 0.05], [0.43, 0.31, 0.09, 0.04],
+    [0.7, 0.67, 0.06, 0.06], [0.31, 0.79, 0.05, 0.04],
+  ]) {
+    ctx.fillRect(u * size, Y(v), w * size, h * size)
+  }
+  ctx.fillStyle = 'rgba(78,88,102,0.5)'
+  for (let i = 0; i < 5; i++) {
+    ctx.fillRect((0.5 + i * 0.018) * size, Y(0.17), 0.008 * size, 0.05 * size)
+  }
+
+  // warm hazard band across the tail, with its dark shadow line
+  ctx.fillStyle = 'rgba(214,116,60,0.9)'
+  ctx.fillRect(0, Y(0.075), size, 0.013 * size)
+  ctx.fillStyle = 'rgba(46,54,66,0.9)'
+  ctx.fillRect(0, Y(0.093), size, 0.006 * size)
+
+  // hull number on both flanks, on a dark badge so it reads at a distance
+  ctx.font = `bold ${Math.round(size * 0.075)}px "Segoe UI", system-ui, sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  for (const [u, mirror] of [[0.273, false], [0.727, true]] as [number, boolean][]) {
+    ctx.save()
+    ctx.translate(u * size, Y(0.63))
+    if (mirror) ctx.scale(-1, 1)
+    ctx.fillStyle = 'rgba(58,68,84,0.16)'
+    ctx.fillRect(-0.075 * size, -0.05 * size, 0.15 * size, 0.1 * size)
+    ctx.fillStyle = 'rgba(48,58,74,0.95)'
+    ctx.fillText('SJ-01', 0, 0)
+    ctx.restore()
+  }
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.anisotropy = 4
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+
+/** Push a triangle wound so its normal points along `n`. */
+function tri(
+  a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3,
+  n: THREE.Vector3, pos: number[], col: number[], uv: number[], uvs: number[][], tint: THREE.Color,
+) {
+  const flip = b.clone().sub(a).cross(c.clone().sub(a)).dot(n) < 0
+  const verts = flip ? [a, c, b] : [a, b, c]
+  const coords = flip ? [uvs[0], uvs[2], uvs[1]] : uvs
+  for (let i = 0; i < 3; i++) {
+    const v = verts[i]
+    pos.push(v.x, v.y, v.z)
+    col.push(tint.r, tint.g, tint.b)
+    uv.push(coords[i][0], coords[i][1])
+  }
+}
+
+function finish(pos: number[], col: number[], uv: number[]): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
   geometry.computeVertexNormals()
   return geometry
 }
 
-/** Hull polygon: ridged top, chined sides, keel belly. */
+/** Hull polygon: ridged top, rounded chines, keel belly. */
 function ring(s: Section): Pt[] {
   const { w, h, b } = s
   return [
     [0, h],
-    [w * 0.5, h * 0.42],
-    [w * 0.88, -b * 0.26],
-    [w * 0.44, -b],
-    [-w * 0.44, -b],
-    [-w * 0.88, -b * 0.26],
-    [-w * 0.5, h * 0.42],
+    [w * 0.38, h * 0.62],
+    [w * 0.78, h * 0.12],
+    [w * 0.98, -b * 0.34],
+    [w * 0.66, -b * 0.86],
+    [w * 0.22, -b],
+    [-w * 0.22, -b],
+    [-w * 0.66, -b * 0.86],
+    [-w * 0.98, -b * 0.34],
+    [-w * 0.78, h * 0.12],
+    [-w * 0.38, h * 0.62],
   ]
 }
 
-/** Loft sections nose-to-tail with flat, per-facet shading. */
+/** Loft sections nose-to-tail with flat shading and a cylindrical unwrap. */
 function loft(sections: Section[]): THREE.BufferGeometry {
   const pos: number[] = []
   const col: number[] = []
+  const uv: number[] = []
   const tint = new THREE.Color()
   const rings = sections.map(ring)
+  const count = rings[0].length
+  const zTail = sections[sections.length - 1].z
+  const zNose = sections[0].z
   const centres = rings.map(points => points.reduce((sum, p) => sum + p[1], 0) / points.length)
+  const wrap = ([u, v]: number[]): number[] => [u, v]
   let face = 0
   for (let i = 0; i < sections.length - 1; i++) {
     const a = rings[i]
     const b = rings[i + 1]
     const za = sections[i].z
     const zb = sections[i + 1].z
+    const va = (za - zTail) / (zNose - zTail)
+    const vb = (zb - zTail) / (zNose - zTail)
     const centreY = (centres[i] + centres[i + 1]) / 2
-    for (let j = 0; j < a.length; j++) {
-      const k = (j + 1) % a.length
+    for (let j = 0; j < count; j++) {
+      const k = (j + 1) % count
+      const u0 = j / count
+      const u1 = (j + 1) / count
       const p0 = new THREE.Vector3(a[j][0], a[j][1], za)
       const p1 = new THREE.Vector3(a[k][0], a[k][1], za)
       const p2 = new THREE.Vector3(b[k][0], b[k][1], zb)
@@ -94,11 +201,10 @@ function loft(sections: Section[]): THREE.BufferGeometry {
       const out = p0.clone().add(p1).add(p2).add(p3).multiplyScalar(0.25)
       out.y -= centreY
       tint.copy(panelTint(face++))
-      tri(p0, p1, p2, out, pos, col, tint)
-      tri(p0, p2, p3, out, pos, col, tint)
+      tri(p0, p1, p2, out, pos, col, uv, [wrap([u0, va]), wrap([u1, va]), wrap([u1, vb])], tint)
+      tri(p0, p2, p3, out, pos, col, uv, [wrap([u0, va]), wrap([u1, vb]), wrap([u0, vb])], tint)
     }
   }
-  // end caps keep both volumes closed
   const cap = (points: Pt[], z: number, n: THREE.Vector3) => {
     for (let j = 1; j < points.length - 1; j++) {
       tint.copy(panelTint(face++))
@@ -106,13 +212,14 @@ function loft(sections: Section[]): THREE.BufferGeometry {
         new THREE.Vector3(points[0][0], points[0][1], z),
         new THREE.Vector3(points[j][0], points[j][1], z),
         new THREE.Vector3(points[j + 1][0], points[j + 1][1], z),
-        n, pos, col, tint,
+        n, pos, col, uv,
+        [wrap([0.03, 0.03]), wrap([0.05, 0.03]), wrap([0.03, 0.05])], tint,
       )
     }
   }
   cap(rings[0], sections[0].z, new THREE.Vector3(0, 0, 1))
   cap(rings[rings.length - 1], sections[sections.length - 1].z, new THREE.Vector3(0, 0, -1))
-  return finish(pos, col)
+  return finish(pos, col, uv)
 }
 
 /**
@@ -123,6 +230,7 @@ function loft(sections: Section[]): THREE.BufferGeometry {
 function plate(points: Pt[], thickness: number, plane: 'xz' | 'yz'): THREE.BufferGeometry {
   const pos: number[] = []
   const col: number[] = []
+  const uv: number[] = []
   const tint = new THREE.Color()
   const half = thickness / 2
   const to3 = (p: Pt, side: number): THREE.Vector3 => (
@@ -130,13 +238,22 @@ function plate(points: Pt[], thickness: number, plane: 'xz' | 'yz'): THREE.Buffe
   )
   const cx = points.reduce((sum, p) => sum + p[0], 0) / points.length
   const cy = points.reduce((sum, p) => sum + p[1], 0) / points.length
+  const xs = points.map(p => p[0])
+  const ys = points.map(p => p[1])
+  const minX = Math.min(...xs)
+  const minY = Math.min(...ys)
+  const spanX = Math.max(0.001, Math.max(...xs) - minX)
+  const spanY = Math.max(0.001, Math.max(...ys) - minY)
+  // plates sample the reserved plain patch of the skin, so no markings bleed on
+  const flat = (p: Pt): number[] => [0.015 + ((p[0] - minX) / spanX) * 0.07, 0.015 + ((p[1] - minY) / spanY) * 0.07]
   for (const side of [1, -1]) {
-    const n = plane === 'xz'
-      ? new THREE.Vector3(0, side, 0)
-      : new THREE.Vector3(side, 0, 0)
+    const n = plane === 'xz' ? new THREE.Vector3(0, side, 0) : new THREE.Vector3(side, 0, 0)
     for (let i = 1; i < points.length - 1; i++) {
       tint.copy(panelTint(i * 7.3 + side * 2.1))
-      tri(to3(points[0], side), to3(points[i], side), to3(points[i + 1], side), n, pos, col, tint)
+      tri(
+        to3(points[0], side), to3(points[i], side), to3(points[i + 1], side),
+        n, pos, col, uv, [flat(points[0]), flat(points[i]), flat(points[i + 1])], tint,
+      )
     }
   }
   for (let i = 0; i < points.length; i++) {
@@ -147,13 +264,16 @@ function plate(points: Pt[], thickness: number, plane: 'xz' | 'yz'): THREE.Buffe
     const n = plane === 'xz' ? new THREE.Vector3(mx, 0, my) : new THREE.Vector3(0, my, mx)
     n.normalize()
     tint.copy(panelTint(i * 3.1))
-    tri(to3(a, 1), to3(b, 1), to3(b, -1), n, pos, col, tint)
-    tri(to3(a, 1), to3(b, -1), to3(a, -1), n, pos, col, tint)
+    const pair = [flat(a), flat(b)]
+    tri(to3(a, 1), to3(b, 1), to3(b, -1), n, pos, col, uv, [pair[0], pair[1], pair[1]], tint)
+    tri(to3(a, 1), to3(b, -1), to3(a, -1), n, pos, col, uv, [pair[0], pair[1], pair[0]], tint)
   }
-  return finish(pos, col)
+  return finish(pos, col, uv)
 }
 
-const hullMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.48, metalness: 0.2 })
+const hullMaterial = new THREE.MeshStandardMaterial({
+  vertexColors: true, roughness: 0.48, metalness: 0.2, map: hullTexture(),
+})
 const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x4b5566, roughness: 0.55, metalness: 0.38 })
 const glassMaterial = new THREE.MeshStandardMaterial({
   color: 0x0c1826, roughness: 0.12, metalness: 0.55, emissive: 0x0d3d55, emissiveIntensity: 0.7,
@@ -172,12 +292,17 @@ export function buildShip(): ShipModel {
   // ---------------------------------------------------------------- hull
   group.add(new THREE.Mesh(loft([
     { z: 3.5, w: 0.05, h: 0.05, b: 0.05 },
-    { z: 2.55, w: 0.34, h: 0.2, b: 0.17 },
-    { z: 1.6, w: 0.72, h: 0.4, b: 0.34 },
-    { z: 0.6, w: 1.0, h: 0.52, b: 0.46 },
-    { z: -0.5, w: 1.08, h: 0.5, b: 0.44 },
-    { z: -1.6, w: 0.95, h: 0.42, b: 0.38 },
-    { z: -2.85, w: 0.58, h: 0.3, b: 0.28 },
+    { z: 3.15, w: 0.18, h: 0.11, b: 0.1 },
+    { z: 2.7, w: 0.34, h: 0.2, b: 0.17 },
+    { z: 2.15, w: 0.52, h: 0.3, b: 0.25 },
+    { z: 1.5, w: 0.72, h: 0.4, b: 0.33 },
+    { z: 0.85, w: 0.92, h: 0.48, b: 0.41 },
+    { z: 0.15, w: 1.04, h: 0.52, b: 0.46 },
+    { z: -0.6, w: 1.08, h: 0.5, b: 0.44 },
+    { z: -1.35, w: 1.0, h: 0.46, b: 0.4 },
+    { z: -2.0, w: 0.85, h: 0.38, b: 0.34 },
+    { z: -2.55, w: 0.68, h: 0.32, b: 0.29 },
+    { z: -2.88, w: 0.58, h: 0.29, b: 0.27 },
   ]), hullMaterial))
 
   // -------------------------------------------------------------- canopy
@@ -210,34 +335,43 @@ export function buildShip(): ShipModel {
 
   // fitted dark collar the canopy sits in
   const collar = new THREE.Mesh(loft([
-    { z: 1.66, w: 0.22, h: 0.22, b: -0.1 },
-    { z: 1.3, w: 0.6, h: 0.28, b: -0.14 },
-    { z: 0.72, w: 0.72, h: 0.3, b: -0.16 },
-    { z: 0.3, w: 0.56, h: 0.26, b: -0.12 },
-    { z: 0.08, w: 0.28, h: 0.18, b: -0.08 },
+    { z: 1.7, w: 0.24, h: 0.22, b: -0.1 },
+    { z: 1.32, w: 0.64, h: 0.3, b: -0.16 },
+    { z: 0.72, w: 0.76, h: 0.32, b: -0.18 },
+    { z: 0.3, w: 0.6, h: 0.28, b: -0.14 },
+    { z: 0.08, w: 0.3, h: 0.19, b: -0.08 },
   ]), darkMaterial)
-  collar.position.y = 0.3
+  collar.position.y = 0.28
   group.add(collar)
+
+  // slim sensor boom under the nose
+  const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.0, 8), darkMaterial)
+  boom.rotation.x = Math.PI / 2
+  boom.position.set(0, -0.26, 2.32)
+  group.add(boom)
+  const boomTip = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), darkMaterial)
+  boomTip.position.set(0, -0.26, 2.84)
+  group.add(boomTip)
 
   // --------------------------------------------------------------- wings
   for (const side of [1, -1]) {
     const sx = (value: number) => side * value
     const wing = new THREE.Mesh(plate([
-      [sx(0.8), 0.7], [sx(2.7), -1.05], [sx(2.55), -1.75], [sx(0.75), -1.5],
+      [sx(0.8), 0.7], [sx(2.7), -1.05], [sx(2.62), -1.42], [sx(2.55), -1.78], [sx(0.75), -1.5],
     ], 0.11, 'xz'), hullMaterial)
     wing.position.y = -0.05
     group.add(wing)
 
-    // dark leading edge, as in the reference art
+    // dark leading edge, sitting level with the wing skin
     const edge = new THREE.Mesh(plate([
       [sx(0.82), 0.66], [sx(2.66), -1.0], [sx(2.74), -1.34], [sx(0.86), 0.3],
-    ], 0.13, 'xz'), darkMaterial)
-    edge.position.y = -0.045
+    ], 0.118, 'xz'), darkMaterial)
+    edge.position.y = -0.051
     group.add(edge)
 
     // tail stabilisers under the engine deck
     const stab = new THREE.Mesh(plate([
-      [sx(0.55), -1.85], [sx(1.72), -2.3], [sx(1.64), -2.7], [sx(0.5), -2.55],
+      [sx(0.55), -1.85], [sx(1.72), -2.3], [sx(1.64), -2.72], [sx(0.5), -2.55],
     ], 0.08, 'xz'), hullMaterial)
     stab.position.y = -0.18
     group.add(stab)
@@ -251,8 +385,8 @@ export function buildShip(): ShipModel {
   fin.rotation.z = 0.07
   group.add(fin)
   const finCap = new THREE.Mesh(plate([
-    [-1.2, 1.86], [-1.94, 1.6], [-2.06, 1.9], [-1.36, 2.12],
-  ], 0.14, 'yz'), darkMaterial)
+    [-1.2, 1.9], [-1.95, 1.64], [-2.0, 1.8], [-1.31, 2.06],
+  ], 0.15, 'yz'), darkMaterial)
   finCap.rotation.z = 0.07
   group.add(finCap)
 
@@ -264,34 +398,34 @@ export function buildShip(): ShipModel {
   pylon.position.set(0, 0.62, -2.4)
   group.add(pylon)
 
-  const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.5, 16), podBody)
+  const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.5, 20), podBody)
   pod.rotation.x = Math.PI / 2
   pod.position.set(0, 0.86, -2.5)
   group.add(pod)
-  const podCollarA = new THREE.Mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.18, 16), podBand)
+  const podCollarA = new THREE.Mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.18, 20), podBand)
   podCollarA.rotation.x = Math.PI / 2
   podCollarA.position.set(0, 0.86, -1.95)
   group.add(podCollarA)
-  const podCollarB = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.22, 16), podBand)
+  const podCollarB = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.22, 20), podBand)
   podCollarB.rotation.x = Math.PI / 2
   podCollarB.position.set(0, 0.86, -2.9)
   group.add(podCollarB)
-  const podRing = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.12, 16), accentMaterial)
+  const podRing = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.12, 20), accentMaterial)
   podRing.rotation.x = Math.PI / 2
   podRing.position.set(0, 0.86, -3.17)
   group.add(podRing)
-  const podCore = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 12), accentMaterial)
+  const podCore = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 14), accentMaterial)
   podCore.rotation.x = Math.PI / 2
   podCore.position.set(0, 0.86, -3.26)
   group.add(podCore)
 
   // ---------------------------------------------------- rear main nozzles
   for (const side of [1, -1]) {
-    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.7, 12), darkMaterial)
+    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.7, 14), podBand)
     nozzle.rotation.x = Math.PI / 2
     nozzle.position.set(side * 0.44, -0.16, -2.5)
     group.add(nozzle)
-    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 10), accentMaterial)
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 12), accentMaterial)
     core.rotation.x = Math.PI / 2
     core.position.set(side * 0.44, -0.16, -2.86)
     group.add(core)
@@ -299,7 +433,7 @@ export function buildShip(): ShipModel {
 
   // --------------------------------------------------------------- plume
   const thruster = new THREE.Mesh(
-    new THREE.ConeGeometry(0.46, 2.4, 12),
+    new THREE.ConeGeometry(0.46, 2.4, 16),
     new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.62 }),
   )
   thruster.rotation.x = -Math.PI / 2
