@@ -97,10 +97,69 @@ function buildAtmosphere(id: number, scale: number): THREE.Mesh {
   )
 }
 
+// ---------------------------------------------------------------- textures
+
+/**
+ * Photographic 2:1 maps shipped in `public/textures`, credited in the README.
+ * They load in the background; the painted canvas goes up first and each
+ * material upgrades to the photograph the moment it lands, so nothing waits on
+ * the network and anything that never arrives simply stays painted.
+ */
+interface MapSlot {
+  texture: THREE.Texture
+  ready: boolean
+  failed: boolean
+  pending: (() => void)[]
+}
+
+function loadMap(url: string, anisotropy = 4): MapSlot {
+  const slot: MapSlot = { ready: false, failed: false, pending: [], texture: null as unknown as THREE.Texture }
+  slot.texture = new THREE.TextureLoader().load(
+    url,
+    () => {
+      slot.ready = true
+      for (const apply of slot.pending) apply()
+      slot.pending.length = 0
+    },
+    undefined,
+    () => { slot.failed = true },
+  )
+  slot.texture.colorSpace = THREE.SRGBColorSpace
+  slot.texture.anisotropy = anisotropy
+  return slot
+}
+
+/** Run `apply` now if the map is already in, otherwise when it lands. */
+function whenReady(slot: MapSlot, apply: () => void) {
+  if (slot.ready) apply()
+  else if (!slot.failed) slot.pending.push(apply)
+}
+
+interface EarthMaps {
+  day: MapSlot
+  night: MapSlot
+  clouds: MapSlot
+}
+
+let earthMaps: EarthMaps | null = null
+
+/** Kick the Earth maps off once and share them between detail rebuilds. */
+function earthMapSet(): EarthMaps {
+  if (!earthMaps) {
+    earthMaps = {
+      day: loadMap('/textures/earth_day.webp'),
+      night: loadMap('/textures/earth_night.webp'),
+      clouds: loadMap('/textures/earth_clouds.webp', 2),
+    }
+  }
+  return earthMaps
+}
+
 // ------------------------------------------------------------------- earth
 
 function* earthDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator<void, void, void> {
   const planet = planetById(id)
+  const maps = earthMapSet()
   const base = canvasBuild(512, 256, 991)
   const ctx = base.ctx
   const rnd = base.rnd
@@ -155,9 +214,24 @@ function* earthDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator
   }
   yield
 
+  // the painted globe goes up immediately; the photograph replaces it on arrival
+  const globeMaterial = new THREE.MeshStandardMaterial({
+    map: finishTexture(base.canvas), roughness: 0.92, metalness: 0,
+  })
+  whenReady(maps.day, () => {
+    globeMaterial.map = maps.day.texture
+    globeMaterial.roughness = 0.82
+    globeMaterial.needsUpdate = true
+  })
+  whenReady(maps.night, () => {
+    globeMaterial.emissive = new THREE.Color(0xffffff)
+    globeMaterial.emissiveMap = maps.night.texture
+    globeMaterial.emissiveIntensity = 2.6
+    globeMaterial.needsUpdate = true
+  })
   into.add(new THREE.Mesh(
     new THREE.SphereGeometry(planet.spaceRadius, 64, 48),
-    new THREE.MeshStandardMaterial({ map: finishTexture(base.canvas), roughness: 0.92, metalness: 0 }),
+    globeMaterial,
   ))
   yield
   const cloudCanvas = canvasBuild(512, 256, 991)
@@ -184,12 +258,21 @@ function* earthDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator
   }
   yield
 
+  const cloudMaterial = new THREE.MeshStandardMaterial({
+    map: finishTexture(cloudCanvas.canvas),
+    transparent: true, opacity: 0.82, depthWrite: false, roughness: 1,
+  })
+  // the real cloud deck is a greyscale map: it drives alpha over white
+  whenReady(maps.clouds, () => {
+    cloudMaterial.map = null
+    cloudMaterial.color.setHex(0xffffff)
+    cloudMaterial.alphaMap = maps.clouds.texture
+    cloudMaterial.opacity = 0.92
+    cloudMaterial.needsUpdate = true
+  })
   const clouds = new THREE.Mesh(
     new THREE.SphereGeometry(planet.spaceRadius + 0.35, 48, 32),
-    new THREE.MeshStandardMaterial({
-      map: finishTexture(cloudCanvas.canvas),
-      transparent: true, opacity: 0.82, depthWrite: false, roughness: 1,
-    }),
+    cloudMaterial,
   )
   into.add(clouds, buildAtmosphere(id, 1.06))
   spun.push({ object: clouds, rate: 0.014 })

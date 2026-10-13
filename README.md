@@ -110,19 +110,39 @@ real browser is still outstanding** — see the box below for the exact steps.
 quaternion flight maths, upgrade effects, ranks, determinism, a headless full
 three-world run, and the LOD scheduler — hysteresis, warm-ahead ordering, the
 frame budget, plus the renderer's budget loop driven with a fake scene graph),
-`tsc --noEmit` clean and the production build clean (~616 kB JS / 165 kB
-gzipped, plus 13 kB CSS — well inside the payload budget, and *smaller at boot*
-than before: the space globes and the three surfaces are no longer generated
-during startup). Stack: Vite, strict TypeScript, Three.js, Web Audio,
-localStorage. All geometry, textures and sounds are generated procedurally in
-code — no external assets, no backend, no accounts. `src/sim/` is pure
-TypeScript with zero three.js or DOM imports, which is what keeps the whole game
-testable headlessly.
+`tsc --noEmit` clean and the production build clean (~629 kB JS / 170 kB
+gzipped, plus 13 kB CSS and 397 kB of Earth maps — well inside the payload
+budget, and *smaller at boot* than before: the space globes and the three
+surfaces are no longer generated during startup). Stack: Vite, strict
+TypeScript, Three.js, Web Audio, localStorage. Nearly everything is generated in
+code: geometry, sounds and — except for Earth — the planet artwork. `src/sim/`
+is pure TypeScript with zero three.js or DOM imports, which is what keeps the
+whole game testable headlessly.
 
 Performance budget (plan §9): no shadow maps, pixel ratio capped at 1.75 (1.0 in
 low-quality mode), 300 particles and 320 dust motes per scene, both starfields
 are `Points` clouds (2 200 + 700, allocation-free), and every repeated object —
 junk, beacons, relic beams, cargo, trees, boulders, rocks — is an `InstancedMesh`.
+
+## Credits & licences
+
+Earth's colour, night-lights and cloud maps in `public/textures/` are from the
+**Solar System Scope** texture pack, used under the
+[Creative Commons Attribution 4.0 International licence](https://creativecommons.org/licenses/by/4.0/):
+
+> Textures by [Solar System Scope](https://www.solarsystemscope.com/textures/) — CC BY 4.0.
+> You may use, adapt, and share these textures for any purpose, even commercially.
+
+| File | Source | Re-encoded |
+|---|---|---|
+| `earth_day.webp` | `2k_earth_daymap.jpg` | WebP q88, 2048×1024, 185 kB |
+| `earth_night.webp` | `2k_earth_nightmap.jpg` | WebP q88, 2048×1024, 91 kB |
+| `earth_clouds.webp` | `2k_earth_clouds.jpg` | greyscale → WebP q80, 1024×512, 121 kB |
+
+The cloud map is greyscale and drives the cloud deck's `alphaMap`. Everything
+else in the game — every mesh, every other texture, every sound — is generated
+in code. If the maps are missing the globe falls back to its painted canvas, so
+the game still runs offline.
 
 ### How to check the streaming in a browser (M3)
 
