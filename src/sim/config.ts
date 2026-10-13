@@ -153,6 +153,10 @@ export const LOD_SURFACE_TUNING: LodTuning = {
 export const LOD_TERRAIN_SLICE = 4200
 /** instanced props placed per build slice */
 export const LOD_PROP_SLICE = 64
+/** rough build-cost estimates in ms, for scheduling telemetry and debug output */
+export const LOD_COST_STANDIN = 0.9
+export const LOD_COST_DETAIL = 8
+export const LOD_COST_SURFACE = 12
 
 // ------------------------------------------------------------ ranks & saves
 /**

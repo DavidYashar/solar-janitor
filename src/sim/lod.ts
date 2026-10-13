@@ -34,6 +34,8 @@ export interface LodTarget {
   minTier: LodTier
   /** estimated ms needed to build the next tier up */
   stepCostMs: number
+  /** this object's distance thresholds (the space map and a surface tune differently) */
+  tuning: LodTuning
 }
 
 /** A tier that is missing and therefore queued for incremental generation. */
@@ -78,6 +80,10 @@ function clampTier(value: number): LodTier {
   return value >= 2 ? 2 : 1
 }
 
+function maxTier(a: LodTier, b: LodTier): LodTier {
+  return a >= b ? a : b
+}
+
 /** Distance as it will be in `leadTime` seconds if the approach speed holds. */
 export function approachDistance(distance: number, closing: number, leadTime: number): number {
   return closing > 0 ? distance - closing * leadTime : distance
@@ -110,19 +116,18 @@ function compareTasks(a: LodTask, b: LodTask): number {
  * barrelling towards is queued ahead of one that is merely nearby - the
  * docking and landing targets are always warm before arrival.
  */
-export function lodFrame(
-  state: LodState, targets: LodTarget[], tuning: LodTuning, budgetMs: number,
-): LodTask[] {
+export function lodFrame(state: LodState, targets: LodTarget[], budgetMs: number): LodTask[] {
   state.frame += 1
   state.spentMs = 0
   state.budgetMs = Math.max(0, budgetMs)
   state.queue.length = 0
   for (const target of targets) {
+    const tuning = target.tuning
     const built = state.tiers[target.id] ?? 0
     const lookahead = approachDistance(target.distance, target.closing, tuning.leadTime)
     const byDistance = tierForDistance(built, lookahead, tuning)
     const floor = clampTier(target.minTier)
-    const wanted = Math.max(byDistance, floor)
+    const wanted = maxTier(byDistance, floor)
     state.desired[target.id] = wanted
     if (wanted > built) {
       const closing = Math.max(0, target.closing)
