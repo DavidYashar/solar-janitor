@@ -311,14 +311,27 @@ export function buildShip(): ShipModel {
   ]), hullMaterial))
 
   // -------------------------------------------------------------- canopy
+  // greenhouse faired into the deck: the fairing's ends taper down to the
+  // hull's surface fore and aft, and the glass is set flush into its top
+  const fairing = new THREE.Mesh(loft([
+    { z: 1.78, w: 0.3, h: 0.1, b: -0.06 },
+    { z: 1.35, w: 0.6, h: 0.26, b: -0.14 },
+    { z: 0.85, w: 0.78, h: 0.4, b: -0.2 },
+    { z: 0.35, w: 0.8, h: 0.42, b: -0.22 },
+    { z: 0.02, w: 0.62, h: 0.34, b: -0.18 },
+    { z: -0.18, w: 0.34, h: 0.2, b: -0.1 },
+  ]), darkMaterial)
+  fairing.position.y = 0.2
+  group.add(fairing)
+
   const canopy = new THREE.Mesh(loft([
-    { z: 1.62, w: 0.14, h: 0.14, b: -0.02 },
-    { z: 1.14, w: 0.46, h: 0.62, b: 0.05 },
-    { z: 0.72, w: 0.6, h: 0.74, b: 0.08 },
-    { z: 0.36, w: 0.42, h: 0.58, b: 0.05 },
-    { z: 0.14, w: 0.16, h: 0.18, b: 0.0 },
+    { z: 1.62, w: 0.14, h: 0.1, b: -0.06 },
+    { z: 1.3, w: 0.42, h: 0.3, b: -0.12 },
+    { z: 0.85, w: 0.58, h: 0.42, b: -0.16 },
+    { z: 0.4, w: 0.5, h: 0.36, b: -0.14 },
+    { z: 0.1, w: 0.22, h: 0.2, b: -0.1 },
   ]), glassMaterial)
-  canopy.position.y = 0.36
+  canopy.position.y = 0.3
   group.add(canopy)
 
   // dark dorsal spine that hugs the hull ridge from the canopy to the pod
@@ -337,17 +350,6 @@ export function buildShip(): ShipModel {
   glare.position.y = 0.2
   glare.rotation.x = 0.1
   group.add(glare)
-
-  // fitted dark collar the canopy sits in
-  const collar = new THREE.Mesh(loft([
-    { z: 1.7, w: 0.24, h: 0.22, b: -0.1 },
-    { z: 1.32, w: 0.64, h: 0.3, b: -0.16 },
-    { z: 0.72, w: 0.76, h: 0.32, b: -0.18 },
-    { z: 0.3, w: 0.6, h: 0.28, b: -0.14 },
-    { z: 0.08, w: 0.3, h: 0.19, b: -0.08 },
-  ]), darkMaterial)
-  collar.position.y = 0.28
-  group.add(collar)
 
   // slim sensor boom under the nose
   const boom = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.0, 8), darkMaterial)
