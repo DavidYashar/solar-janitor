@@ -4,18 +4,22 @@
  * files, nothing to download.
  *
  * Orientation contract, shared with the sim and `scene.ts`:
- *   nose points +Z (the sim's forward axis), the engine and its plume sit at -Z
- *   where the frame loop drives `thruster` and `thrusterGlow` from ship.thrust.
+ *   nose points +Z (the sim's forward axis), the engine bells and their plumes
+ *   sit at -Z, where the frame loop drives `setThrust` from ship.thrust.
  */
 import * as THREE from 'three'
 import { glowTexture } from './surfaces.ts'
 
 export interface ShipModel {
   group: THREE.Group
-  thruster: THREE.Mesh<THREE.ConeGeometry, THREE.MeshBasicMaterial>
-  thrusterGlow: THREE.Sprite
   /** short-range fill light that keeps the hull readable in space */
   heroLight: THREE.PointLight
+  /**
+   * Drive the exhaust. `level` is 0..1 of commanded thrust: at 0 the bells read
+   * as dark holes, and the plume grows with the level. `boosting` lights the
+   * afterburner - brighter core, shock diamonds and the dorsal pod's flare.
+   */
+  setThrust(level: number, boosting: boolean): void
 }
 
 type Pt = [number, number]
@@ -275,10 +279,11 @@ const hullMaterial = new THREE.MeshStandardMaterial({
   vertexColors: true, roughness: 0.48, metalness: 0.2, map: hullTexture(),
 })
 const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x4b5566, roughness: 0.55, metalness: 0.38 })
+const podBodyMaterial = new THREE.MeshStandardMaterial({ color: 0x5b6674, roughness: 0.5, metalness: 0.42 })
+const podBandMaterial = new THREE.MeshStandardMaterial({ color: 0x3c4553, roughness: 0.6, metalness: 0.4 })
 const glassMaterial = new THREE.MeshStandardMaterial({
   color: 0x0c1826, roughness: 0.12, metalness: 0.55, emissive: 0x0d3d55, emissiveIntensity: 0.7,
 })
-const accentMaterial = new THREE.MeshBasicMaterial({ color: 0x63e2ff })
 
 export function buildShip(): ShipModel {
   const group = new THREE.Group()
@@ -390,10 +395,88 @@ export function buildShip(): ShipModel {
   finCap.rotation.z = 0.07
   group.add(finCap)
 
-  // ------------------------------------------------------- top engine pod
-  // mid-grey barrel with darker collars, tucked low behind the fin
-  const podBody = new THREE.MeshStandardMaterial({ color: 0x5b6674, roughness: 0.5, metalness: 0.42 })
-  const podBand = new THREE.MeshStandardMaterial({ color: 0x3c4553, roughness: 0.6, metalness: 0.4 })
+  const podBody = podBodyMaterial
+  const podBand = podBandMaterial
+
+  // ------------------------------------------------------ engine hardware
+  const bellMaterial = new THREE.MeshStandardMaterial({ color: 0x0b0d11, roughness: 0.35, metalness: 0.6 })
+  const bellGeometry = new THREE.CircleGeometry(0.26, 18)
+  const glowMap = glowTexture('rgba(150, 235, 255, 0.8)', 'rgba(70, 160, 255, 0)')
+
+  // shared exhaust materials: one set drives every flame, parked or flying
+  const coreMaterial = new THREE.MeshBasicMaterial({
+    color: 0xd7f2ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+  })
+  const sheathMaterial = new THREE.MeshBasicMaterial({
+    color: 0x4fb2ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+  })
+  const mouthMaterial = new THREE.MeshBasicMaterial({
+    color: 0x9fe8ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+  })
+  const diamondMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+  })
+  const podFlareMaterial = new THREE.MeshBasicMaterial({
+    color: 0x7fdcff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false,
+  })
+  const glowMaterial = new THREE.SpriteMaterial({
+    map: glowMap, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending,
+  })
+
+  const flames: { core: THREE.Mesh; sheath: THREE.Mesh; diamonds: THREE.Mesh[]; mouth: THREE.Mesh; glow: THREE.Sprite }[] = []
+
+  // ---------------------------------------------------- rear main nozzles
+  for (const side of [1, -1]) {
+    const x = side * 0.44
+    const y = -0.16
+    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.7, 14), podBand)
+    nozzle.rotation.x = Math.PI / 2
+    nozzle.position.set(x, y, -2.5)
+    group.add(nozzle)
+
+    // the dark hole of the bell: what you see when the engine is off
+    const bell = new THREE.Mesh(bellGeometry, bellMaterial)
+    bell.rotation.y = Math.PI
+    bell.position.set(x, y, -2.86)
+    group.add(bell)
+
+    const mouth = new THREE.Mesh(new THREE.CircleGeometry(0.19, 16), mouthMaterial)
+    mouth.rotation.y = Math.PI
+    mouth.position.set(x, y, -2.875)
+    mouth.visible = false
+    group.add(mouth)
+
+    const core = new THREE.Mesh(new THREE.ConeGeometry(0.13, 2.1, 12), coreMaterial)
+    core.rotation.x = -Math.PI / 2
+    core.position.set(x, y, -3.93)
+    core.visible = false
+    group.add(core)
+
+    const sheath = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.7, 12), sheathMaterial)
+    sheath.rotation.x = -Math.PI / 2
+    sheath.position.set(x, y, -3.72)
+    sheath.visible = false
+    group.add(sheath)
+
+    const diamonds: THREE.Mesh[] = []
+    for (let i = 0; i < 3; i++) {
+      const diamond = new THREE.Mesh(new THREE.SphereGeometry(0.09 - i * 0.015, 8, 6), diamondMaterial)
+      diamond.position.set(x, y, -3.2 - i * 0.42)
+      diamond.visible = false
+      group.add(diamond)
+      diamonds.push(diamond)
+    }
+
+    const glow = new THREE.Sprite(glowMaterial)
+    glow.position.set(x, y, -3.0)
+    glow.scale.setScalar(1.4)
+    glow.visible = false
+    group.add(glow)
+
+    flames.push({ core, sheath, diamonds, mouth, glow })
+  }
+
+  // ------------------------------------------------------------ pod barrel
   const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 1.0), podBand)
   pylon.position.set(0, 0.62, -2.4)
   group.add(pylon)
@@ -410,42 +493,63 @@ export function buildShip(): ShipModel {
   podCollarB.rotation.x = Math.PI / 2
   podCollarB.position.set(0, 0.86, -2.9)
   group.add(podCollarB)
-  const podRing = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.12, 20), accentMaterial)
-  podRing.rotation.x = Math.PI / 2
-  podRing.position.set(0, 0.86, -3.17)
-  group.add(podRing)
-  const podCore = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.08, 14), accentMaterial)
-  podCore.rotation.x = Math.PI / 2
-  podCore.position.set(0, 0.86, -3.26)
-  group.add(podCore)
 
-  // ---------------------------------------------------- rear main nozzles
-  for (const side of [1, -1]) {
-    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.7, 14), podBand)
-    nozzle.rotation.x = Math.PI / 2
-    nozzle.position.set(side * 0.44, -0.16, -2.5)
-    group.add(nozzle)
-    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.08, 12), accentMaterial)
-    core.rotation.x = Math.PI / 2
-    core.position.set(side * 0.44, -0.16, -2.86)
-    group.add(core)
+  // dorsal engine: dark bell at rest, ring and core light up on boost
+  const podBell = new THREE.Mesh(new THREE.CircleGeometry(0.34, 18), bellMaterial)
+  podBell.rotation.y = Math.PI
+  podBell.position.set(0, 0.86, -3.26)
+  group.add(podBell)
+  const podFlare = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.1, 20), podFlareMaterial)
+  podFlare.rotation.x = Math.PI / 2
+  podFlare.position.set(0, 0.86, -3.16)
+  podFlare.visible = false
+  group.add(podFlare)
+  const podMouth = new THREE.Mesh(new THREE.CircleGeometry(0.28, 16), mouthMaterial)
+  podMouth.rotation.y = Math.PI
+  podMouth.position.set(0, 0.86, -3.27)
+  podMouth.visible = false
+  group.add(podMouth)
+
+  const exhaust = { flames, podFlare, podMouth }
+
+  function setThrust(level: number, boosting: boolean) {
+    const power = Math.max(0, Math.min(1, level))
+    const firing = power > 0.02
+    const afterburner = firing && boosting
+    // a little flicker keeps the flame from looking like a decal
+    const t = performance.now() * 0.001
+    const flicker = 0.9 + Math.sin(t * 47) * 0.06 + Math.sin(t * 113) * 0.04
+    const force = Math.min(1.5, power * (boosting ? 1.45 : 1))
+
+    coreMaterial.opacity = firing ? Math.min(1, 0.62 * force * flicker) : 0
+    sheathMaterial.opacity = firing ? Math.min(0.5, 0.22 * force * flicker) : 0
+    mouthMaterial.opacity = firing ? Math.min(1, 0.75 * force) : 0
+    diamondMaterial.opacity = afterburner ? 0.55 * flicker : firing ? 0.18 * force : 0
+    podFlareMaterial.opacity = afterburner ? 0.5 * flicker : 0
+    glowMaterial.opacity = firing ? Math.min(0.9, 0.35 * force) : 0
+
+    const length = 0.3 + 0.7 * Math.min(1.35, force)
+    for (const flame of flames) {
+      flame.core.visible = firing
+      flame.sheath.visible = firing
+      flame.mouth.visible = firing
+      flame.glow.visible = firing
+      flame.core.scale.set(1, length, 1)
+      flame.sheath.scale.set(0.9 + power * 0.25, 0.55 + 0.55 * Math.min(1.2, force), 0.9 + power * 0.25)
+      flame.glow.scale.setScalar(1.0 + 1.9 * Math.min(1.4, force))
+      flame.mouth.scale.setScalar(0.75 + 0.35 * power)
+      for (let i = 0; i < flame.diamonds.length; i++) {
+        const diamond = flame.diamonds[i]
+        diamond.visible = afterburner
+        diamond.scale.setScalar(0.7 + 0.5 * flicker - i * 0.08)
+      }
+    }
+    exhaust.podFlare.visible = afterburner
+    exhaust.podMouth.visible = firing
+    exhaust.podMouth.scale.setScalar(0.7 + 0.4 * power)
   }
 
-  // --------------------------------------------------------------- plume
-  const thruster = new THREE.Mesh(
-    new THREE.ConeGeometry(0.46, 2.4, 16),
-    new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.62 }),
-  )
-  thruster.rotation.x = -Math.PI / 2
-  thruster.position.set(0, -0.05, -3.0)
-  group.add(thruster)
-  const thrusterGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowTexture('rgba(150, 235, 255, 0.8)', 'rgba(70, 160, 255, 0)'),
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  }))
-  thrusterGlow.position.set(0, -0.05, -3.1)
-  thrusterGlow.scale.setScalar(3.4)
-  group.add(thrusterGlow)
+  setThrust(0, false)
 
-  return { group, thruster, thrusterGlow, heroLight }
+  return { group, heroLight, setThrust }
 }

@@ -680,9 +680,8 @@ export function createWorld(container: HTMLElement): World {
   const parked = buildShip()
   parked.group.scale.setScalar(1.3)
   parked.group.position.set(0, 2.2, 0)
-  parked.heroLight.intensity = 0   // daylight surface needs no fill, and it would pool on the ground
-  parked.thrusterGlow.visible = false
-  parked.thruster.scale.setScalar(0.001)
+  parked.heroLight.intensity = 0        // daylight surface needs no fill, and it would pool on the ground
+  parked.setThrust(0, false)            // engines off: the bells read as dark holes
 
   const cargoCapacity = 30
   const cargoMesh = new THREE.InstancedMesh(
@@ -862,12 +861,9 @@ export function createWorld(container: HTMLElement): World {
     else shipModel.group.position.set(ship.x, ship.y, ship.z)
     shipModel.group.quaternion.set(ship.q.x, ship.q.y, ship.q.z, ship.q.w)
     const thrust = Math.max(0, ship.thrust)
-    const glow = thrust > 0.12 ? (ship.boosting ? 1.5 : 0.85) : 0
-    shipModel.thrusterGlow.material.opacity = Math.min(1, glow * 0.9 + 0.05)
-    shipModel.thrusterGlow.scale.setScalar(glow * 2.3 + 0.9)
-    shipModel.thruster.scale.set(1, Math.max(0.05, glow), 1)
-    shipModel.thruster.material.opacity = 0.25 + glow * 0.5
-    if (!docked) shipModel.group.position.y += Math.sin(elapsed * 26) * 0.03 * glow
+    const firing = thrust > 0.12
+    shipModel.setThrust(firing ? thrust : 0, firing && ship.boosting)
+    if (!docked) shipModel.group.position.y += Math.sin(elapsed * 26) * 0.03 * (firing ? (ship.boosting ? 1.5 : 0.85) : 0)
 
     // key light comes from the Sun toward the action
     vA.copy(shipModel.group.position).normalize()
