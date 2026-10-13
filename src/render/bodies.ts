@@ -155,6 +155,14 @@ function earthMapSet(): EarthMaps {
   return earthMaps
 }
 
+let moonMap: MapSlot | null = null
+
+/** The Moon is a third of Earth's size on screen, so one 1K map covers it. */
+function moonMapSet(): MapSlot {
+  if (!moonMap) moonMap = loadMap('/textures/moon_surface.webp', 2)
+  return moonMap
+}
+
 // ------------------------------------------------------------------- earth
 
 function* earthDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator<void, void, void> {
@@ -283,6 +291,7 @@ function* earthDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator
 
 function* moonDetail(id: number, into: THREE.Group, _spun: Spinner[]): Generator<void, void, void> {
   const planet = planetById(id)
+  const maps = moonMapSet()
   const base = canvasBuild(256, 128, 991)
   const ctx = base.ctx
   const rnd = base.rnd
@@ -311,9 +320,16 @@ function* moonDetail(id: number, into: THREE.Group, _spun: Spinner[]): Generator
     if ((crater + 1) % 15 === 0) yield
   }
 
+  // painted craters go up immediately, then the real surface replaces them
+  const globeMaterial = new THREE.MeshStandardMaterial({ map: finishTexture(base.canvas), roughness: 1 })
+  whenReady(maps, () => {
+    globeMaterial.map = maps.texture
+    globeMaterial.roughness = 0.96
+    globeMaterial.needsUpdate = true
+  })
   into.add(new THREE.Mesh(
-    new THREE.SphereGeometry(planet.spaceRadius, 32, 24),
-    new THREE.MeshStandardMaterial({ map: finishTexture(base.canvas), roughness: 1 }),
+    new THREE.SphereGeometry(planet.spaceRadius, 48, 36),
+    globeMaterial,
   ))
   yield
 }
