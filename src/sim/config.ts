@@ -1,3 +1,4 @@
+import type { LodTuning } from './lod.ts'
 import type { JunkClass, Rank } from './types.ts'
 
 export const TAU = Math.PI * 2
@@ -120,6 +121,38 @@ export const BATCH_BONUS_SIZE = 6
 export const BATCH_BONUS = 0.15
 export const FULL_HOLD_BONUS = 0.25
 export const CLEAN_BONUS = 1000
+
+// ---------------------------------------------------- LOD streaming (plan §9)
+/**
+ * Progressive rendering: the space map refines from a glow impostor to a
+ * low-poly sphere to the detailed globe as the janitor closes in, and every
+ * heavy build runs across frames under a millisecond budget so flying at a
+ * world never hitches. The pure scheduler lives in `sim/lod.ts`.
+ */
+/** ms of geometry building the streamer may spend in one frame */
+export const LOD_FRAME_BUDGET_MS = 3
+/** widened budget while a tier the player needs *right now* is still missing */
+export const LOD_URGENT_BUDGET_MS = 6.5
+/** a queued tier that lands within this many seconds counts as urgent */
+export const LOD_URGENT_ETA = 3
+/** ms of look-ahead: a body this far "into the future" is treated as being here */
+export const LOD_LEAD_TIME = 6
+/** space map: 0 = glow impostor, 1 = low-poly sphere, 2 = detailed globe */
+export const LOD_SPACE_TUNING: LodTuning = {
+  enter: [0, 620, 300],
+  exit: [0, 720, 390],
+  leadTime: LOD_LEAD_TIME,
+}
+/** landable worlds: 0 = nothing, 1 = stand-in crust, 2 = full terrain + props */
+export const LOD_SURFACE_TUNING: LodTuning = {
+  enter: [0, 520, 150],
+  exit: [0, 620, 260],
+  leadTime: LOD_LEAD_TIME,
+}
+/** vertices of the 112×72 surface sphere handled per build slice */
+export const LOD_TERRAIN_SLICE = 4200
+/** instanced props placed per build slice */
+export const LOD_PROP_SLICE = 64
 
 // ------------------------------------------------------------ ranks & saves
 /**
