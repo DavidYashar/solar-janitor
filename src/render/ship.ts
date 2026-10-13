@@ -219,11 +219,6 @@ export function buildShip(): ShipModel {
   collar.position.y = 0.3
   group.add(collar)
 
-  const lip = new THREE.Mesh(new THREE.BoxGeometry(0.66, 0.05, 0.16), accentMaterial)
-  lip.position.set(0, 0.72, 1.28)
-  lip.rotation.x = -0.5
-  group.add(lip)
-
   // --------------------------------------------------------------- wings
   for (const side of [1, -1]) {
     const sx = (value: number) => side * value
@@ -233,21 +228,12 @@ export function buildShip(): ShipModel {
     wing.position.y = -0.05
     group.add(wing)
 
-    // dark leading edge and a lit tip, as in the reference art
+    // dark leading edge, as in the reference art
     const edge = new THREE.Mesh(plate([
       [sx(0.82), 0.66], [sx(2.66), -1.0], [sx(2.74), -1.34], [sx(0.86), 0.3],
     ], 0.13, 'xz'), darkMaterial)
     edge.position.y = -0.045
     group.add(edge)
-
-    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.34), accentMaterial)
-    tip.position.set(sx(2.56), -0.04, -1.42)
-    group.add(tip)
-
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.52), accentMaterial)
-    strip.position.set(sx(0.9), 0.05, 1.5)
-    strip.rotation.y = sx(0.16)
-    group.add(strip)
 
     // tail stabilisers under the engine deck
     const stab = new THREE.Mesh(plate([
