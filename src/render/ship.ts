@@ -321,7 +321,7 @@ export function buildShip(): ShipModel {
     { z: 0.02, w: 0.62, h: 0.34, b: -0.18 },
     { z: -0.18, w: 0.34, h: 0.2, b: -0.1 },
   ]), darkMaterial)
-  fairing.position.y = 0.2
+  fairing.position.y = 0.24
   group.add(fairing)
 
   const canopy = new THREE.Mesh(loft([
@@ -331,8 +331,16 @@ export function buildShip(): ShipModel {
     { z: 0.4, w: 0.5, h: 0.36, b: -0.14 },
     { z: 0.1, w: 0.22, h: 0.2, b: -0.1 },
   ]), glassMaterial)
-  canopy.position.y = 0.3
+  canopy.position.y = 0.37
   group.add(canopy)
+
+  // canopy bows: thin frames arching over the glass, like a real windscreen
+  for (const [z, halfWidth, rise] of [[1.3, 0.45, 0.24], [0.6, 0.57, 0.27]] as [number, number, number][]) {
+    const bow = new THREE.Mesh(new THREE.TorusGeometry(1, 0.022, 5, 22, Math.PI), darkMaterial)
+    bow.scale.set(halfWidth, rise, 1)
+    bow.position.set(0, 0.45, z)
+    group.add(bow)
+  }
 
   // dark dorsal spine that hugs the hull ridge from the canopy to the pod
   group.add(new THREE.Mesh(loft([
