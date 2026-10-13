@@ -268,7 +268,8 @@ export function createInput(actions: InputActions): InputSource {
         const screenX = down('KeyD') - down('KeyA') + down('ArrowRight') - down('ArrowLeft') + stickX
         const screenY = down('KeyW') - down('KeyS') + down('ArrowUp') - down('ArrowDown') + stickY
         const move = screenMoveVector(-ctx.facing, screenX, screenY)
-        return { x: move.x, y: move.y, turn: steer(aimX), pitch: 0, yaw: 0, roll: 0, boost, hop }
+        // screen-right is -east in this mirror-handed world, so steering flips too
+        return { x: move.x, y: move.y, turn: -steer(aimX), pitch: 0, yaw: 0, roll: 0, boost, hop }
       }
 
       // space: the pointer steers the nose, the arrows fly and side-step
