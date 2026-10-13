@@ -865,9 +865,10 @@ export function createWorld(container: HTMLElement): World {
     shipModel.setThrust(firing ? thrust : 0, firing && ship.boosting)
     if (!docked) shipModel.group.position.y += Math.sin(elapsed * 26) * 0.03 * (firing ? (ship.boosting ? 1.5 : 0.85) : 0)
 
-    // key light comes from the Sun toward the action
+    // key light comes from the Sun toward the action: parked between the Sun
+    // and the ship so the lit hemisphere faces the Sun, as it should
     vA.copy(shipModel.group.position).normalize()
-    spaceKey.position.copy(shipModel.group.position).addScaledVector(vA, 400)
+    spaceKey.position.copy(shipModel.group.position).addScaledVector(vA, -420)
     spaceKey.target.position.copy(shipModel.group.position)
 
     const stars = spaceScene.userData.stars as THREE.Points
