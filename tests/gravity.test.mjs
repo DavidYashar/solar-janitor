@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  EARTH_MU, EARTH_RADIUS, EARTH_SURFACE_G, GRAVITY_SOI, ISS_ORBIT, ISS_ORBIT_RATE,
+  EARTH_MU, EARTH_RADIUS, EARTH_SURFACE_G, GRAVITY_SOI, ISS_DOCK_OFFSET, ISS_ORBIT, ISS_ORBIT_RATE,
   LAND_ZONE_HEIGHT, PLANET_MU, SHIP_SPEED,
 } from '../src/sim/config.ts'
-import { canLand, createGame, step } from '../src/sim/game.ts'
+import { canLand, createGame, dock, step, undock } from '../src/sim/game.ts'
 import { PLANETS } from '../src/sim/planets.ts'
 
 const idle = { x: 0, y: 0, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false }
@@ -171,6 +171,33 @@ test('deep space still parks the tug, and a well no longer does', () => {
   run(coasting, 2)
   const state = relative(coasting, 0)
   assert.ok(state.speed > 25, `inside the pull the tug keeps its speed and coasts (${state.speed.toFixed(2)})`)
+})
+
+test('a docked tug travels with the station, and undocking releases into its orbit', () => {
+  const game = running(5)
+  const ship = game.ship
+  ship.x = game.dockPos.x
+  ship.y = game.dockPos.y
+  ship.z = game.dockPos.z
+  ship.vx = ship.vy = ship.vz = 0
+  ship.speed = 0
+  assert.ok(dock(game), 'berthed at the hatch')
+
+  run(game, 5)
+  const hatch = Math.hypot(ship.x - game.dockPos.x, ship.y - game.dockPos.y, ship.z - game.dockPos.z)
+  assert.ok(hatch < 0.001, 'still on the hatch while the station flies its orbit')
+  const berthed = relative(game, 0)
+  const stationSpeed = ISS_ORBIT_RATE * (ISS_ORBIT + ISS_DOCK_OFFSET)
+  assert.ok(Math.abs(berthed.speed - stationSpeed) < 1,
+    `and travelling with the station, not parked in the map (${berthed.speed.toFixed(1)} vs ${stationSpeed.toFixed(1)} u/s)`)
+
+  assert.ok(undock(game), 'released')
+  run(game, 10)
+  const state = relative(game, 0)
+  assert.ok(Math.abs(state.radius - ISS_ORBIT) / ISS_ORBIT < 0.15,
+    `the release falls into the station's orbit, not out of it (r ${state.radius.toFixed(0)} vs ${ISS_ORBIT})`)
+  const gap = Math.hypot(ship.x - game.issPos.x, ship.y - game.issPos.y, ship.z - game.issPos.z)
+  assert.ok(gap < 80, `and drifts away from the station slowly (${gap.toFixed(1)} u)`)
 })
 
 test('gravity reaches exactly as far as the sphere of influence', () => {

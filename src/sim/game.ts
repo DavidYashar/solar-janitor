@@ -795,9 +795,13 @@ export function undock(game: Game): boolean {
   const dx = game.ship.x - game.planetPos[0].x
   const dz = game.ship.z - game.planetPos[0].z
   const length = Math.max(1e-6, Math.hypot(dx, dz))
-  game.ship.vx = (dx / length) * 8
-  game.ship.vy = 0
-  game.ship.vz = (dz / length) * 8
+  // a release is a release from a moving platform: the tug leaves with the
+  // station's own orbit, plus a nudge out of the hatch
+  const station = dockVelocity(game, SCRATCH_TARGET_VEL)
+  const drift = planetVelocity(game, 0, SCRATCH_VEL)
+  game.ship.vx = drift.x + station.x + (dx / length) * 8
+  game.ship.vy = drift.y + station.y
+  game.ship.vz = drift.z + station.z + (dz / length) * 8
   game.ship.speed = Math.hypot(game.ship.vx, game.ship.vy, game.ship.vz)
   // face away from Earth so the tug leaves the hatch nose first
   game.ship.q = quatFromBasis({ x: dx / length, y: 0, z: dz / length }, { x: 0, y: 1, z: 0 })
@@ -965,10 +969,13 @@ function snapShipToDock(game: Game) {
   ship.x = game.dockPos.x
   ship.y = game.dockPos.y
   ship.z = game.dockPos.z
-  ship.vx = 0
-  ship.vy = 0
-  ship.vz = 0
-  ship.speed = 0
+  // berthed to the station means travelling with it, not stopped in the map frame
+  const station = dockVelocity(game, SCRATCH_TARGET_VEL)
+  const drift = planetVelocity(game, 0, SCRATCH_VEL)
+  ship.vx = drift.x + station.x
+  ship.vy = drift.y + station.y
+  ship.vz = drift.z + station.z
+  ship.speed = Math.hypot(ship.vx, ship.vy, ship.vz)
   ship.thrust = 0
   ship.boosting = false
 }
