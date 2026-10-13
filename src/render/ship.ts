@@ -326,25 +326,29 @@ export function buildShip(): ShipModel {
   ]), darkMaterial)
   group.add(fairing)
 
+  // The pane's cross-section is a dome whose skirt dives down into the fairing
+  // (a positive belly, like the hull's rings) rather than flaring out above it,
+  // so its lower rim is always buried and the glass reads as part of the body.
   const canopy = new THREE.Mesh(loft([
-    { z: 1.62, w: 0.14, h: 0.1, b: -0.01 },
-    { z: 1.3, w: 0.42, h: 0.3, b: -0.12 },
-    { z: 0.85, w: 0.58, h: 0.42, b: -0.16 },
-    { z: 0.4, w: 0.5, h: 0.36, b: -0.14 },
-    { z: 0.1, w: 0.22, h: 0.2, b: -0.1 },
+    { z: 1.62, w: 0.14, h: 0.1, b: 0.24 },
+    { z: 1.3, w: 0.42, h: 0.3, b: 0.52 },
+    { z: 0.85, w: 0.58, h: 0.42, b: 0.62 },
+    { z: 0.4, w: 0.5, h: 0.36, b: 0.34 },
+    { z: 0.1, w: 0.22, h: 0.2, b: 0.26 },
   ]), glassMaterial)
   canopy.position.y = 0.37
   group.add(canopy)
 
   // canopy frames: bands that hug the glass's own cross-section (a scaled
-  // copy of its section table), so they can never float clear of the pane
+  // copy of its section table), so they can never float clear of the pane.
+  // Their skirts are driven deeper than the pane's so they stay rooted too.
   for (const [z, w, h, b] of [
-    [1.15, 0.473, 0.34, -0.133],
-    [0.5, 0.518, 0.373, -0.144],
+    [1.15, 0.473, 0.34, 0.553],
+    [0.5, 0.518, 0.373, 0.402],
   ] as [number, number, number, number][]) {
     const sleeve = new THREE.Mesh(loft([
-      { z: z + 0.04, w: w * 1.09, h: h * 1.09, b: b * 1.09 },
-      { z: z - 0.04, w: w * 1.09, h: h * 1.09, b: b * 1.09 },
+      { z: z + 0.04, w: w * 1.09, h: h * 1.09, b: b * 1.3 },
+      { z: z - 0.04, w: w * 1.09, h: h * 1.09, b: b * 1.3 },
     ]), darkMaterial)
     sleeve.position.y = 0.37
     group.add(sleeve)
