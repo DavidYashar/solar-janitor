@@ -170,13 +170,14 @@ to ~66 ms in the dev harness (where every number is worse than production).
 
 Tuning levers, in the order to reach for them: `world.setQuality(true)` (drops
 the pixel ratio to 1), the reduced-motion setting (skips the warm-up and all
-shake), and the per-world texture resolution (`public/textures` — Earth's set is
-397 kB at 2K plus the Moon at 138 kB, or 280 kB for all four bodies at 1K).
+shake), and the per-world texture resolution (`public/textures` — 954 kB for all
+six maps at the sizes above, or roughly 380 kB if every one were cut to 1K).
 
 ## Credits & licences
 
-Earth's colour, night-lights and cloud maps — and the Moon's surface map — in
-`public/textures/` are from the **Solar System Scope** texture pack, used under the
+Earth's colour, night-lights and cloud maps, the Moon's surface, Mars and the
+Sun's photosphere — all in `public/textures/` — are from the **Solar System Scope**
+texture pack, used under the
 [Creative Commons Attribution 4.0 International licence](https://creativecommons.org/licenses/by/4.0/):
 
 > Textures by [Solar System Scope](https://www.solarsystemscope.com/textures/) — CC BY 4.0.
@@ -188,14 +189,18 @@ Earth's colour, night-lights and cloud maps — and the Moon's surface map — i
 | `earth_night.webp` | `2k_earth_nightmap.jpg` | WebP q88, 2048×1024, 91 kB |
 | `earth_clouds.webp` | `2k_earth_clouds.jpg` | greyscale → WebP q80, 1024×512, 121 kB |
 | `moon_surface.webp` | `2k_moon.jpg` | WebP q85, 1024×512, 138 kB |
+| `mars_surface.webp` | `2k_mars.jpg` | WebP q82, 2048×1024, 200 kB |
+| `sun_surface.webp` | `2k_sun.jpg` | WebP q82, 2048×1024, 219 kB |
 
 The cloud map is greyscale and drives the cloud deck's `alphaMap`. The Moon is
 downsampled to 1K because its disc stays under ~370 px on screen even at its
-closest approach, so the extra resolution would never be visible. Everything
-else in the game — every mesh, every other texture, every sound — is generated
-in code. Each map loads lazily, only when its world refines to full detail, and
-if one is missing the globe falls back to its painted canvas, so the game still
-runs offline.
+closest approach, so the extra resolution would never be visible. The Sun's map
+drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
+thins as the ship gets close so the photosphere is what you see up close.
+Everything else in the game — every mesh, every other texture, every sound — is
+generated in code. Each map loads lazily, only when its world refines to full
+detail, and if one is missing the globe falls back to its painted canvas, so the
+game still runs offline.
 
 ### How to check the streaming in a browser (M3)
 

@@ -112,7 +112,7 @@ interface MapSlot {
   pending: (() => void)[]
 }
 
-function loadMap(url: string, anisotropy = 4): MapSlot {
+export function loadMap(url: string, anisotropy = 4): MapSlot {
   const slot: MapSlot = { ready: false, failed: false, pending: [], texture: null as unknown as THREE.Texture }
   slot.texture = new THREE.TextureLoader().load(
     url,
@@ -130,7 +130,7 @@ function loadMap(url: string, anisotropy = 4): MapSlot {
 }
 
 /** Run `apply` now if the map is already in, otherwise when it lands. */
-function whenReady(slot: MapSlot, apply: () => void) {
+export function whenReady(slot: MapSlot, apply: () => void) {
   if (slot.ready) apply()
   else if (!slot.failed) slot.pending.push(apply)
 }
@@ -161,6 +161,14 @@ let moonMap: MapSlot | null = null
 function moonMapSet(): MapSlot {
   if (!moonMap) moonMap = loadMap('/textures/moon_surface.webp', 2)
   return moonMap
+}
+
+let marsMap: MapSlot | null = null
+
+/** Mars is nearly Earth-sized on screen when landing, so it gets the full 2K. */
+function marsMapSet(): MapSlot {
+  if (!marsMap) marsMap = loadMap('/textures/mars_surface.webp')
+  return marsMap
 }
 
 // ------------------------------------------------------------------- earth
@@ -338,6 +346,7 @@ function* moonDetail(id: number, into: THREE.Group, _spun: Spinner[]): Generator
 
 function* marsDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator<void, void, void> {
   const planet = planetById(id)
+  const maps = marsMapSet()
   const base = canvasBuild(512, 256, 991)
   const ctx = base.ctx
   const rnd = base.rnd
@@ -411,9 +420,15 @@ function* marsDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator<
   }
   yield
 
+  // painted Mars goes up immediately, then the real surface replaces it
+  const globeMaterial = new THREE.MeshStandardMaterial({ map: finishTexture(base.canvas), roughness: 0.96, metalness: 0 })
+  whenReady(maps, () => {
+    globeMaterial.map = maps.texture
+    globeMaterial.needsUpdate = true
+  })
   const globe = new THREE.Mesh(
     new THREE.SphereGeometry(planet.spaceRadius, 64, 48),
-    new THREE.MeshStandardMaterial({ map: finishTexture(base.canvas), roughness: 0.96, metalness: 0 }),
+    globeMaterial,
   )
   into.add(globe)
   spun.push({ object: globe, rate: 0.02 })

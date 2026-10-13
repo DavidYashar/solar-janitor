@@ -9,7 +9,7 @@ import { quatForward, quatUp } from '../sim/orient.ts'
 import { PLANETS, planetById } from '../sim/planets.ts'
 import type { PlanetTheme } from '../sim/planets.ts'
 import type { Game, GameEvent, JunkClass, Vec3 } from '../sim/types.ts'
-import { createSpaceBody, makeLabel } from './bodies.ts'
+import { createSpaceBody, loadMap, makeLabel, whenReady } from './bodies.ts'
 import type { SpaceBody } from './bodies.ts'
 import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
@@ -188,12 +188,20 @@ export function createWorld(container: HTMLElement): World {
     spaceScene.userData.stars = stars
   }
 
-  // the Sun
+  // the Sun: a self-luminous globe. The flat colour holds until the photosphere
+  // map arrives, then the map takes over and a slow spin keeps it alive.
+  const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffd06a })
   const sun = new THREE.Mesh(
-    new THREE.SphereGeometry(SUN_RADIUS, 48, 32),
-    new THREE.MeshBasicMaterial({ color: 0xffd06a }),
+    new THREE.SphereGeometry(SUN_RADIUS, 64, 48),
+    sunMaterial,
   )
   spaceScene.add(sun)
+  const sunMap = loadMap('/textures/sun_surface.webp')
+  whenReady(sunMap, () => {
+    sunMaterial.map = sunMap.texture
+    sunMaterial.color.setHex(0xffffff)
+    sunMaterial.needsUpdate = true
+  })
   const sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: glowTexture('rgba(255, 216, 128, 0.95)', 'rgba(255, 130, 40, 0)'),
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -936,7 +944,13 @@ export function createWorld(container: HTMLElement): World {
 
     const stars = spaceScene.userData.stars as THREE.Points
     stars.rotation.y += dt * 0.002
-    sunGlow.material.opacity = 0.85 + Math.sin(elapsed * 1.4) * 0.08
+    // the photosphere turns slowly, so the granulation is not a dead texture
+    sun.rotation.y += dt * 0.012
+    // up close the surface should dominate, so the halo thins as the ship nears
+    // the Sun and comes back to full strength out in the system
+    const sunRange = clampValue((shipModel.group.position.length() - SUN_RADIUS * 1.2) / (SUN_RADIUS * 3), 0, 1)
+    sunGlow.material.opacity = (0.85 + Math.sin(elapsed * 1.4) * 0.08) * (0.3 + 0.7 * sunRange)
+    corona.material.opacity = 0.22 * (0.1 + 0.9 * sunRange)
     corona.scale.setScalar(1 + Math.sin(elapsed * 1.1) * 0.015)
 
     for (const label of labels) {
