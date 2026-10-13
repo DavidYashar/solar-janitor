@@ -526,8 +526,8 @@ export function createWorld(container: HTMLElement): World {
     const job = surfaceJobs[game.planetId]
     if (!job || job.build) return
     let guard = 0
-    while (!job.slice() && guard++ < 4096) {
-      /* run the whole build out in one go */
+    while (!job.slice() && guard++ < 256) {
+      /* run the whole build out in one go: the ground cannot wait for the queue */
     }
   }
 
