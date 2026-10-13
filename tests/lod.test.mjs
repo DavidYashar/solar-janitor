@@ -9,16 +9,16 @@ import {
 } from '../src/sim/lod.ts'
 
 /** A target with sane defaults so each test only states what it is about. */
-function target(id, distance, closing = 0, minTier = 0, stepCostMs = 3) {
-  return { id, distance, closing, minTier, stepCostMs }
+function target(id, distance, closing = 0, minTier = 0, stepCostMs = 3, tuning = LOD_SPACE_TUNING) {
+  return { id, distance, closing, minTier, stepCostMs, tuning }
 }
 
 /**
  * Stand-in for the renderer's budget loop: every job needs `slices` slices of
  * 1 ms, and the loop stops the moment the frame budget cannot pay for another.
  */
-function runFrame(state, targets, tuning, budget, jobs, log = []) {
-  const tasks = lodFrame(state, targets, tuning, budget)
+function runFrame(state, targets, budget, jobs, log = []) {
+  const tasks = lodFrame(state, targets, budget)
   for (const task of tasks) {
     let left = jobs.get(task.id) ?? 0
     while (left > 0 && lodBudgetLeft(state) >= 1) {
@@ -98,7 +98,7 @@ test('approach distance looks ahead only while closing', () => {
 
   const state = createLodState()
   // 700 units out but boosting at 110 u/s is treated as a 40 unit approach
-  const tasks = lodFrame(state, [target(2, 700, 110)], LOD_SPACE_TUNING, LOD_FRAME_BUDGET_MS)
+  const tasks = lodFrame(state, [target(2, 700, 110)], LOD_FRAME_BUDGET_MS)
   assert.equal(tasks.length, 1)
   assert.equal(tasks[0].to, 2, 'the world refines before the janitor gets there')
   assert.ok(Math.abs(tasks[0].eta - 700 / 110) < 1e-6, 'eta is the real arrival time')
@@ -111,7 +111,7 @@ test('the queue warms whatever the janitor is flying at first', () => {
   // drifting away from a nearby world vs. boosting at a far one
   const receding = target(0, 260, -30)
   const arriving = target(2, 700, 110)
-  const tasks = lodFrame(state, [receding, arriving], LOD_SPACE_TUNING, LOD_FRAME_BUDGET_MS)
+  const tasks = lodFrame(state, [receding, arriving], LOD_FRAME_BUDGET_MS)
   assert.deepEqual(tasks.map(task => task.id), [2, 0], 'the approach target is queued first')
   assert.ok(tasks[0].urgency < tasks[1].urgency)
   assert.equal(tasks[1].eta, Infinity, 'a receding world never counts as arriving')
@@ -120,13 +120,13 @@ test('the queue warms whatever the janitor is flying at first', () => {
   assert.equal(lodUrgentPending(state, 7), true, 'six and a bit seconds out is urgent soon enough')
   assert.equal(lodUrgentPending(state, 3), false, 'but not yet, three seconds out')
   const crawling = createLodState()
-  lodFrame(crawling, [target(0, 900, 1)], LOD_SPACE_TUNING, LOD_FRAME_BUDGET_MS)
+  lodFrame(crawling, [target(0, 900, 1)], LOD_FRAME_BUDGET_MS)
   assert.equal(lodUrgentPending(crawling, 3), false, 'a far, slow approach is not urgent')
 })
 
 test('a game-logic floor forces a tier the distance rule would not ask for', () => {
   const state = createLodState()
-  const tasks = lodFrame(state, [target(1, 5000, 0, 2, 2)], LOD_SURFACE_TUNING, LOD_FRAME_BUDGET_MS)
+  const tasks = lodFrame(state, [target(1, 5000, 0, 2, 2)], LOD_FRAME_BUDGET_MS)
   assert.equal(tasks.length, 1)
   assert.equal(tasks[0].from, 0)
   assert.equal(tasks[0].to, 2)
@@ -137,13 +137,13 @@ test('a game-logic floor forces a tier the distance rule would not ask for', () 
 
   // once the first tier lands the object stays in the queue for the next climb
   lodFinish(state, 1, 1)
-  const next = lodFrame(state, [target(1, 5000, 0, 2, 2)], LOD_SURFACE_TUNING, LOD_FRAME_BUDGET_MS)
+  const next = lodFrame(state, [target(1, 5000, 0, 2, 2)], LOD_FRAME_BUDGET_MS)
   assert.equal(next.length, 1)
   assert.equal(next[0].from, 1)
   assert.equal(next[0].to, 2)
 
   // the floor disappears: the scheduler goes back to wanting nothing
-  lodFrame(state, [target(1, 5000, 0, 0, 2)], LOD_SURFACE_TUNING, LOD_FRAME_BUDGET_MS)
+  lodFrame(state, [target(1, 5000, 0, 0, 2)], LOD_FRAME_BUDGET_MS)
   assert.equal(lodDesiredOf(state, 1), 0)
 })
 
@@ -157,30 +157,30 @@ test('the frame budget cuts the build list mid-way and the rest resumes next fra
   const budget = 2.5
   const log = []
 
-  runFrame(state, targets, LOD_SPACE_TUNING, budget, jobs, log)
+  runFrame(state, targets, budget, jobs, log)
   assert.deepEqual(log, [0, 0], 'only the first task got slices inside the budget')
   assert.ok(state.spentMs <= budget, 'never overspends the frame')
   assert.equal(lodTierOf(state, 0), 1, 'the finished promotion is remembered')
   assert.equal(lodTierOf(state, 1), 0, 'the starved one is still at the stand-in')
-  const replan = lodFrame(state, targets, LOD_SPACE_TUNING, budget)
+  const replan = lodFrame(state, targets, budget)
   assert.deepEqual(replan.map(task => task.id), [1, 2], 'the queue keeps its order')
 
-  runFrame(state, targets, LOD_SPACE_TUNING, budget, jobs, log)
+  runFrame(state, targets, budget, jobs, log)
   assert.deepEqual(log.slice(2), [1, 1], 'the next frame picks up the same list')
   assert.equal(lodTierOf(state, 1), 1)
   assert.equal(lodTierOf(state, 2), 0)
 
-  runFrame(state, targets, LOD_SPACE_TUNING, budget, jobs, log)
+  runFrame(state, targets, budget, jobs, log)
   assert.deepEqual(log.slice(4), [2, 2], 'and it finishes the last one')
   assert.equal(lodTierOf(state, 2), 1)
   assert.equal(lodBudgetLeft(state), 0.5, 'the leftover budget is reported honestly')
-  const settled = lodFrame(state, targets, LOD_SPACE_TUNING, budget)
+  const settled = lodFrame(state, targets, budget)
   assert.deepEqual(settled, [], 'an empty plan means the worlds are warm')
   assert.equal(lodBudgetLeft(state), budget, 'a fresh frame gets the whole budget back')
 
   // every task climbed exactly one tier: flying closer queues the next climb
   const closer = [target(0, 150, 0), target(1, 160, 0), target(2, 170, 0)]
-  const second = lodFrame(state, closer, LOD_SPACE_TUNING, budget)
+  const second = lodFrame(state, closer, budget)
   assert.deepEqual(second.map(task => [task.id, task.from, task.to]), [[0, 1, 2], [1, 1, 2], [2, 1, 2]])
 })
 
@@ -196,7 +196,7 @@ test('build order is identical every time the same world is streamed', () => {
         target(1, 240 - frame * 2, 2),
         target(2, 900 - frame * 55, 55),
       ]
-      runFrame(state, targets, LOD_SPACE_TUNING, LOD_FRAME_BUDGET_MS, jobs, log)
+      runFrame(state, targets, LOD_FRAME_BUDGET_MS, jobs, log)
     }
     return { log, tiers: [0, 1, 2].map(id => lodTierOf(state, id)) }
   }
@@ -209,14 +209,14 @@ test('build order is identical every time the same world is streamed', () => {
 
 test('a new run drops everything and the schedule rebuilds from the glow', () => {
   const state = createLodState()
-  lodFrame(state, [target(0, 100), target(1, 200)], LOD_SPACE_TUNING, LOD_FRAME_BUDGET_MS)
+  lodFrame(state, [target(0, 100), target(1, 200)], LOD_FRAME_BUDGET_MS)
   lodFinish(state, 0, 2)
   lodFinish(state, 1, 2)
   assert.equal(lodTierOf(state, 0), 2)
 
   lodDrop(state, 1)
   assert.equal(lodTierOf(state, 1), 0)
-  const requeued = lodFrame(state, [target(1, 200)], LOD_SPACE_TUNING, LOD_FRAME_BUDGET_MS)
+  const requeued = lodFrame(state, [target(1, 200)], LOD_FRAME_BUDGET_MS)
   assert.equal(requeued.length, 1)
   assert.equal(requeued[0].to, 2, 'the distance rule asks for the detail tier again')
 
@@ -245,8 +245,8 @@ test('a planet surface is fully built before the lander gets anywhere near it', 
     const speed = ship > 40 ? 110 : 30
     const closing = speed
     ship = Math.max(0, ship - speed * frameDt)
-    const targets = [target(planetId, ship, closing, ship < 60 ? 2 : 0, 1)]
-    runFrame(state, targets, LOD_SURFACE_TUNING, budget, jobs)
+    const targets = [target(planetId, ship, closing, ship < 60 ? 2 : 0, 1, LOD_SURFACE_TUNING)]
+    runFrame(state, targets, budget, jobs)
     if (lodTierOf(state, planetId) === 2 && warmAt < 0) {
       if (jobs.get(planetId) === 0) warmAt = ship
     }
