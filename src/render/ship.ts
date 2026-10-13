@@ -373,13 +373,6 @@ export function buildShip(): ShipModel {
     ], 0.118, 'xz'), darkMaterial)
     edge.position.y = -0.051
     group.add(edge)
-
-    // tail stabilisers under the engine deck
-    const stab = new THREE.Mesh(plate([
-      [sx(0.55), -1.85], [sx(1.72), -2.3], [sx(1.64), -2.72], [sx(0.5), -2.55],
-    ], 0.08, 'xz'), hullMaterial)
-    stab.position.y = -0.18
-    group.add(stab)
   }
 
   // ------------------------------------------------------------ tail fin
@@ -428,47 +421,48 @@ export function buildShip(): ShipModel {
   // ---------------------------------------------------- rear main nozzles
   for (const side of [1, -1]) {
     const x = side * 0.44
-    const y = -0.16
-    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.7, 14), podBand)
+    const y = -0.2
+    // barrel reaches past the hull's tail cap so nothing sits in the exhaust
+    const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 0.9, 14), podBand)
     nozzle.rotation.x = Math.PI / 2
-    nozzle.position.set(x, y, -2.5)
+    nozzle.position.set(x, y, -2.66)
     group.add(nozzle)
 
     // the dark hole of the bell: what you see when the engine is off
     const bell = new THREE.Mesh(bellGeometry, bellMaterial)
     bell.rotation.y = Math.PI
-    bell.position.set(x, y, -2.86)
+    bell.position.set(x, y, -3.12)
     group.add(bell)
 
     const mouth = new THREE.Mesh(new THREE.CircleGeometry(0.19, 16), mouthMaterial)
     mouth.rotation.y = Math.PI
-    mouth.position.set(x, y, -2.875)
+    mouth.position.set(x, y, -3.135)
     mouth.visible = false
     group.add(mouth)
 
     const core = new THREE.Mesh(new THREE.ConeGeometry(0.13, 2.1, 12), coreMaterial)
     core.rotation.x = -Math.PI / 2
-    core.position.set(x, y, -3.93)
+    core.position.set(x, y, -4.19)
     core.visible = false
     group.add(core)
 
     const sheath = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.7, 12), sheathMaterial)
     sheath.rotation.x = -Math.PI / 2
-    sheath.position.set(x, y, -3.72)
+    sheath.position.set(x, y, -3.98)
     sheath.visible = false
     group.add(sheath)
 
     const diamonds: THREE.Mesh[] = []
     for (let i = 0; i < 3; i++) {
       const diamond = new THREE.Mesh(new THREE.SphereGeometry(0.09 - i * 0.015, 8, 6), diamondMaterial)
-      diamond.position.set(x, y, -3.2 - i * 0.42)
+      diamond.position.set(x, y, -3.46 - i * 0.42)
       diamond.visible = false
       group.add(diamond)
       diamonds.push(diamond)
     }
 
     const glow = new THREE.Sprite(glowMaterial)
-    glow.position.set(x, y, -3.0)
+    glow.position.set(x, y, -3.26)
     glow.scale.setScalar(1.4)
     glow.visible = false
     group.add(glow)
