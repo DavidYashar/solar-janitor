@@ -334,12 +334,18 @@ export function buildShip(): ShipModel {
   canopy.position.y = 0.37
   group.add(canopy)
 
-  // canopy bows: thin frames arching over the glass, like a real windscreen
-  for (const [z, halfWidth, rise] of [[1.3, 0.45, 0.24], [0.6, 0.57, 0.27]] as [number, number, number][]) {
-    const bow = new THREE.Mesh(new THREE.TorusGeometry(1, 0.022, 5, 22, Math.PI), darkMaterial)
-    bow.scale.set(halfWidth, rise, 1)
-    bow.position.set(0, 0.45, z)
-    group.add(bow)
+  // canopy frames: bands that hug the glass's own cross-section (a scaled
+  // copy of its section table), so they can never float clear of the pane
+  for (const [z, w, h, b] of [
+    [1.15, 0.473, 0.34, -0.133],
+    [0.5, 0.518, 0.373, -0.144],
+  ] as [number, number, number, number][]) {
+    const sleeve = new THREE.Mesh(loft([
+      { z: z + 0.04, w: w * 1.09, h: h * 1.09, b: b * 1.09 },
+      { z: z - 0.04, w: w * 1.09, h: h * 1.09, b: b * 1.09 },
+    ]), darkMaterial)
+    sleeve.position.y = 0.37
+    group.add(sleeve)
   }
 
   // dark dorsal spine that hugs the hull ridge from the canopy to the pod
