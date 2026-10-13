@@ -34,6 +34,9 @@ export interface InputSource {
 const AIM_DEAD = 0.08
 /** aim offset that commands the full steering rate */
 const AIM_FULL = 0.45
+/** ground steering: dead in the middle of the screen, full lock out wide */
+const STEER_DEAD = 0.12
+const STEER_FULL = 0.6
 /** units of aim per pixel of look-pad drag (touch) */
 const PAD_LOOK_GAIN = 0.006
 
@@ -48,8 +51,6 @@ export function createInput(actions: InputActions): InputSource {
   /** pointer aim, -1..1: +x = screen-right, +y = screen-up */
   let aimX = 0
   let aimY = 0
-  /** last pointer heading in screen radians: 0 = straight up, + clockwise */
-  let aimAngle: number | null = null
 
   function isTypingTarget(target: EventTarget | null): boolean {
     const element = target as HTMLElement | null
@@ -247,6 +248,13 @@ export function createInput(actions: InputActions): InputSource {
   const down = (code: string) => (held.has(code) ? 1 : 0)
   const clampInput = (value: number) => Math.max(-1, Math.min(1, value))
 
+  /** Pointer offset -> steering rate: dead in the middle, full lock out wide. */
+  const steer = (value: number) => {
+    const magnitude = Math.abs(value)
+    if (magnitude <= STEER_DEAD) return 0
+    return Math.sign(value) * Math.min(1, (magnitude - STEER_DEAD) / (STEER_FULL - STEER_DEAD))
+  }
+
   return {
     read(ctx) {
       const boost = boostQueued || held.has('ShiftLeft') || held.has('ShiftRight')
@@ -254,16 +262,13 @@ export function createInput(actions: InputActions): InputSource {
       boostQueued = false
 
       // pointer heading in screen radians: 0 = straight up, + clockwise
-      if (Math.hypot(aimX, aimY) > AIM_DEAD) aimAngle = Math.atan2(aimX, aimY)
-      if (aimAngle === null) aimAngle = -ctx.facing
-
       if (ctx.mode === 'surface') {
-        // arrow keys and the stick work in screen space; screenMoveVector
-        // rotates them into the pointer's frame (mirror-handed world)
+        // the janitor walks where he faces; the pointer only steers (chase cam),
+        // so screen input is rotated into his frame rather than the pointer's
         const screenX = down('KeyD') - down('KeyA') + down('ArrowRight') - down('ArrowLeft') + stickX
         const screenY = down('KeyW') - down('KeyS') + down('ArrowUp') - down('ArrowDown') + stickY
-        const move = screenMoveVector(aimAngle, screenX, screenY)
-        return { x: move.x, y: move.y, face: -aimAngle, pitch: 0, yaw: 0, roll: 0, boost, hop }
+        const move = screenMoveVector(-ctx.facing, screenX, screenY)
+        return { x: move.x, y: move.y, turn: steer(aimX), pitch: 0, yaw: 0, roll: 0, boost, hop }
       }
 
       // space: the pointer steers the nose, the arrows fly and side-step

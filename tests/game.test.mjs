@@ -570,16 +570,21 @@ test('docking delivers the hold and the carry, paying credits and score', () => 
   assert.equal(game.bestBatch, 7)
 })
 
-test('the pointer aims the janitor and the arrows move in that frame', () => {
+test('the pointer steers the janitor and the arrows move him where he faces', () => {
   const game = running()
-  const aim = 0.9 // pointer ~52 degrees clockwise of screen-up
-  const withFace = face => ({ x: 0, y: 0, face, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false })
-  advance(game, 1.2, withFace(aim))
-  assert.ok(Math.abs(wrapAngle(game.player.facing - aim)) < 0.05, 'the janitor faces the pointer')
+  const withTurn = turn => ({ x: 0, y: 0, turn, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false })
+  const facing0 = game.player.facing
+  advance(game, 0.4, withTurn(1))
+  assert.ok(wrapAngle(game.player.facing - facing0) > 0.3, 'holding right swings him around')
+  const turned = game.player.facing
+  advance(game, 0.3, withTurn(0))
+  assert.ok(Math.abs(wrapAngle(game.player.facing - turned)) < 1e-6, 'centred pointer holds the heading')
+  // walk forward: the input layer rotated the arrow into his frame, so north
+  // of his facing is where he goes
   const lat0 = game.player.lat
-  advance(game, 2, { x: 0, y: 1, face: aim, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false })
-  assert.ok(game.player.lat > lat0 + 0.2, 'forward walks along the world vector the input layer composed')
-  assert.ok(Math.abs(wrapAngle(game.player.facing - aim)) < 0.05, 'movement does not steal the facing from the pointer')
+  advance(game, 1.5, { x: 0, y: 1, turn: 0, pitch: 0, yaw: 0, roll: 0, boost: false, hop: false })
+  assert.ok(game.player.lat > lat0, 'forward walks where he looks')
+  assert.ok(Math.abs(wrapAngle(game.player.facing - turned)) < 1e-6, 'movement never steals the facing')
 })
 
 test('screen arrows map into the mirror-handed world', () => {

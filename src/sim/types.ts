@@ -110,10 +110,11 @@ export interface Input {
   /** -1..1 forward movement (surface: screen front/back, space: thrust) */
   y: number
   /**
-   * Desired facing in sim-world radians (surface only). With a pointer the
-   * janitor turns toward it; without one it faces the movement direction.
+   * Ground steering, -1..1 (surface only): full lock turns at SURFACE_TURN_RATE
+   * per second. The camera sits behind the janitor, so the pointer steers him
+   * instead of aiming at a screen point.
    */
-  face?: number
+  turn?: number
   /** -1..1 pitch input (space only) */
   pitch: number
   /** -1..1 yaw input (space only) */

@@ -852,7 +852,6 @@ function updateSurface(game: Game, dt: number, input: Input) {
   if (length > 0.12) {
     const nx = input.x / Math.max(1, length)
     const ny = input.y / Math.max(1, length)
-    if (input.face === undefined) player.facing = Math.atan2(nx, ny)
     if (onGround) {
       player.vN = ny * speed
       player.vE = nx * speed
@@ -866,11 +865,10 @@ function updateSurface(game: Game, dt: number, input: Input) {
     player.vE = 0
   }
 
-  // the pointer aims the janitor: swing around toward it at a fixed rate
-  if (input.face !== undefined) {
-    const diff = wrapAngle(input.face - player.facing)
-    player.facing = wrapAngle(player.facing + Math.sign(diff) * Math.min(Math.abs(diff), SURFACE_TURN_RATE * dt))
-  }
+  // the pointer steers him: full lock turns at SURFACE_TURN_RATE and the
+  // chase camera swings around behind whatever he is facing
+  const turn = clamp(input.turn ?? 0, -1, 1)
+  if (turn !== 0) player.facing = wrapAngle(player.facing + turn * SURFACE_TURN_RATE * dt)
 
   player.lat = clamp(player.lat + (player.vN * dt) / SURFACE_RADIUS, -POLE_CLAMP, POLE_CLAMP)
   const cosLat = Math.max(0.3, Math.cos(player.lat))

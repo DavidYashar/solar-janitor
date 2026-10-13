@@ -61,7 +61,7 @@ credits on gear. Clean all three worlds to restore the system.
 
 | Action | Keyboard | Touch |
 | --- | --- | --- |
-| Surface move | point with the mouse · `W`/`↑` walk, `S`/`↓` back, `A`/`D`/`←`/`→` side-step | left stick |
+| Surface move | mouse steers (chase camera behind the janitor) · `W`/`↑` walk, `S`/`↓` back, `A`/`D`/`←`/`→` side-step | left stick steers + moves |
 | Surface hop / space boost | `Space` | HOP / BOOST |
 | Sprint (surface) / boost (space) | `Shift` | — |
 | Fly: steer | the mouse is your pointer — the nose follows it | drag the right-hand look pad |
