@@ -12,7 +12,9 @@ import {
   SPRINT_MULTIPLIER, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
   STORM_WARN_LEAD_BONUS, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
   THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS,
-  SHIP_STRAFE_SPEED, SURFACE_TURN_RATE,
+  SHIP_STRAFE_SPEED, SURFACE_TURN_RATE, BODY_BOUNCE, BODY_REST_SPEED,
+  GRAVITY_SOI, GRAVITY_SOI_FADE, PLANET_MU, SHIP_WELL_ACCEL, SHIP_WELL_SOFT,
+  ORBIT_TRIM_BAND_MIN, ORBIT_TRIM_BAND_MAX, ORBIT_TRIM_RATE, ORBIT_HOLD_RANGE, DEEP_SPACE_ASSIST_FADE,
 } from './config.ts'
 import { RELIC_BY_PLANET, SHOP_BY_ID } from './economy.ts'
 import { quatForward, quatFromBasis, quatIntegrate, quatNlerp, quatRight, quatToFlightAngles } from './orient.ts'
@@ -400,6 +402,185 @@ function orbitPoint(centre: Vec3, radius: number, angle: number, target: Vec3): 
   target.y = centre.y
   target.z = centre.z + radius * Math.sin(angle)
   return target
+}
+
+/** Velocity of a body riding a scripted circular orbit (d/dt of `orbitPoint`). */
+function orbitVelocity(radius: number, rate: number, angle: number, target: Vec3): Vec3 {
+  const speed = radius * rate
+  target.x = -Math.sin(angle) * speed
+  target.y = 0
+  target.z = Math.cos(angle) * speed
+  return target
+}
+
+const ORBIT_VEL_B: Vec3 = { x: 0, y: 0, z: 0 }
+
+/**
+ * A world's own acceleration along its scripted orbit - toward the Sun for Earth
+ * and Mars, toward Earth for the Moon (16.8 u/s^2, four times the Moon's own
+ * surface gravity). Flying in a world's frame means riding its motion, so this
+ * is part of the coordinate conversion, not a force on the ship.
+ */
+function frameAcceleration(game: Game, body: number, target: Vec3): Vec3 {
+  const planet = PLANETS[body]
+  const centre = game.planetPos[body]
+  const parentX = body === 1 ? game.planetPos[0].x : 0
+  const parentY = body === 1 ? game.planetPos[0].y : 0
+  const parentZ = body === 1 ? game.planetPos[0].z : 0
+  const dx = parentX - centre.x
+  const dy = parentY - centre.y
+  const dz = parentZ - centre.z
+  const distance = Math.hypot(dx, dy, dz) || 1
+  const strength = planet.orbitRate * planet.orbitRate * planet.orbit
+  target.x = (dx / distance) * strength
+  target.y = (dy / distance) * strength
+  target.z = (dz / distance) * strength
+  return target
+}
+
+/** The world's own velocity in the map frame - the Moon rides Earth's orbit too. */
+function planetVelocity(game: Game, body: number, target: Vec3): Vec3 {
+  const planet = PLANETS[body]
+  const angle = body === 0 ? game.earthAngle : body === 1 ? game.moonAngle : game.marsAngle
+  orbitVelocity(planet.orbit, planet.orbitRate, angle, target)
+  if (body === 1) {
+    planetVelocity(game, 0, ORBIT_VEL_B)
+    target.x += ORBIT_VEL_B.x
+    target.y += ORBIT_VEL_B.y
+    target.z += ORBIT_VEL_B.z
+  }
+  return target
+}
+
+/** A world's pull on the ship, as felt this frame. */
+interface Well {
+  x: number
+  y: number
+  z: number
+  body: number
+  /** the world's gravitational parameter - the pull at any radius is mu / r^2 */
+  mu: number
+  /** distance from the world's centre */
+  radius: number
+  /** 1 deep inside the sphere of influence, easing to 0 at its edge */
+  weight: number
+  /** circular-orbit speed at this radius, relative to the world */
+  circular: number
+}
+
+const SCRATCH_WELL: Well = { x: 0, y: 0, z: 0, body: -1, mu: 0, radius: 0, weight: 0, circular: 0 }
+const SCRATCH_VEL: Vec3 = { x: 0, y: 0, z: 0 }
+const SCRATCH_RELATIVE: Vec3 = { x: 0, y: 0, z: 0 }
+const SCRATCH_ACCEL: Vec3 = { x: 0, y: 0, z: 0 }
+const SCRATCH_TARGET_VEL: Vec3 = { x: 0, y: 0, z: 0 }
+
+/**
+ * The well holding the ship, or null in deep space. The smallest sphere of
+ * influence containing it wins, so the Moon takes over from Earth near the
+ * Moon, and every world keeps a clean pull of its own in a map this compressed.
+ */
+function sampleGravity(game: Game, x: number, y: number, z: number): Well | null {
+  let body = -1
+  for (const planet of PLANETS) {
+    if (body >= 0 && GRAVITY_SOI[planet.id] >= GRAVITY_SOI[body]) continue
+    const position = game.planetPos[planet.id]
+    if (Math.hypot(x - position.x, y - position.y, z - position.z) >= GRAVITY_SOI[planet.id]) continue
+    body = planet.id
+  }
+  if (body < 0) return null
+  const position = game.planetPos[body]
+  const soi = GRAVITY_SOI[body]
+  const dx = position.x - x
+  const dy = position.y - y
+  const dz = position.z - z
+  const radius = Math.hypot(dx, dy, dz)
+  if (radius < 1e-6) return null
+  const inner = soi * (1 - GRAVITY_SOI_FADE)
+  let weight = 1
+  if (radius > inner) {
+    const t = (soi - radius) / (soi - inner)
+    weight = t * t * (3 - 2 * t)
+  }
+  const mu = PLANET_MU[body]
+  const strength = (mu / (radius * radius)) * weight
+  const well = SCRATCH_WELL
+  well.x = (dx / radius) * strength
+  well.y = (dy / radius) * strength
+  well.z = (dz / radius) * strength
+  well.mu = mu
+  well.body = body
+  well.radius = radius
+  well.weight = weight
+  well.circular = Math.sqrt(mu / radius)
+  return well
+}
+
+/** The station's own velocity relative to Earth, from its scripted orbit. */
+function dockVelocity(game: Game, target: Vec3): Vec3 {
+  return orbitVelocity(ISS_ORBIT + ISS_DOCK_OFFSET, ISS_ORBIT_RATE, game.issAngle, target)
+}
+
+/** How far outside every sphere of influence the ship is, in world units. */
+function distanceBeyondWells(game: Game, ship: Game['ship']): number {
+  let closest = Infinity
+  for (const planet of PLANETS) {
+    const position = game.planetPos[planet.id]
+    const gap = Math.hypot(ship.x - position.x, ship.y - position.y, ship.z - position.z) - GRAVITY_SOI[planet.id]
+    if (gap < closest) closest = gap
+  }
+  return closest
+}
+
+/**
+ * The tug's own autopilot, and the only invisible hand in the sky: idle inside a
+ * world's pull it trims the ship into that world's orbit - the speed the ISS keeps
+ * - so letting go of the booster near the station leaves you circling with it.
+ * Outside the band (a fast flyby) or diving straight at a world (a landing
+ * approach) it keeps out of the way and gravity is left to do whatever it does.
+ */
+function orbitTrim(game: Game, relative: Vec3, x: number, y: number, z: number, well: Well, dt: number) {
+  if (well.weight < 1) return
+  const radius = Math.hypot(x, y, z)
+  if (radius < 1e-6) return
+  const circular = Math.sqrt(well.mu / radius)
+  // at the hatch, match the station rather than the sky: that is free fall with it
+  const atHatch = distance3(game.ship, game.dockPos) <= ORBIT_HOLD_RANGE
+  const relativeSpeed = Math.hypot(relative.x, relative.y, relative.z)
+  if (!atHatch) {
+    if (relativeSpeed < circular * ORBIT_TRIM_BAND_MIN) return
+    if (relativeSpeed > circular * ORBIT_TRIM_BAND_MAX) return
+  }
+  const nx = x / radius
+  const ny = y / radius
+  const nz = z / radius
+  const radial = relative.x * nx + relative.y * ny + relative.z * nz
+  // a straight dive stays a dive - the trim only steadies what already circles
+  if (!atHatch && Math.abs(radial) > 0.75 * relativeSpeed) return
+  let tx = relative.x - radial * nx
+  let ty = relative.y - radial * ny
+  let tz = relative.z - radial * nz
+  const tangent = Math.hypot(tx, ty, tz)
+  if (tangent < 1e-4) return
+  tx /= tangent
+  ty /= tangent
+  tz /= tangent
+  let targetX: number
+  let targetY: number
+  let targetZ: number
+  if (atHatch) {
+    const station = dockVelocity(game, SCRATCH_TARGET_VEL)
+    targetX = station.x
+    targetY = station.y
+    targetZ = station.z
+  } else {
+    targetX = tx * circular
+    targetY = ty * circular
+    targetZ = tz * circular
+  }
+  const blend = 1 - Math.exp(-ORBIT_TRIM_RATE * dt)
+  relative.x += (targetX - relative.x) * blend
+  relative.y += (targetY - relative.y) * blend
+  relative.z += (targetZ - relative.z) * blend
 }
 
 export function computeBodies(game: Game) {
@@ -993,16 +1174,23 @@ const SCRATCH_RIGHT: Vec3 = { x: 0, y: 0, z: 0 }
 
 function collideBodies(game: Game) {
   const ship = game.ship
-  const bodies: { x: number; y: number; z: number; radius: number }[] = [
-    { x: 0, y: 0, z: 0, radius: SUN_RADIUS + BODY_CLEARANCE * 2 },
+  // the shell belongs to a world that is itself racing along its orbit, so only the
+  // ship's motion relative to that world belongs in the bounce - reflecting the map
+  // velocity instead hands the tug the planet's own speed
+  const bodies: { x: number; y: number; z: number; radius: number; rx: number; ry: number; rz: number }[] = [
+    { x: 0, y: 0, z: 0, radius: SUN_RADIUS + BODY_CLEARANCE * 2, rx: 0, ry: 0, rz: 0 },
   ]
   for (const planet of PLANETS) {
     const position = game.planetPos[planet.id]
+    const drift = planetVelocity(game, planet.id, SCRATCH_VEL)
     bodies.push({
       x: position.x,
       y: position.y,
       z: position.z,
       radius: planet.spaceRadius + BODY_CLEARANCE,
+      rx: drift.x,
+      ry: drift.y,
+      rz: drift.z,
     })
   }
   for (const body of bodies) {
@@ -1017,11 +1205,17 @@ function collideBodies(game: Game) {
     ship.x = body.x + nx * body.radius
     ship.y = body.y + ny * body.radius
     ship.z = body.z + nz * body.radius
-    const normalVelocity = ship.vx * nx + ship.vy * ny + ship.vz * nz
+    const relativeX = ship.vx - body.rx
+    const relativeY = ship.vy - body.ry
+    const relativeZ = ship.vz - body.rz
+    const normalVelocity = relativeX * nx + relativeY * ny + relativeZ * nz
     if (normalVelocity < 0) {
-      ship.vx -= nx * normalVelocity * 1.35
-      ship.vy -= ny * normalVelocity * 1.35
-      ship.vz -= nz * normalVelocity * 1.35
+      // gravity keeps pressing a landed ship into the shell, so a gentle contact
+      // is simply stopped - only a real impact bounces
+      const bounce = normalVelocity < -BODY_REST_SPEED ? BODY_BOUNCE : 1
+      ship.vx -= nx * normalVelocity * bounce
+      ship.vy -= ny * normalVelocity * bounce
+      ship.vz -= nz * normalVelocity * bounce
     }
     if (game.scrapeTimer <= 0) {
       game.scrapeTimer = 0.9
@@ -1072,27 +1266,88 @@ function updateShip(game: Game, dt: number, input: Input) {
   const forward = quatForward(ship.q, SCRATCH_FORWARD)
   const thrust = clamp(input.y, -1, 1)
   // lateral strafe: screen-right is the ship's -X axis (same mirror as the surface)
-  const strafe = clamp(input.x, -1, 1) * SHIP_STRAFE_SPEED
+  const strafeInput = clamp(input.x, -1, 1)
   const side = quatRight(ship.q, SCRATCH_RIGHT)
   const boosting = input.boost || input.hop
   ship.thrust = thrust
   ship.boosting = boosting && thrust > 0.12
-  let targetSpeed = 0
-  if (thrust > 0.12) targetSpeed = (boosting ? boostSpeed(game) : shipSpeed(game)) * thrust
-  else if (thrust < -0.12) targetSpeed = SHIP_REVERSE_SPEED * thrust
 
-  const k = 1 - Math.exp(-SHIP_ACCEL_K * dt)
   const previousVx = ship.vx
   const previousVy = ship.vy
   const previousVz = ship.vz
-  ship.vx += (forward.x * targetSpeed - side.x * strafe - ship.vx) * k
-  ship.vy += (forward.y * targetSpeed - side.y * strafe - ship.vy) * k
-  ship.vz += (forward.z * targetSpeed - side.z * strafe - ship.vz) * k
-  // trapezoidal integration of the damped velocity: matches the analytic
-  // solution to O(dt^2), so 60/120/144 Hz produce the same flight path
-  ship.x += (previousVx + ship.vx) * 0.5 * dt
-  ship.y += (previousVy + ship.vy) * 0.5 * dt
-  ship.z += (previousVz + ship.vz) * 0.5 * dt
+  const well = sampleGravity(game, ship.x, ship.y, ship.z)
+  const idle = Math.abs(thrust) <= 0.12 && Math.abs(strafeInput) <= 0.12
+
+  if (well) {
+    // Inside a world's pull the tug flies in that world's own frame: the world's
+    // gravity is the only force, thrust is a real acceleration, letting go is
+    // coasting, and the ship rides along with the world. Nothing is drawn for the
+    // field - you read it in the course of the ship.
+    const centre = game.planetPos[well.body]
+    const drift = planetVelocity(game, well.body, SCRATCH_VEL)
+    const relative: Vec3 = SCRATCH_RELATIVE
+    relative.x = ship.vx - drift.x
+    relative.y = ship.vy - drift.y
+    relative.z = ship.vz - drift.z
+    let ax = well.x
+    let ay = well.y
+    let az = well.z
+    if (Math.abs(thrust) > 0.12) {
+      const along = relative.x * forward.x + relative.y * forward.y + relative.z * forward.z
+      const cap = thrust > 0 ? (boosting ? boostSpeed(game) : shipSpeed(game)) * thrust : SHIP_REVERSE_SPEED * -thrust
+      const ease = clamp((cap - (thrust > 0 ? along : -along)) / (cap * SHIP_WELL_SOFT), 0, 1)
+      ax += forward.x * SHIP_WELL_ACCEL * thrust * ease
+      ay += forward.y * SHIP_WELL_ACCEL * thrust * ease
+      az += forward.z * SHIP_WELL_ACCEL * thrust * ease
+    }
+    if (Math.abs(strafeInput) > 0.12) {
+      const rightward = -(relative.x * side.x + relative.y * side.y + relative.z * side.z) * Math.sign(strafeInput)
+      const ease = clamp((SHIP_STRAFE_SPEED - rightward) / (SHIP_STRAFE_SPEED * SHIP_WELL_SOFT), 0, 1)
+      ax -= side.x * SHIP_WELL_ACCEL * Math.sign(strafeInput) * ease
+      ay -= side.y * SHIP_WELL_ACCEL * Math.sign(strafeInput) * ease
+      az -= side.z * SHIP_WELL_ACCEL * Math.sign(strafeInput) * ease
+    }
+    // Velocity-Verlet (kick, drift, kick): a symplectic step, so an orbit keeps its
+    // energy. An average-velocity step has run-away energy here - it pumps the orbit
+    // outward, which the old damper used to hide.
+    const halfVx = relative.x + ax * 0.5 * dt
+    const halfVy = relative.y + ay * 0.5 * dt
+    const halfVz = relative.z + az * 0.5 * dt
+    const nextX = (ship.x - centre.x) + halfVx * dt
+    const nextY = (ship.y - centre.y) + halfVy * dt
+    const nextZ = (ship.z - centre.z) + halfVz * dt
+    const pull = -(well.mu * well.weight) / ((nextX * nextX + nextY * nextY + nextZ * nextZ || 1) ** 1.5) * 0.5 * dt
+    relative.x = halfVx + nextX * pull
+    relative.y = halfVy + nextY * pull
+    relative.z = halfVz + nextZ * pull
+    if (idle) orbitTrim(game, relative, nextX, nextY, nextZ, well, dt)
+    // back to map coordinates riding the world's own motion: its scripted drift and
+    // drift-rate carry the ship along
+    const accel = frameAcceleration(game, well.body, SCRATCH_ACCEL)
+    ship.x = centre.x + (drift.x + accel.x * dt * 0.5) * dt + nextX
+    ship.y = centre.y + (drift.y + accel.y * dt * 0.5) * dt + nextY
+    ship.z = centre.z + (drift.z + accel.z * dt * 0.5) * dt + nextZ
+    ship.vx = drift.x + accel.x * dt + relative.x
+    ship.vy = drift.y + accel.y * dt + relative.y
+    ship.vz = drift.z + accel.z * dt + relative.z
+  } else {
+    // Deep space keeps the tug's old fly-by-wire handling: it tracks the commanded
+    // velocity and parks itself when the keys are released. The gain fades in just
+    // outside a sphere of influence, so leaving a well is a drift, not a slam.
+    let targetSpeed = 0
+    if (thrust > 0.12) targetSpeed = (boosting ? boostSpeed(game) : shipSpeed(game)) * thrust
+    else if (thrust < -0.12) targetSpeed = SHIP_REVERSE_SPEED * thrust
+    const strafe = strafeInput * SHIP_STRAFE_SPEED
+    const k = (1 - Math.exp(-SHIP_ACCEL_K * dt)) * clamp(distanceBeyondWells(game, ship) / DEEP_SPACE_ASSIST_FADE, 0, 1)
+    ship.vx += (forward.x * targetSpeed - side.x * strafe - ship.vx) * k
+    ship.vy += (forward.y * targetSpeed - side.y * strafe - ship.vy) * k
+    ship.vz += (forward.z * targetSpeed - side.z * strafe - ship.vz) * k
+    // trapezoidal integration: matches the analytic solution to O(dt^2), so
+    // 60/120/144 Hz produce the same flight path
+    ship.x += (previousVx + ship.vx) * 0.5 * dt
+    ship.y += (previousVy + ship.vy) * 0.5 * dt
+    ship.z += (previousVz + ship.vz) * 0.5 * dt
+  }
   ship.speed = Math.hypot(ship.vx, ship.vy, ship.vz)
   collideBodies(game)
   autoAlignToDock(game, dt)

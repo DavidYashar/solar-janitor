@@ -418,7 +418,8 @@ export function createHud(callbacks: HudCallbacks): Hud {
             <div><b>LANDER</b>stand in the ring to refill O<sub>2</sub> · <kbd>F</kbd> stows your haul or lifts off</div>
             <div><b>FLY</b>the mouse is your pointer — the nose follows it ·
               <kbd>W</kbd>/<kbd>S</kbd>/<kbd>↑</kbd>/<kbd>↓</kbd> thrust · <kbd>←</kbd>/<kbd>→</kbd> strafe ·
-              <kbd>A</kbd>/<kbd>D</kbd> roll</div>
+              <kbd>A</kbd>/<kbd>D</kbd> roll · near a world the tug coasts on its pull, so slow down and you orbit it
+            </div>
             <div><b>DOCK</b>fly to the ISS and press <kbd>F</kbd> to deliver, shop and gear up</div>
             <div><b>LAND</b>fly to a planet, slow down and press <kbd>F</kbd> to land</div>
             <div><b>HAZARDS</b>Moon meteor showers · Mars dust storms · watch the warnings</div>

@@ -75,6 +75,9 @@ export const DOCK_ASSIST_RADIUS = 9
 /** within this range the Docking Assist upgrade auto-aligns the ship to the hatch */
 export const DOCK_ASSIST_RANGE = 14
 export const DOCK_ASSIST_TURN = 3.4
+/** hull contact: below this closing speed the shell just stops the ship, above it bounces */
+export const BODY_REST_SPEED = 12
+export const BODY_BOUNCE = 1.35
 export const LAND_ZONE_HEIGHT = 16 * SPACE_SCALE
 export const LAND_MAX_SPEED = 30 * SPACE_SCALE
 export const BODY_CLEARANCE = 2 * SPACE_SCALE
@@ -97,6 +100,51 @@ export const MOON_RADIUS = 8 * SPACE_SCALE
 export const MARS_ORBIT = 900 * SPACE_SCALE
 export const MARS_ORBIT_RATE = 0.0075
 export const MARS_RADIUS = 13 * SPACE_SCALE
+
+// ------------------------------------------------------------------- gravity
+// Real inverse-square gravity, patched per world: inside a sphere of influence
+// only that world's field acts, which keeps each world's pull clean even though
+// this map is compressed (our Moon sits 2.6 Earth radii out, not 60).
+
+/** real relative surface gravity, Earth = 1 - the wells scale with these */
+export const GRAVITY_REL = [1, 0.165, 0.379]
+
+/** Earth's gravitational parameter, read off the station's own orbit (mu = w^2 r^3),
+ *  so a ship matching the ISS's speed really is in a circular orbit with it. */
+export const EARTH_MU = ISS_ORBIT_RATE * ISS_ORBIT_RATE * ISS_ORBIT * ISS_ORBIT * ISS_ORBIT
+
+/** what that works out to at Earth's own surface - the reference g for the wells */
+export const EARTH_SURFACE_G = EARTH_MU / (EARTH_RADIUS * EARTH_RADIUS)
+
+/** per-planet gravitational parameter, index matches PLANETS */
+export const PLANET_MU = [
+  EARTH_MU,
+  EARTH_SURFACE_G * GRAVITY_REL[1] * MOON_RADIUS * MOON_RADIUS,
+  EARTH_SURFACE_G * GRAVITY_REL[2] * MARS_RADIUS * MARS_RADIUS,
+]
+
+/** sphere of influence per planet: the smallest one holding the ship wins */
+export const GRAVITY_SOI = [130 * SPACE_SCALE, 16 * SPACE_SCALE, 70 * SPACE_SCALE]
+
+/** the field fades to nothing across the outer slice of the SOI */
+export const GRAVITY_SOI_FADE = 0.3
+
+/** inside a well the tug flies like a real engine: thrust is an acceleration */
+export const SHIP_WELL_ACCEL = 1700
+/** ... easing off over the last slice of each speed cap, so the caps still hold */
+export const SHIP_WELL_SOFT = 0.25
+
+/** Idle in a well, the tug trims itself into the local orbit - but only while its
+ *  speed relative to that world sits inside this band of the circular speed, so a
+ *  fast flyby stays a flyby and a slow arrival becomes a satellite. */
+export const ORBIT_TRIM_BAND_MIN = 0.5
+export const ORBIT_TRIM_BAND_MAX = 1.7
+export const ORBIT_TRIM_RATE = 0.6
+/** this close to the hatch the trim matches the station instead of the orbit */
+export const ORBIT_HOLD_RANGE = DOCK_ASSIST_RANGE
+
+/** leaving a well, the fly-by-wire handling eases back in over this distance */
+export const DEEP_SPACE_ASSIST_FADE = 40 * SPACE_SCALE
 
 // ---------------------------------------------------------------- hazards
 /** seconds between meteor volleys on the Moon */

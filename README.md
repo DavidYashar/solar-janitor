@@ -80,6 +80,14 @@ is the only refill — and the compass ring always points home. In space the com
 points at your objective: the ISS when you are carrying a haul, otherwise the
 nearest world that still has junk on it.
 
+**Gravity is real and invisible** (nothing is drawn for it): every world has a
+sphere of influence, and inside it the tug flies like a spacecraft — thrust is an
+acceleration, releasing the keys means coasting, and the world pulls you. Slowing
+down near a world gets you caught in orbit around it (matching the station's
+speed puts you in orbit *with* the station); dive at a world and you keep diving;
+fly past fast and you are only deflected. Deep space is unchanged: out there the
+tug still parks itself when you let go. Full model and numbers: plan §5.2.1.
+
 Ranks: SILVER 4 000 · GOLD 7 000 · PLATINUM 9 500 · LEGEND 12 000
 (plan §5.6 listed career totals; these are tuned so a full three-world run can
 actually reach LEGEND).
