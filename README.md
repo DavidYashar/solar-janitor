@@ -11,6 +11,21 @@ credits on gear. Clean all three worlds to restore the system.
 
 ## Current build — M2 content
 
+- **Progressive world streaming (M3, plan §9).** Every world in the game is
+  distance-tiered and generated *while you play*: a **glow impostor** becomes a
+  **low-poly globe**, which becomes the hand-painted **detailed globe**; a
+  landable surface starts as a smooth **stand-in crust** and refines into the
+  full terrain, props and lander pad. All of it is built in bounded slices under
+  a per-frame millisecond budget (3 ms; 6.5 ms while a tier the player needs
+  *right now* is still missing), so flying at a world never hitches the frame.
+  - The queue is ordered by **approach urgency** (`distance − closing × 6 s`),
+    so whatever you are boosting at warms first, and landing/docking targets are
+    always finished before you get close. Tiers promote at one distance and only
+    demote at a wider one, so a ship hovering on a boundary cannot thrash the
+    builder; once built, geometry is kept and simply hidden when you leave.
+  - `window.__solar.lodStats()` (dev builds) prints the built/shown tier per
+    world, the queue depth and the ms spent last frame.
+
 - **Three landable worlds**, each ~20–24 junk pieces plus one hidden relic:
   Earth (green hills, trees, shores), the Moon (grey crater fields, boulder rims,
   dead rovers, 0.35 g floaty hops) and Mars (rust dunes, broken windmills,
@@ -78,7 +93,7 @@ $env:PATH = "C:\Users\yasha\vsCode\gameTwitgpine\.tools\node-v24.15.0-win-x64;$e
 $env:npm_config_cache = "C:\Users\yasha\vsCode\gameTwitgpine\.tools\npm-cache"
 npm install
 npm run dev       # open the printed localhost URL
-npm test          # 53 headless simulation regression tests
+npm test          # 72 headless regression tests
 npm run build     # strict type-check + production bundle in dist/
 npm run preview   # serve the production build
 ```
@@ -87,12 +102,38 @@ npm run preview   # serve the production build
 
 M2 content complete and **browser-verified end-to-end** (12 Oct — landed on all
 three worlds, rode out a Mars dust storm, unlocked Storm Sense, bought upgrades,
-and saved/continued across a reload, with zero console errors). `npm test` green
-(53 tests: saves, per-planet persistence, hazard behaviour, quaternion flight
-maths, upgrade effects, ranks, determinism and a headless full three-world run),
-`tsc --noEmit` clean and the production build
-clean (~608 kB JS / 162 kB gzipped, plus 13 kB CSS — well inside the payload
-budget). Stack: Vite, strict TypeScript, Three.js, Web Audio, localStorage. All
-geometry, textures and sounds are generated procedurally in code — no external
-assets, no backend, no accounts. `src/sim/` is pure TypeScript with zero three.js
-or DOM imports, which is what keeps the whole game testable headlessly.
+and saved/continued across a reload, with zero console errors). **M3 LOD
+streaming is implemented and headlessly tested (13 Oct); the visual check in a
+real browser is still outstanding** — see the box below for the exact steps.
+
+`npm test` green (72 tests: saves, per-planet persistence, hazard behaviour,
+quaternion flight maths, upgrade effects, ranks, determinism, a headless full
+three-world run, and the LOD scheduler — hysteresis, warm-ahead ordering, the
+frame budget, plus the renderer's budget loop driven with a fake scene graph),
+`tsc --noEmit` clean and the production build clean (~616 kB JS / 165 kB
+gzipped, plus 13 kB CSS — well inside the payload budget, and *smaller at boot*
+than before: the space globes and the three surfaces are no longer generated
+during startup). Stack: Vite, strict TypeScript, Three.js, Web Audio,
+localStorage. All geometry, textures and sounds are generated procedurally in
+code — no external assets, no backend, no accounts. `src/sim/` is pure
+TypeScript with zero three.js or DOM imports, which is what keeps the whole game
+testable headlessly.
+
+Performance budget (plan §9): no shadow maps, pixel ratio capped at 1.75 (1.0 in
+low-quality mode), 300 particles and 320 dust motes per scene, both starfields
+are `Points` clouds (2 200 + 700, allocation-free), and every repeated object —
+junk, beacons, relic beams, cargo, trees, boulders, rocks — is an `InstancedMesh`.
+
+### How to check the streaming in a browser (M3)
+
+1. `npm run dev`, open the URL, press START.
+2. Take off from Earth and boost to Mars (`window.__solar.teleportTo(2, 1400)` in
+   the console jumps you 1 400 u out with a clean approach). Watch the red dot:
+   it is a glow, then a flat low-poly sphere around 620 u, then the painted globe
+   with its atmosphere around 300 u — each swap settles rather than popping.
+3. `window.__solar.lodStats()` prints built/shown tiers, queue depth and ms spent.
+   `spendMs` must stay under ~6.5 ms even while two worlds refine at once.
+4. Land on Mars: the dust-hazed surface must be complete before the landing
+   fade ends (the queue warms it from ~800 u out — `built: "mars-surface": 2`).
+5. Fly back out to 2 000 u: tiers demote (geometry stays built, `shown` drops to
+   0, the frame cost returns to 0.000 ms).
