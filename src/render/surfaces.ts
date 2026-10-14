@@ -4,7 +4,6 @@ import {
 } from '../sim/config.ts'
 import { cratersFor, landerSite, planetById, terrainHeight } from '../sim/planets.ts'
 import type { PlanetDef } from '../sim/planets.ts'
-import { groundMaps, whenReady } from './bodies.ts'
 
 const UP = new THREE.Vector3(0, 1, 0)
 const scratchDir = new THREE.Vector3()
@@ -98,65 +97,244 @@ export function glowTexture(inner: string, outer: string): THREE.CanvasTexture {
   })
 }
 
-/** Monochrome value noise on its own canvas, for the close-up ground grain. */
-function noiseCanvas(width: number, height: number, seed: number, spread: number): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return canvas
-  const image = ctx.createImageData(width, height)
-  const rnd = makeRnd(seed)
-  for (let i = 0; i < width * height; i++) {
-    const value = 128 + (rnd() - 0.5) * 255 * spread
-    image.data[i * 4] = value
-    image.data[i * 4 + 1] = value
-    image.data[i * 4 + 2] = value
-    image.data[i * 4 + 3] = 255
+/** A one-pixel texture of one colour: a placeholder that keeps a shader's shape. */
+function flatTexture(r: number, g: number, b: number): THREE.CanvasTexture {
+  const build = canvasBuild(1, 1)
+  if (build.ctx) {
+    build.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
+    build.ctx.fillRect(0, 0, 1, 1)
   }
-  ctx.putImageData(image, 0, 0)
-  return canvas
+  return finishTexture(build.canvas)
+}
+
+// --------------------------------------------------------------------- soil
+
+/**
+ * The ground underfoot: the reference build's own soil - dust mottled with tone,
+ * grit and stones scattered through it - painted on a canvas and tiled.
+ *
+ * It has to tile, and theirs did not: their stones were drawn once at random
+ * positions and simply clipped wherever they met the canvas edge, so repeating
+ * that texture printed a line of half-stones across the ground at every tile.
+ * Every element here is stamped again on the far side wherever it crosses an
+ * edge, so the copies meet.
+ *
+ * Two canvases come out of the one pass. The first is the colour; the second is
+ * the same stones as flat domes, which is what becomes the normal map. Relief
+ * has to come from somewhere, because colour cannot carry it: the eye is two
+ * metres off the ground, which magnifies one tile about thirty times, and all a
+ * painted shadow can do at that scale is look painted.
+ */
+const SOIL_TEXELS = 1024
+/** metres of ground one tile covers at the landing site; sets the repeat below */
+const SOIL_SPAN = 19.6
+const SOIL_REPEAT_X = Math.round((TAU * SURFACE_RADIUS * Math.cos(0.26)) / SOIL_SPAN)
+const SOIL_REPEAT_Y = Math.round((Math.PI * SURFACE_RADIUS) / SOIL_SPAN)
+
+export interface SoilMaps {
+  colour: THREE.CanvasTexture
+  normal: THREE.CanvasTexture
 }
 
 /**
- * The photographic ground underfoot. The world's own 2:1 map gives 0.17 surface
- * units per texel, which reads as a landmark but smears like a poster from eye
- * height, so two noise layers are overlaid on it: soft patches at four texels,
- * then grain at texel size. Deliberately not derived from the map's brightness -
- * a photo's light and dark are albedo, not relief.
+ * Draw an element, and again on the far side wherever it would cross an edge:
+ * nine draws at worst, one in the middle of the tile. Callers must not consume
+ * random numbers inside `draw`, or the tile stops being reproducible.
  */
-function bakeGround(photo: THREE.Texture, planetId: number): THREE.CanvasTexture {
-  const width = 2048
-  const height = 1024
-  const build = canvasBuild(width, height, 4242 + planetId)
-  const ctx = build.ctx
-  const image = photo.image as CanvasImageSource | undefined
-  if (!ctx) return finishTexture(build.canvas)
-  if (image) ctx.drawImage(image, 0, 0, width, height)
-  ctx.globalCompositeOperation = 'overlay'
-  // gentle: an overlay blend pulls every tone toward the middle, so strong grain
-  // would flatten the photograph's own contrast instead of adding to it
-  ctx.globalAlpha = 0.3
-  ctx.drawImage(noiseCanvas(256, 128, 717 + planetId, 0.38), 0, 0, width, height)
-  ctx.globalAlpha = 0.16
-  ctx.drawImage(noiseCanvas(512, 256, 131 + planetId, 0.45), 0, 0, width, height)
-  ctx.globalAlpha = 1
-  ctx.globalCompositeOperation = 'source-over'
-  const texture = finishTexture(build.canvas)
-  texture.anisotropy = 4
+function stampWrapped(
+  size: number, x: number, y: number, reach: number, draw: (x: number, y: number) => void,
+): void {
+  const xs = [x]
+  const ys = [y]
+  if (x - reach < 0) xs.push(x + size)
+  if (x + reach > size) xs.push(x - size)
+  if (y - reach < 0) ys.push(y + size)
+  if (y + reach > size) ys.push(y - size)
+  for (const px of xs) {
+    for (const py of ys) draw(px, py)
+  }
+}
+
+/** One stone in the soil, in colour and in relief. */
+function paintStone(
+  ctx: CanvasRenderingContext2D, depth: CanvasRenderingContext2D, size: number, rnd: () => number,
+): void {
+  const x = rnd() * size
+  const y = rnd() * size
+  const r = 0.9 + Math.pow(rnd(), 2.2) * 8
+  const spin = rnd() * Math.PI
+  // every stone a different shape: all of them the same ellipse is what makes a
+  // scatter of grit read as a printed pattern
+  const wide = 0.62 + rnd() * 0.5
+  const flat = 0.45 + rnd() * 0.5
+  // deliberately a light stone on a lighter ground: at fifty texels to the metre
+  // a three-centimetre pebble is barely two texels across, and a dark one at that
+  // size is a speck of noise rather than a stone. The relief is in the dome below
+  // and the normal map that comes out of it - the colour only has to say "not
+  // sand here".
+  const grey = 98 + rnd() * 52
+  const shadow = 0.13
+  const lift = 0.09 + rnd() * 0.13
+  const dome = 138 + Math.round(rnd() * 72)
+  const reach = r * 1.5
+
+  // the hollow it sits in, so it reads as set into the ground rather than on it
+  ctx.fillStyle = `rgba(48, 24, 12, ${shadow})`
+  stampWrapped(size, x, y, reach, (px, py) => {
+    ctx.beginPath()
+    ctx.ellipse(px + r * 0.34, py + r * 0.4, r * wide, r * flat, spin, 0, TAU)
+    ctx.fill()
+  })
+  // the stone itself, cooler than the sand around it
+  ctx.fillStyle = `rgb(${(grey + 26) | 0}, ${(grey * 0.95 + 16) | 0}, ${(grey * 0.92 + 12) | 0})`
+  stampWrapped(size, x, y, reach, (px, py) => {
+    ctx.beginPath()
+    ctx.ellipse(px, py, r * wide, r * flat, spin, 0, TAU)
+    ctx.fill()
+  })
+  // the facet that catches a low sun
+  ctx.fillStyle = `rgba(255, 236, 206, ${lift})`
+  stampWrapped(size, x, y, reach, (px, py) => {
+    ctx.beginPath()
+    ctx.ellipse(px - r * 0.2, py - r * 0.24, r * wide * 0.5, r * flat * 0.45, spin, 0, TAU)
+    ctx.fill()
+  })
+  depth.fillStyle = `rgb(${dome}, ${dome}, ${dome})`
+  stampWrapped(size, x, y, reach, (px, py) => {
+    depth.beginPath()
+    depth.ellipse(px, py, r * wide * 0.95, r * flat * 0.95, spin, 0, TAU)
+    depth.fill()
+  })
+}
+
+/**
+ * The relief canvas as a normal map. Sobel over the domes, sampled with wrap so
+ * the tile's own edges do not raise a ridge down the middle of the ground.
+ */
+function* soilNormal(source: HTMLCanvasElement, size: number): Generator<void, THREE.CanvasTexture, void> {
+  const src = source.getContext('2d')
+  const out = document.createElement('canvas')
+  out.width = size
+  out.height = size
+  const dst = out.getContext('2d')
+  if (!src || !dst) return flatTexture(128, 128, 255)
+  const input = src.getImageData(0, 0, size, size).data
+  const image = dst.createImageData(size, size)
+  const at = (x: number, y: number) => input[((((y % size) + size) % size) * size + (((x % size) + size) % size)) * 4] / 255
+  const strength = 3.2
+  for (let yStart = 0; yStart < size; yStart += 64) {
+    const yEnd = Math.min(size, yStart + 64)
+    for (let y = yStart; y < yEnd; y++) {
+      for (let x = 0; x < size; x++) {
+        const dx = (at(x + 1, y) - at(x - 1, y)) * strength
+        // the image's y runs against v, and the texture is flipped to match
+        const dy = (at(x, y + 1) - at(x, y - 1)) * strength
+        const length = Math.hypot(dx, dy, 1)
+        const i = (y * size + x) * 4
+        image.data[i] = 128 + (-dx / length) * 127
+        image.data[i + 1] = 128 + (dy / length) * 127
+        image.data[i + 2] = 128 + (1 / length) * 127
+        image.data[i + 3] = 255
+      }
+    }
+    yield
+  }
+  dst.putImageData(image, 0, 0)
+  const texture = new THREE.CanvasTexture(out)
+  // a normal map carries directions, not colour, so it must not be sRGB-decoded
+  texture.colorSpace = THREE.NoColorSpace
+  texture.wrapS = THREE.RepeatWrapping
+  texture.wrapT = THREE.RepeatWrapping
+  texture.repeat.set(SOIL_REPEAT_X, SOIL_REPEAT_Y)
+  texture.anisotropy = 8
   return texture
 }
 
-const groundTextures = new Map<number, THREE.CanvasTexture>()
+/**
+ * Painted across frames like everything else on a surface: a quarter of a
+ * million canvas operations is not a thing to do inside one frame.
+ */
+function* paintSoil(planetId: number): Generator<void, SoilMaps, void> {
+  const size = SOIL_TEXELS
+  const rnd = makeRnd(8123 + planetId)
+  const colour = document.createElement('canvas')
+  colour.width = size
+  colour.height = size
+  const ctx = colour.getContext('2d')
+  const relief = document.createElement('canvas')
+  relief.width = size
+  relief.height = size
+  const depth = relief.getContext('2d')
+  if (!ctx || !depth) return { colour: finishTexture(colour), normal: flatTexture(128, 128, 255) }
 
-/** Baked once per session: a surface can be rebuilt on every landing. */
-function groundTexture(planetId: number, photo: THREE.Texture): THREE.CanvasTexture {
-  let texture = groundTextures.get(planetId)
-  if (!texture) {
-    texture = bakeGround(photo, planetId)
-    groundTextures.set(planetId, texture)
+  // bare soil, and the same grey on the relief canvas as its resting level. The
+  // map is a detail layer rather than the colour: the planet's own palette is
+  // multiplied over it, so the soil has to sit near white or the ground ends up
+  // the product of two dark colours
+  ctx.fillStyle = '#c9b49c'
+  ctx.fillRect(0, 0, size, size)
+  depth.fillStyle = '#808080'
+  depth.fillRect(0, 0, size, size)
+  yield
+
+  // large-scale mottling - the ground is never one tone across a whole field
+  for (let i = 0; i < 900; i++) {
+    const x = rnd() * size
+    const y = rnd() * size
+    const r = 20 + rnd() * 120
+    const lighter = rnd() > 0.5
+    const alpha = 0.02 + rnd() * 0.05
+    ctx.fillStyle = lighter ? `rgba(240, 220, 190, ${alpha})` : `rgba(118, 84, 56, ${alpha})`
+    stampWrapped(size, x, y, r, (px, py) => {
+      ctx.beginPath()
+      ctx.arc(px, py, r, 0, TAU)
+      ctx.fill()
+    })
+    if (i % 150 === 0) yield
   }
-  return texture
+
+  // grit: the same trick at a tenth of the size, which is what stops the soil
+  // reading as flat paint when it fills the whole screen
+  for (let i = 0; i < 6000; i++) {
+    const x = rnd() * size
+    const y = rnd() * size
+    const r = 0.5 + rnd() * 5
+    const lighter = rnd() > 0.5
+    const alpha = 0.02 + rnd() * 0.07
+    ctx.fillStyle = lighter ? `rgba(236, 214, 182, ${alpha})` : `rgba(96, 62, 38, ${alpha})`
+    stampWrapped(size, x, y, r, (px, py) => {
+      ctx.beginPath()
+      ctx.arc(px, py, r, 0, TAU)
+      ctx.fill()
+    })
+    if (i % 600 === 0) yield
+  }
+
+  // and the stones sitting in it
+  for (let i = 0; i < 1100; i++) {
+    paintStone(ctx, depth, size, rnd)
+    if (i % 100 === 0) yield
+  }
+  yield
+
+  const normal = yield* soilNormal(relief, size)
+  const soil = finishTexture(colour)
+  soil.wrapS = THREE.RepeatWrapping
+  soil.wrapT = THREE.RepeatWrapping
+  soil.repeat.set(SOIL_REPEAT_X, SOIL_REPEAT_Y)
+  soil.anisotropy = 8
+  return { colour: soil, normal }
+}
+
+const soilMaps = new Map<number, SoilMaps>()
+
+/** Painted once per session: a surface can be rebuilt on every landing. */
+function* soilTextures(planetId: number): Generator<void, SoilMaps, void> {
+  const cached = soilMaps.get(planetId)
+  if (cached) return cached
+  const maps = yield* paintSoil(planetId)
+  soilMaps.set(planetId, maps)
+  return maps
 }
 
 export function dir(lat: number, lon: number, target = new THREE.Vector3()): THREE.Vector3 {
@@ -201,18 +379,23 @@ function placeGroup(
 // ----------------------------------------------------------------- terrain
 
 /**
- * The displaced, vertex-coloured planet sphere: 8 249 vertices of terrain
- * noise, generated `LOD_TERRAIN_SLICE` vertices at a time. The geometry is
- * rewritten in place, so the original directions are copied out first.
+ * The displaced, vertex-coloured planet sphere: the terrain mesh is generated
+ * `LOD_TERRAIN_SLICE` vertices at a time. The geometry is rewritten in place, so
+ * the original directions are copied out first.
+ *
+ * The grid puts a segment every 1.6 m across the field. That is not decoration:
+ * the craters are three to ten metres across, and at the coarser grid this world
+ * used before - 3.1 m - a bowl was four vertices wide with its rim falling
+ * between them, so the strongest shape in the landscape was the one the mesh
+ * could not hold.
  */
 function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Generator<void, void, void> {
-  const geometry = new THREE.SphereGeometry(SURFACE_RADIUS, 112, 72)
+  const geometry = new THREE.SphereGeometry(SURFACE_RADIUS, 224, 144)
   const position = geometry.attributes.position
   const source = Float32Array.from(position.array as ArrayLike<number>)
   const colors = new Float32Array(position.count * 3)
   const low = new THREE.Color(planet.groundLow)
   const high = new THREE.Color(planet.groundHigh)
-  const accent = new THREE.Color(planet.accent)
   const rock = new THREE.Color(planet.rock)
   const sand = new THREE.Color(0xd9c98a)
   const shade = new THREE.Color(0x2a2e38)
@@ -228,7 +411,7 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
       const height = terrainHeight(lat, lon, seed, planet.id)
       const radius = SURFACE_RADIUS + height
       position.setXYZ(i, vertex.x * radius, vertex.y * radius, vertex.z * radius)
-      const t = clampValue((height + 2.2) / 4.4, 0, 1)
+      const t = clampValue((height + 2.5) / 10, 0, 1)
       color.copy(low).lerp(high, t)
       if (planet.theme === 'earth') {
         if (height > 1.4) color.lerp(sand, 0.55)
@@ -236,8 +419,15 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
       } else if (planet.theme === 'moon') {
         if (height < -0.4) color.lerp(shade, clampValue((-height - 0.4) / 2.6, 0, 0.45))
       } else {
-        if (height > 0.8) color.lerp(accent, 0.35)
-        if (height < -0.9) color.lerp(shade, 0.3)
+        // Mars, where the colour is about what the ground *is* rather than how
+        // high it is: sand in the floor of the field, rock up on the ring and on
+        // anything steep. Height alone would paint the ring the same bright dust
+        // as the dunes, and a sunward crest of bright dust blows out to white and
+        // stops reading as a mountain at all.
+        const ahead = terrainHeight(lat, lon + 1.6 / (SURFACE_RADIUS * Math.cos(lat)), seed, planet.id)
+        const slope = clampValue(Math.abs(ahead - height) / 1.4, 0, 1)
+        color.lerp(rock, slope * 0.5)
+        if (height > 7) color.lerp(rock, clampValue((height - 7) / 16, 0, 0.6))
       }
       colors.set([color.r, color.g, color.b], i * 3)
     }
@@ -246,29 +436,21 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
 
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geometry.computeVertexNormals()
-  const painted = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 })
+  let painted: THREE.MeshStandardMaterial
+  if (planet.theme === 'mars') {
+    // soil, and the same stones as relief. Smooth-shaded on purpose: flat shading
+    // takes its normals from the geometry's derivatives and leaves a normal map
+    // nowhere to sit, and the normal map is where the ground's close-up detail
+    // lives.
+    const soil = yield* soilTextures(planet.id)
+    painted = new THREE.MeshStandardMaterial({
+      map: soil.colour, normalMap: soil.normal, vertexColors: true, roughness: 1, metalness: 0,
+    })
+  } else {
+    painted = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 })
+  }
   const ground = new THREE.Mesh(geometry, painted)
   group.add(ground)
-
-  // The world's own photograph, the moment it lands: what is underfoot is then
-  // the same ground you flew over, at the same coordinates. Shading relief rides
-  // along as a bump map, which is the one honest thing a photo can say about
-  // height - it is light and dark, not elevation.
-  const maps = groundMaps(planet.id)
-  if (maps) {
-    whenReady(maps.colour, () => {
-      const photographic = new THREE.MeshStandardMaterial({ map: groundTexture(planet.id, maps.colour.texture), roughness: 1, metalness: 0 })
-      // flat shading takes its normals from the geometry, which fights a normal
-      // map: the two cannot be mixed, so the photographic ground is smooth-shaded
-      ground.material.dispose()
-      ground.material = photographic
-      whenReady(maps.bump, () => {
-        photographic.normalMap = maps.bump.texture
-        photographic.normalScale = new THREE.Vector2(0.85, 0.85)
-        photographic.needsUpdate = true
-      })
-    })
-  }
   yield
 }
 
@@ -599,7 +781,7 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {
   const planet = planetById(planetId)
   const detail = new THREE.Group()
   const standIn = new THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>(
-    new THREE.SphereGeometry(SURFACE_RADIUS - 2.6, 40, 26),
+    new THREE.SphereGeometry(SURFACE_RADIUS - 7, 40, 26),
     new THREE.MeshStandardMaterial({
       color: planet.groundLow, flatShading: true, roughness: 1, transparent: true, opacity: 1,
     }),

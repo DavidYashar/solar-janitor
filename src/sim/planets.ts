@@ -2,6 +2,8 @@ import {
   EARTH_ORBIT, EARTH_ORBIT_RATE, EARTH_RADIUS, MARS_ORBIT, MARS_ORBIT_RATE, MARS_RADIUS,
   MOON_ORBIT, MOON_ORBIT_RATE, MOON_RADIUS,
 } from './config.ts'
+import { flattenPad, marsFieldHeight } from './marsfield.ts'
+import { valueNoise } from './noise.ts'
 
 export type PlanetTheme = 'earth' | 'moon' | 'mars'
 export type HazardKind = 'none' | 'meteor' | 'storm'
@@ -122,20 +124,27 @@ export const MARS: PlanetDef = {
   junkCount: 22,
   landerLat: 0.26,
   landerLon: -0.85,
-  spread: { lat: 0.7, lon: 1.2 },
+  // the field is a bowl forty metres across and the ring walls it in, so junk
+  // has to fall inside that: the widest corner is 46 m out, on the ring's skirt
+  spread: { lat: 0.5, lon: 0.7 },
   hazard: 'storm',
   spaceColor: 0xc0603a,
   atmosphere: 0xffb083,
-  groundLow: 0x8a4630,
-  groundHigh: 0xd98a5c,
-  accent: 0xffc9a0,
-  rock: 0x6d3a2c,
-  skyTop: '#3a1b12',
-  skyMid: '#b06a44',
-  skyHorizon: '#f0c69a',
-  fogColor: 0xdda277,
-  fogNear: 140,
-  fogFar: 520,
+  groundLow: 0x8f481c,
+  groundHigh: 0xe0a050,
+  accent: 0xf0c08a,
+  rock: 0x6e3420,
+  // the reference build's dome: one dust colour at the skyline going to a dark
+  // rust overhead, with no blue anywhere in it. The bottom stop is under the
+  // horizon, where only the far side of the ring can ever see it
+  skyTop: '#4a3020',
+  skyMid: '#e0a068',
+  skyHorizon: '#8a5a38',
+  // the same dust, thinning out over the ring: near enough that the floor is
+  // clear and far enough that the far crests are two-thirds air
+  fogColor: 0xc89860,
+  fogNear: 16,
+  fogFar: 165,
 }
 
 export const PLANETS: PlanetDef[] = [EARTH, MOON, MARS]
@@ -153,30 +162,6 @@ export function landerSite(planetId: number): { lat: number; lon: number } {
 // ------------------------------------------------------- procedural terrain
 // Shared by the sim (spawn rules, walking, junk placement) and the renderer
 // (props and the player ride the same surface). Pure and deterministic.
-
-function hash2(x: number, y: number, seed: number): number {
-  let h = (seed ^ Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263)) >>> 0
-  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
-}
-
-function smooth(t: number): number {
-  return t * t * (3 - 2 * t)
-}
-
-function valueNoise(x: number, y: number, seed: number): number {
-  const xi = Math.floor(x)
-  const yi = Math.floor(y)
-  const xf = x - xi
-  const yf = y - yi
-  const a = hash2(xi, yi, seed)
-  const b = hash2(xi + 1, yi, seed)
-  const c = hash2(xi, yi + 1, seed)
-  const d = hash2(xi + 1, yi + 1, seed)
-  const u = smooth(xf)
-  const v = smooth(yf)
-  return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v
-}
 
 /** Rolling hills in surface units, roughly -2 .. +2 (Earth's terrain). */
 function earthTerrain(lat: number, lon: number, seed: number): number {
@@ -253,11 +238,34 @@ function craterOffset(craters: Crater[], lat: number, lon: number): number {
 
 // -------------------------------------------------------------------- mars
 
+/**
+ * Mars is a designed place rather than a scatter: a crater field inside a ring
+ * of peaks, laid out by `marsfield.ts` in metres and bearings from the pad. The
+ * seed only moves the grain, so the landscape the janitor learns is the same one
+ * every run and the junk in it is not.
+ */
 function marsTerrain(lat: number, lon: number, seed: number): number {
-  const x = lon * 6.4
-  const y = lat * 6.4
-  const dune = Math.sin(lon * 11 + valueNoise(x * 0.6, y * 0.6, seed ^ 0x2545f491) * 5.2) * 0.62
-  return (valueNoise(x, y, seed) - 0.5) * 2.6 + dune + (valueNoise(x * 3.1, y * 3.1, seed ^ 0x9e3779b9) - 0.5) * 0.7
+  const site = landerSite(2)
+  const height = marsFieldHeight(site.lat, site.lon, lat, lon, seed)
+  return flattenPad(site.lat, site.lon, lat, lon, height, padCentreHeight(seed))
+}
+
+/**
+ * The height at the middle of the pad, which everything within eleven metres of
+ * it is blended toward. A constant for a given seed, so it is worked out once -
+ * and worked out from the unfinished landscape, which is why the pad's own blend
+ * cannot feed back into itself.
+ */
+let padSeed = -1
+let padCentre = 0
+
+function padCentreHeight(seed: number): number {
+  if (padSeed !== seed) {
+    padSeed = seed
+    const site = landerSite(2)
+    padCentre = marsFieldHeight(site.lat, site.lon, site.lat, site.lon, seed)
+  }
+  return padCentre
 }
 
 function moonTerrain(lat: number, lon: number, seed: number): number {

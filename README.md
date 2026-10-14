@@ -28,8 +28,8 @@ credits on gear. Clean all three worlds to restore the system.
 
 - **Three landable worlds**, each ~20–24 junk pieces plus one hidden relic:
   Earth (green hills, trees, shores), the Moon (grey crater fields, boulder rims,
-  dead rovers, 0.35 g floaty hops) and Mars (rust dunes, broken windmills,
-  half-buried probes, 0.45 g).
+  dead rovers, 0.35 g floaty hops) and Mars (a crater field inside a ring of
+  peaks, broken windmills, half-buried probes, 0.45 g).
 - **Hazards, all telegraphed:** Moon meteor showers (a shadow circle tightens for
   2.5 s, then the rock lands — being mid-hop clears you) and Mars dust storms
   (every ~45 s: 35 % faster O₂ drain, thick haze, a sideways shove). Earth's ground
@@ -114,11 +114,11 @@ and saved/continued across a reload, with zero console errors). **M3 LOD
 streaming is implemented and headlessly tested (13 Oct); the visual check in a
 real browser is still outstanding** — see the box below for the exact steps.
 
-`npm test` green (72 tests: saves, per-planet persistence, hazard behaviour,
+`npm test` green (82 tests: saves, per-planet persistence, hazard behaviour,
 quaternion flight maths, upgrade effects, ranks, determinism, a headless full
 three-world run, and the LOD scheduler — hysteresis, warm-ahead ordering, the
 frame budget, plus the renderer's budget loop driven with a fake scene graph),
-`tsc --noEmit` clean and the production build clean (~629 kB JS / 170 kB
+`tsc --noEmit` clean and the production build clean (~642 kB JS / 175 kB
 gzipped, plus 13 kB CSS and 397 kB of Earth maps — well inside the payload
 budget, and *smaller at boot* than before: the space globes and the three
 surfaces are no longer generated during startup). Stack: Vite, strict
@@ -198,18 +198,10 @@ texture pack, used under the
 | `earth_clouds.webp` | `2k_earth_clouds.jpg` | greyscale → WebP q80, 1024×512, 121 kB |
 | `moon_surface.webp` | `2k_moon.jpg` | WebP q85, 1024×512, 138 kB |
 | `mars_surface.webp` | `2k_mars.jpg` | WebP q82, 2048×1024, 200 kB |
-| `mars_bump.webp` | derived from `mars_surface.webp` | normal map, WebP q88, 1024×512, 85 kB |
 | `sun_surface.webp` | `2k_sun.jpg` | WebP q82, 2048×1024, 219 kB |
 
-`mars_bump.webp` is a normal map baked from the Mars photograph with a Sobel
-pass over its luminance (`pip install Pillow`, then
-`python bake-bump.py public/textures/mars_surface.webp public/textures/mars_bump.webp 6`).
-It is deliberately a *shading* trick and not a claim about height: a photo's light
-and dark are albedo, not elevation — dark basalt is a plateau and bright dust can
-be the deepest basin on the planet. It makes the ground read as bumpy under the
-sun; it does not move a single vertex.
-
-The cloud map is greyscale and drives the cloud deck's `alphaMap`. The Moon is
+Mars's globe map is orbit-only now: the ground you land on is generated in code
+(see below), so the map is never fetched at eye height. The cloud map is greyscale and drives the cloud deck's `alphaMap`. The Moon is
 downsampled to 1K because its disc stays under ~370 px on screen even at its
 closest approach, so the extra resolution would never be visible. The Sun's map
 drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
@@ -219,16 +211,33 @@ generated in code. Each map loads lazily, only when its world refines to full
 detail, and if one is missing the globe falls back to its painted canvas, so the
 game still runs offline.
 
-**The ground underfoot is the same photograph.** When you land on Mars the terrain
-takes that world's own map — the one you were just flying over, at the same
-coordinates, so the crater you saw from orbit is the crater you stand in — with a
-close-up grain layer overlaid because 2K across a whole planet smears like a poster
-from eye height. `groundTexture()` bakes the two together once per session
-(7 ms, cached) and the ground swaps to it the moment the map lands; the painted,
-vertex-coloured terrain is what you see until then. Nothing about the shape you
-walk on changes: `terrainHeight` is untouched, so the bump map is shading only.
-The other two worlds still land on their painted ground on purpose — Earth's
-lander site sits in open ocean on the real map, and the Moon's is a smooth plain.
+**Mars is designed, not photographed.** Earth and the Moon land on their painted,
+vertex-coloured ground on purpose — Earth's lander site sits in open ocean on the
+real map, and the Moon's is a smooth plain. Mars gets a surface of its own, laid
+out in `src/sim/marsfield.ts` in metres and bearings from the landing pad: nine
+craters placed by hand in the reference build's own vocabulary (a complex bowl
+with a peak on its floor, a breached rim you walk in through, eroded and ghost
+craters that are barely a ring of shadow, simple bowls between them) inside a
+continuous ring of peaks. The globe in orbit still wears its photograph; what you
+stand on is a place. The seed moves the grain and nothing else, so the landscape
+the janitor learns is the same one every run.
+
+Everything about that layout is decided by how small the world is. The surface is
+a ball of radius 55, so the ground is over the curve fifteen metres from your
+boots and a point `d` metres out is hidden unless it stands `(d − 15)² / 110`
+above the landing pad. That one number drives the whole design. The floor is a
+shallow saucer, because on a ball this size a flat plain is a disc fifteen metres
+across with the sky behind it; and the ring sits at 42–80 m with crests of 28–48 m,
+which is what a mountain has to be to appear on the skyline at all. A range at the
+distance the original reference suggested would have needed to be 300 m high.
+
+The ground itself is a canvas. Dust is mottled with tone and grit, and the stones
+are stamped nine times apiece so the tile repeats without a seam — the reference
+build drew its stones once and let the canvas edge clip them, which prints a line
+of half-stones across the ground every tile. The same pass draws the stones a
+second time as bare domes, and a Sobel over those becomes the normal map. Relief
+has to come from somewhere: colour cannot carry it at eye height, and all a
+painted shadow can do two metres off the ground is look painted.
 
 ### How to check the streaming in a browser (M3)
 

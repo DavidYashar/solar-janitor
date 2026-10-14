@@ -366,8 +366,11 @@ export function createWorld(container: HTMLElement): World {
       hemiIntensity: 0.4, fill: 0x4a5f8c, fillIntensity: 0.14, sunTint: 0xffffff, sunScale: 104,
     },
     mars: {
-      keyLight: 0xffd2a4, keyIntensity: 1.95, skyLight: 0xd9a074, groundLight: 0x6b3524,
-      hemiIntensity: 1.05, fill: 0xffb083, fillIntensity: 0.3, sunTint: 0xffbe8a, sunScale: 118,
+      // the reference build lights its own surface much harder than the other
+      // worlds here and the ground needs it: this soil is a darker, redder thing
+      // than the photograph it replaced, and at the old key it read as brick
+      keyLight: 0xffd9a8, keyIntensity: 2.9, skyLight: 0xe8b98c, groundLight: 0x8a4a30,
+      hemiIntensity: 1.15, fill: 0xffc49a, fillIntensity: 0.35, sunTint: 0xffc98f, sunScale: 118,
     },
   }
   const stormFog = new THREE.Color(0xb2561f)
@@ -712,7 +715,7 @@ export function createWorld(container: HTMLElement): World {
     blending: THREE.AdditiveBlending, depthWrite: false,
   })
   const beaconMesh = new THREE.InstancedMesh(
-    new THREE.CylinderGeometry(0.05, 0.75, 9, 7, 1, true), beaconMaterial, MAX_JUNK,
+    new THREE.CylinderGeometry(0.035, 0.32, 3.4, 6, 1, true), beaconMaterial, MAX_JUNK,
   )
   beaconMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
   beaconMesh.frustumCulled = false
@@ -1073,8 +1076,12 @@ export function createWorld(container: HTMLElement): World {
         counts[item.cls] = count + 1
       }
       if (beaconCount < MAX_JUNK) {
-        dummy.position.copy(up).multiplyScalar(radius + 4.6)
-        dummy.quaternion.identity()
+        // a beacon stands on the ground it belongs to. Aligned to the world's
+        // vertical instead, a nine-metre cone on a tilted surface lies across the
+        // sky like a dropped plank - and this world is small enough that the
+        // whole field is tilted relative to the axis it spins on.
+        dummy.position.copy(up).multiplyScalar(radius + 1.7)
+        dummy.quaternion.setFromUnitVectors(UP, up)
         dummy.updateMatrix()
         beaconMesh.setMatrixAt(beaconCount, dummy.matrix)
         beaconMesh.setColorAt(beaconCount, tmpColor.setHex(JUNK_COLORS[item.cls]))
@@ -1315,8 +1322,7 @@ export function createWorld(container: HTMLElement): World {
     update(game, dt) {
       elapsed += dt
       const inSpace = game.mode !== 'surface'
-      if (game.mode !== lastMode) {
-        // only a change of world resets the framing; docking eases into place
+      if (game.mode !== lastMode) {        // only a change of world resets the framing; docking eases into place
         const worldChanged = (lastMode === 'surface') !== (game.mode === 'surface')
         lastMode = game.mode
         if (worldChanged) firstFrame = true

@@ -172,26 +172,6 @@ function marsMapSet(): MapSlot {
   return marsMap
 }
 
-let marsBump: MapSlot | null = null
-
-/** A normal map baked from the same photograph - shade-only relief, see the README. */
-function marsBumpSet(): MapSlot {
-  if (!marsBump) marsBump = loadMap('/textures/mars_bump.webp', 4, false)
-  return marsBump
-}
-
-/**
- * The photographic ground for a landing surface: the same 2:1 map the globe in
- * orbit wears, plus a bump map. Sharing the globe's texture is deliberate - what
- * you see from orbit is what is underfoot, and the image is only fetched once.
- * `null` leaves the surface painted, which is right where the map's own ground
- * is not what we want to stand on (Earth's lander site sits in open ocean).
- */
-export function groundMaps(planetId: number): { colour: MapSlot; bump: MapSlot } | null {
-  if (planetId === 2) return { colour: marsMapSet(), bump: marsBumpSet() }
-  return null
-}
-
 // ------------------------------------------------------------------- earth
 
 function* earthDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator<void, void, void> {
