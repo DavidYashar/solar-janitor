@@ -189,7 +189,9 @@ test('surface movement is frame-rate independent', () => {
     return { lat: game.player.lat, lon: game.player.lon }
   })
   assert.ok(Math.abs(results[0].lat - results[2].lat) < 1e-9)
-  assert.ok(results[0].lat > 0.1)
+  // and that the janitor actually went somewhere. A second of walking is a
+  // second of walking whatever the ball is sized at, so this is in metres.
+  assert.ok(results[0].lat * SURFACE_RADIUS > 4, 'a second of walking covers ground')
 })
 
 test('compass bearings point the right way', () => {

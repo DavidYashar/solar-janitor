@@ -29,7 +29,7 @@ credits on gear. Clean all three worlds to restore the system.
 - **Three landable worlds**, each ~20–24 junk pieces plus one hidden relic:
   Earth (green hills, trees, shores), the Moon (grey crater fields, boulder rims,
   dead rovers, 0.35 g floaty hops) and Mars (a crater field inside a ring of
-  peaks, broken windmills, half-buried probes, 0.45 g).
+  peaks, half-buried probes, 0.45 g).
 - **Hazards, all telegraphed:** Moon meteor showers (a shadow circle tightens for
   2.5 s, then the rock lands — being mid-hop clears you) and Mars dust storms
   (every ~45 s: 35 % faster O₂ drain, thick haze, a sideways shove). Earth's ground
@@ -214,30 +214,44 @@ game still runs offline.
 **Mars is designed, not photographed.** Earth and the Moon land on their painted,
 vertex-coloured ground on purpose — Earth's lander site sits in open ocean on the
 real map, and the Moon's is a smooth plain. Mars gets a surface of its own, laid
-out in `src/sim/marsfield.ts` in metres and bearings from the landing pad: nine
-craters placed by hand in the reference build's own vocabulary (a complex bowl
-with a peak on its floor, a breached rim you walk in through, eroded and ghost
-craters that are barely a ring of shadow, simple bowls between them) inside a
-continuous ring of peaks. The globe in orbit still wears its photograph; what you
-stand on is a place. The seed moves the grain and nothing else, so the landscape
-the janitor learns is the same one every run.
+out in `src/sim/marsfield.ts` in metres and bearings from the landing pad:
+fourteen craters placed by hand in the reference build's own vocabulary (a complex
+bowl with a peak on its floor, a breached rim you walk in through, eroded and
+ghost craters that are barely a ring of shadow, simple bowls between them, plus a
+chain of three strung along one bearing) inside a continuous ring of peaks. The
+globe in orbit still wears its photograph; what you stand on is a place. The seed
+moves the grain and nothing else, so the landscape the janitor learns is the same
+one every run.
 
-Everything about that layout is decided by how small the world is. The surface is
-a ball of radius 55, so the ground is over the curve fifteen metres from your
-boots and a point `d` metres out is hidden unless it stands `(d − 15)² / 110`
-above the landing pad. That one number drives the whole design. The floor is a
-shallow saucer, because on a ball this size a flat plain is a disc fifteen metres
-across with the sky behind it; and the ring sits at 42–80 m with crests of 28–48 m,
-which is what a mountain has to be to appear on the skyline at all. A range at the
-distance the original reference suggested would have needed to be 300 m high.
+**The world is sized by what you can see over the curve.** A landing site is a
+ball of radius 96, so the ground goes over the horizon 19.6 m from your boots and
+a point `d` metres out is hidden unless it stands `(d − 19.6)² / 192` above the
+pad. That relationship drives everything: the floor is a shallow saucer, because a
+flat plain on a ball this size is a disc twenty metres across with the sky behind
+it, and the ring sits at 73–139 m with crests of 49–83 m, which is what a mountain
+has to be to appear on the skyline at all.
 
-The ground itself is a canvas. Dust is mottled with tone and grit, and the stones
-are stamped nine times apiece so the tile repeats without a seam — the reference
-build drew its stones once and let the canvas edge clip them, which prints a line
-of half-stones across the ground every tile. The same pass draws the stones a
-second time as bare domes, and a Sobel over those becomes the normal map. Relief
-has to come from somewhere: colour cannot carry it at eye height, and all a
-painted shadow can do two metres off the ground is look painted.
+The ball's size is also the field's size, and that is the only reason the world is
+this big: at radius 55 the ground you could work was forty metres across, and a
+ring far enough out to hold more would have had to be taller than the ball it
+stands on. At 96 the field is 73 m — three times the ground, bounded by mountains
+on every bearing. The landscape itself is written for a radius-55 ball and
+multiplied once by `SURFACE_SCALE`, which is what keeps its proportions: a crater
+stays in scale with the field around it, the bowl keeps a slope you can walk, and
+the ring keeps its place on the skyline.
+
+The ground itself is a canvas, and a deliberately small one. At two metres the eye
+magnifies whatever is under it by tens of times, so the only thing worth putting
+in a texture is what is smaller than a boot: a six-metre tile holding gravel at
+170 texels to the metre, repeating far too often at ground level for the eye to
+catch it doing so. Anything larger than a boot lives in the vertex colours
+instead, where a segment is 2.7 m. The stones are stamped nine times apiece so the
+tile repeats without a seam — the reference build drew its stones once and let the
+canvas edge clip them, which prints a line of half-stones across the ground at
+every tile. The same pass draws the stones a second time as bare domes, and a
+Sobel over those becomes the normal map. Relief has to come from somewhere: colour
+cannot carry it at eye height, and all a painted shadow can do two metres off the
+ground is look painted.
 
 ### How to check the streaming in a browser (M3)
 

@@ -1,6 +1,6 @@
 import {
   EARTH_ORBIT, EARTH_ORBIT_RATE, EARTH_RADIUS, MARS_ORBIT, MARS_ORBIT_RATE, MARS_RADIUS,
-  MOON_ORBIT, MOON_ORBIT_RATE, MOON_RADIUS,
+  MOON_ORBIT, MOON_ORBIT_RATE, MOON_RADIUS, SURFACE_SCALE,
 } from './config.ts'
 import { flattenPad, marsFieldHeight } from './marsfield.ts'
 import { valueNoise } from './noise.ts'
@@ -74,8 +74,8 @@ export const EARTH: PlanetDef = {
   skyMid: '#4a8fd6',
   skyHorizon: '#e6f4ff',
   fogColor: 0xbfe4ff,
-  fogNear: 170,
-  fogFar: 560,
+  fogNear: 170 * SURFACE_SCALE,
+  fogFar: 560 * SURFACE_SCALE,
 }
 
 export const MOON: PlanetDef = {
@@ -105,8 +105,8 @@ export const MOON: PlanetDef = {
   skyMid: '#0a1020',
   skyHorizon: '#1b2438',
   fogColor: 0x1b2438,
-  fogNear: 220,
-  fogFar: 700,
+  fogNear: 220 * SURFACE_SCALE,
+  fogFar: 700 * SURFACE_SCALE,
 }
 
 export const MARS: PlanetDef = {
@@ -143,8 +143,8 @@ export const MARS: PlanetDef = {
   // the same dust, thinning out over the ring: near enough that the floor is
   // clear and far enough that the far crests are two-thirds air
   fogColor: 0xc89860,
-  fogNear: 16,
-  fogFar: 165,
+  fogNear: 16 * SURFACE_SCALE,
+  fogFar: 165 * SURFACE_SCALE,
 }
 
 export const PLANETS: PlanetDef[] = [EARTH, MOON, MARS]
@@ -165,9 +165,10 @@ export function landerSite(planetId: number): { lat: number; lon: number } {
 
 /** Rolling hills in surface units, roughly -2 .. +2 (Earth's terrain). */
 function earthTerrain(lat: number, lon: number, seed: number): number {
-  const x = lon * 9.5
-  const y = lat * 9.5
-  return (valueNoise(x, y, seed) - 0.5) * 3.4 + (valueNoise(x * 2.7, y * 2.7, seed ^ 0x9e3779b9) - 0.5) * 1.1
+  const x = (lon * 9.5) / SURFACE_SCALE
+  const y = (lat * 9.5) / SURFACE_SCALE
+  return ((valueNoise(x, y, seed) - 0.5) * 3.4 + (valueNoise(x * 2.7, y * 2.7, seed ^ 0x9e3779b9) - 0.5) * 1.1)
+    * SURFACE_SCALE
 }
 
 // ------------------------------------------------------------------ craters
@@ -207,7 +208,7 @@ export function cratersFor(planetId: number, seed: number): Crater[] {
         lat,
         lon,
         radius: 0.055 + rnd() * 0.125,
-        depth: 0.5 + rnd() * 1.9,
+        depth: (0.5 + rnd() * 1.9) * SURFACE_SCALE,
       })
     }
   }
@@ -269,9 +270,10 @@ function padCentreHeight(seed: number): number {
 }
 
 function moonTerrain(lat: number, lon: number, seed: number): number {
-  const x = lon * 7.2
-  const y = lat * 7.2
-  return (valueNoise(x, y, seed) - 0.5) * 1.5 + (valueNoise(x * 3.3, y * 3.3, seed ^ 0x9e3779b9) - 0.5) * 0.6
+  const x = (lon * 7.2) / SURFACE_SCALE
+  const y = (lat * 7.2) / SURFACE_SCALE
+  return ((valueNoise(x, y, seed) - 0.5) * 1.5 + (valueNoise(x * 3.3, y * 3.3, seed ^ 0x9e3779b9) - 0.5) * 0.6)
+    * SURFACE_SCALE
 }
 
 /**

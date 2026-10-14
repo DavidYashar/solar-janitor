@@ -24,12 +24,22 @@
  * crests run well clear of that and no bearing has a hole in it.
  */
 
-import { SURFACE_RADIUS } from './config.ts'
+import { SURFACE_RADIUS, SURFACE_SCALE } from './config.ts'
 import { fbm, ridged, valueNoise } from './noise.ts'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
+
+/**
+ * The design below is the one that was composed against a ball of radius 55,
+ * where the numbers are what they are because of how far the ground curves away
+ * and how much of it you can see. The world is a different size now, and this is
+ * what carries the design up with it: everything in metres gets multiplied once,
+ * so the place keeps its proportions - the craters stay in scale with the field,
+ * the bowl keeps a slope you can walk, and the ring keeps its place on the skyline.
+ */
+const K = SURFACE_SCALE
 
 /** how high the janitor's eye rides, which is what the skyline is designed against */
 const EYE_HEIGHT = 2
@@ -38,13 +48,13 @@ const EYE_HEIGHT = 2
 const HORIZON = Math.sqrt(2 * SURFACE_RADIUS * EYE_HEIGHT)
 
 /** how far the ring's inner skirt starts to climb out of the floor */
-const RING = { skirt: 42, crestIn: 54, crestOut: 68, out: 80 }
+const RING = { skirt: 42 * K, crestIn: 54 * K, crestOut: 68 * K, out: 80 * K }
 
 /** the ring's own contribution to the height, on top of the floor and the saucer */
-const RING_CREST = { low: 14, high: 34 }
+const RING_CREST = { low: 14 * K, high: 34 * K }
 
 /** the saucer: a multiple of the sightline, so the whole floor stays in view */
-const SAUCER = { lift: 1.15, ceiling: 14 }
+const SAUCER = { lift: 1.15, ceiling: 14 * K }
 
 /**
  * How high a point has to stand, in metres above the landing pad, to clear the
@@ -154,14 +164,24 @@ const CRATER_PLAN: CraterPlan[] = [
   // two small ones close in, so there is something to find before you have walked far
   { bearing: 62, distance: 16, radius: 3.2, type: 'simple' },
   { bearing: 138, distance: 17, radius: 2.8, type: 'simple' },
+
+  // the far half of the field is older ground, and says so: the same vocabulary
+  // worn down. A chain of three strung along one bearing, the way a broken-up
+  // impactor leaves them; a basin wide and shallow enough that you cross it
+  // without ever being sure you were in it; and an eroded bowl on the other side.
+  { bearing: 14, distance: 30, radius: 4.6, type: 'simple', stretch: 1.3 },
+  { bearing: 16, distance: 33.5, radius: 5.4, type: 'complex', stretch: 1.3 },
+  { bearing: 18, distance: 37, radius: 3.8, type: 'ghost', stretch: 1.3 },
+  { bearing: 118, distance: 35, radius: 9, type: 'ghost', stretch: 1.2 },
+  { bearing: 266, distance: 34, radius: 7.5, type: 'eroded', stretch: 1.15 },
 ]
 
 const CRATERS: Crater[] = CRATER_PLAN.map((plan) => {
-  const radius = plan.radius
+  const radius = plan.radius * K
   const bearing = (plan.bearing * Math.PI) / 180
   const stretch = plan.stretch ?? 1
   return {
-    distance: plan.distance,
+    distance: plan.distance * K,
     bearing,
     cosBearing: Math.cos(bearing),
     sinBearing: Math.sin(bearing),
@@ -201,7 +221,7 @@ function craterProfile(crater: Crater, north: number, east: number, seed: number
   // lobes around a three-metre bowl - a lobe every 1.2 m, on a mesh with a vertex
   // every 1.5 m, which is a sawtooth and not a rim.
   const angle = Math.atan2(across, along)
-  const wobbleScale = clamp(crater.radius / 5, 0.55, 3.2)
+  const wobbleScale = clamp(crater.radius / (5 * K), 0.55 * K, 3.2 * K)
   const wobble = 1 + (valueNoise(Math.cos(angle) * wobbleScale, Math.sin(angle) * wobbleScale, seed ^ 0x51ed270b) - 0.5) * 0.4
   const d = raw / (crater.radius * wobble)
 
@@ -241,7 +261,7 @@ function craterProfile(crater: Crater, north: number, east: number, seed: number
   // two vertices and comes back as a spike, so the width is stated in metres with
   // a floor under it, and every crater keeps a rim the mesh can actually hold.
   const fromRim = (d - 1) * crater.radius
-  const rimWidth = Math.max(crater.radius * 0.11, 1.7)
+  const rimWidth = Math.max(crater.radius * 0.11, 1.7 * K)
   const lip = fromRim / rimWidth
   if (type === 'eroded') {
     height += crater.rim * 0.35 * Math.exp(-lip * lip)
@@ -279,7 +299,7 @@ function ringHeight(distance: number, bearing: number, north: number, east: numb
     + 0.21 * Math.sin(bearing * 3 + 0.7)
     + 0.13 * Math.sin(bearing * 5 + 2.1)
     + 0.09 * Math.sin(bearing * 8 - 1.3)
-  const teeth = ridged(north * 0.11 + 5.3, east * 0.11 - 2.9, 4, seed ^ 0x2f1b3c)
+  const teeth = ridged(north * 0.11 / K + 5.3, east * 0.11 / K - 2.9, 4, seed ^ 0x2f1b3c)
   const crest = RING_CREST.low
     + (RING_CREST.high - RING_CREST.low) * clamp(skyline * 0.62 + teeth * 0.72, 0, 1)
   if (distance < RING.crestIn) {
@@ -308,9 +328,9 @@ export function marsFieldHeight(anchorLat: number, anchorLon: number, lat: numbe
   // the floor: a broad swell under a finer grain, both slow enough that the
   // terrain mesh can actually resolve them rather than aliasing into confetti,
   // and both small enough that the craters are the shape you read, not the noise
-  let height = (fbm(north * 0.021, east * 0.021, 3, seed ^ 0x1d3c9a) - 0.5) * 1.6
-  height += (valueNoise(north * 0.085, east * 0.085, seed) - 0.5) * 0.85
-  height += (valueNoise(north * 0.26, east * 0.26, seed ^ 0x9e3779b9) - 0.5) * 0.34
+  let height = (fbm(north * 0.021 / K, east * 0.021 / K, 3, seed ^ 0x1d3c9a) - 0.5) * 1.6 * K
+  height += (valueNoise(north * 0.085 / K, east * 0.085 / K, seed) - 0.5) * 0.85 * K
+  height += (valueNoise(north * 0.26 / K, east * 0.26 / K, seed ^ 0x9e3779b9) - 0.5) * 0.34 * K
 
   // the saucer, so the floor you work stays in front of you instead of over the edge
   height += Math.min(sightline(offset.arc) * SAUCER.lift, SAUCER.ceiling)

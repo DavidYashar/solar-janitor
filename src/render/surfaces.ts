@@ -1,8 +1,10 @@
 import * as THREE from 'three'
 import {
-  LANDER_RING_RADIUS, LOD_COST_SURFACE, LOD_PROP_SLICE, LOD_TERRAIN_SLICE, SURFACE_RADIUS, TAU,
+  LANDER_RING_RADIUS, LOD_COST_SURFACE, LOD_PROP_SLICE, LOD_TERRAIN_SLICE, SURFACE_RADIUS,
+  SURFACE_SCALE, TAU,
 } from '../sim/config.ts'
 import { cratersFor, landerSite, planetById, terrainHeight } from '../sim/planets.ts'
+import { valueNoise } from '../sim/noise.ts'
 import type { PlanetDef } from '../sim/planets.ts'
 
 const UP = new THREE.Vector3(0, 1, 0)
@@ -19,8 +21,6 @@ export interface SurfaceBuild {
   landingRing: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>
   ringMaterial: THREE.MeshBasicMaterial
   padBeacon: THREE.Sprite
-  /** rotor groups, spun by the caller while the planet is on screen */
-  windmillBlades: THREE.Group[]
   terrainRadius(lat: number, lon: number): number
 }
 
@@ -110,24 +110,29 @@ function flatTexture(r: number, g: number, b: number): THREE.CanvasTexture {
 // --------------------------------------------------------------------- soil
 
 /**
- * The ground underfoot: the reference build's own soil - dust mottled with tone,
- * grit and stones scattered through it - painted on a canvas and tiled.
+ * The ground underfoot: the reference build's own soil - grit and stones set in
+ * it - painted on a canvas and tiled.
  *
- * It has to tile, and theirs did not: their stones were drawn once at random
- * positions and simply clipped wherever they met the canvas edge, so repeating
- * that texture printed a line of half-stones across the ground at every tile.
- * Every element here is stamped again on the far side wherever it crosses an
- * edge, so the copies meet.
+ * A small tile on purpose. The eye is two metres off the ground and magnifies
+ * whatever is under it by tens of times, so the only thing worth putting in a
+ * texture is what is smaller than a boot; anything larger repeats often enough
+ * to read as a pattern, and belongs in the vertex colours instead. At six metres
+ * the tile holds gravel at 170 texels to the metre and repeats far too often at
+ * ground level for the eye to catch it doing so.
  *
- * Two canvases come out of the one pass. The first is the colour; the second is
- * the same stones as flat domes, which is what becomes the normal map. Relief
- * has to come from somewhere, because colour cannot carry it: the eye is two
- * metres off the ground, which magnifies one tile about thirty times, and all a
- * painted shadow can do at that scale is look painted.
+ * It also has to tile, and the reference build's did not: their stones were
+ * drawn once at random positions and simply clipped wherever they met the canvas
+ * edge, so repeating that texture printed a line of half-stones across the
+ * ground at every tile. Every element here is stamped again on the far side
+ * wherever it crosses an edge, so the copies meet.
+ *
+ * The same pass draws the stones a second time as flat domes, which is what
+ * becomes the normal map. Relief has to come from somewhere, and all a painted
+ * shadow can do two metres off the ground is look painted.
  */
 const SOIL_TEXELS = 1024
 /** metres of ground one tile covers at the landing site; sets the repeat below */
-const SOIL_SPAN = 19.6
+const SOIL_SPAN = 6
 const SOIL_REPEAT_X = Math.round((TAU * SURFACE_RADIUS * Math.cos(0.26)) / SOIL_SPAN)
 const SOIL_REPEAT_Y = Math.round((Math.PI * SURFACE_RADIUS) / SOIL_SPAN)
 
@@ -161,7 +166,7 @@ function paintStone(
 ): void {
   const x = rnd() * size
   const y = rnd() * size
-  const r = 0.9 + Math.pow(rnd(), 2.2) * 8
+  const r = 2.9 + Math.pow(rnd(), 2.2) * 26
   const spin = rnd() * Math.PI
   // every stone a different shape: all of them the same ellipse is what makes a
   // scatter of grit read as a printed pattern
@@ -277,43 +282,27 @@ function* paintSoil(planetId: number): Generator<void, SoilMaps, void> {
   depth.fillRect(0, 0, size, size)
   yield
 
-  // large-scale mottling - the ground is never one tone across a whole field
-  for (let i = 0; i < 900; i++) {
-    const x = rnd() * size
-    const y = rnd() * size
-    const r = 20 + rnd() * 120
-    const lighter = rnd() > 0.5
-    const alpha = 0.02 + rnd() * 0.05
-    ctx.fillStyle = lighter ? `rgba(240, 220, 190, ${alpha})` : `rgba(118, 84, 56, ${alpha})`
-    stampWrapped(size, x, y, r, (px, py) => {
-      ctx.beginPath()
-      ctx.arc(px, py, r, 0, TAU)
-      ctx.fill()
-    })
-    if (i % 150 === 0) yield
-  }
-
   // grit: the same trick at a tenth of the size, which is what stops the soil
   // reading as flat paint when it fills the whole screen
-  for (let i = 0; i < 6000; i++) {
+  for (let i = 0; i < 560; i++) {
     const x = rnd() * size
     const y = rnd() * size
-    const r = 0.5 + rnd() * 5
+    const r = 1.6 + rnd() * 16.3
     const lighter = rnd() > 0.5
-    const alpha = 0.02 + rnd() * 0.07
+    const alpha = 0.026 + rnd() * 0.09
     ctx.fillStyle = lighter ? `rgba(236, 214, 182, ${alpha})` : `rgba(96, 62, 38, ${alpha})`
     stampWrapped(size, x, y, r, (px, py) => {
       ctx.beginPath()
       ctx.arc(px, py, r, 0, TAU)
       ctx.fill()
     })
-    if (i % 600 === 0) yield
+    if (i % 80 === 0) yield
   }
 
   // and the stones sitting in it
-  for (let i = 0; i < 1100; i++) {
+  for (let i = 0; i < 100; i++) {
     paintStone(ctx, depth, size, rnd)
-    if (i % 100 === 0) yield
+    if (i % 20 === 0) yield
   }
   yield
 
@@ -383,14 +372,18 @@ function placeGroup(
  * `LOD_TERRAIN_SLICE` vertices at a time. The geometry is rewritten in place, so
  * the original directions are copied out first.
  *
- * The grid puts a segment every 1.6 m across the field. That is not decoration:
- * the craters are three to ten metres across, and at the coarser grid this world
- * used before - 3.1 m - a bowl was four vertices wide with its rim falling
- * between them, so the strongest shape in the landscape was the one the mesh
- * could not hold.
+ * The grid is a fixed number of segments rather than a fixed spacing, and that is
+ * the right way round now the world has a size of its own: the landscape in
+ * `terrainHeight` scales with the ball, so the mesh that carries it has to scale
+ * with the ball too, or the craters would outgrow the triangles under them.
  */
+const TERRAIN_SEGMENTS_X = 224
+const TERRAIN_SEGMENTS_Y = 144
+/** one segment of that grid in metres: how far along the ground a slope is read */
+const TERRAIN_STEP = (TAU * SURFACE_RADIUS) / TERRAIN_SEGMENTS_X
+
 function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Generator<void, void, void> {
-  const geometry = new THREE.SphereGeometry(SURFACE_RADIUS, 224, 144)
+  const geometry = new THREE.SphereGeometry(SURFACE_RADIUS, TERRAIN_SEGMENTS_X, TERRAIN_SEGMENTS_Y)
   const position = geometry.attributes.position
   const source = Float32Array.from(position.array as ArrayLike<number>)
   const colors = new Float32Array(position.count * 3)
@@ -411,23 +404,33 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
       const height = terrainHeight(lat, lon, seed, planet.id)
       const radius = SURFACE_RADIUS + height
       position.setXYZ(i, vertex.x * radius, vertex.y * radius, vertex.z * radius)
-      const t = clampValue((height + 2.5) / 10, 0, 1)
+      // read in the landscape's own units, so the bands below are the ones the
+      // design was tuned at rather than sizes that follow the world about
+      const h = height / SURFACE_SCALE
+      const t = clampValue((h + 2.5) / 10, 0, 1)
       color.copy(low).lerp(high, t)
       if (planet.theme === 'earth') {
-        if (height > 1.4) color.lerp(sand, 0.55)
+        if (h > 1.4) color.lerp(sand, 0.55)
         if (lon > 2.2 && lon < 3.1 && Math.abs(lat) < 0.5) color.lerp(rock, 0.5)
       } else if (planet.theme === 'moon') {
-        if (height < -0.4) color.lerp(shade, clampValue((-height - 0.4) / 2.6, 0, 0.45))
+        if (h < -0.4) color.lerp(shade, clampValue((-h - 0.4) / 2.6, 0, 0.45))
       } else {
         // Mars, where the colour is about what the ground *is* rather than how
         // high it is: sand in the floor of the field, rock up on the ring and on
         // anything steep. Height alone would paint the ring the same bright dust
         // as the dunes, and a sunward crest of bright dust blows out to white and
         // stops reading as a mountain at all.
-        const ahead = terrainHeight(lat, lon + 1.6 / (SURFACE_RADIUS * Math.cos(lat)), seed, planet.id)
-        const slope = clampValue(Math.abs(ahead - height) / 1.4, 0, 1)
+        const ahead = terrainHeight(lat, lon + TERRAIN_STEP / (SURFACE_RADIUS * Math.cos(lat)), seed, planet.id)
+        const slope = clampValue(Math.abs(ahead - height) / (1.4 * SURFACE_SCALE), 0, 1)
         color.lerp(rock, slope * 0.5)
-        if (height > 7) color.lerp(rock, clampValue((height - 7) / 16, 0, 0.6))
+        if (h > 7) color.lerp(rock, clampValue((h - 7) / 16, 0, 0.6))
+        // and the mottling, which lives here rather than in the soil tile: the
+        // ground's tone changes over metres, and a tile small enough to be sharp
+        // under a boot is far too small to hold a patch of ground this size
+        // without printing its pattern across the field
+        const patch = (valueNoise(lon * 7, lat * 7, seed ^ 0x51ed270b) - 0.5) * 0.2
+          + (valueNoise(lon * 23, lat * 23, seed ^ 0x2f1b3c) - 0.5) * 0.1
+        color.offsetHSL(0, 0, patch)
       }
       colors.set([color.r, color.g, color.b], i * 3)
     }
@@ -626,36 +629,6 @@ function* moonPropStage(
   yield
 }
 
-/** A snapped windmill: thin mast, a bent strut and three battered blades. */
-function buildWindmill(): { group: THREE.Group; blades: THREE.Group } {
-  const group = new THREE.Group()
-  const mastMaterial = new THREE.MeshStandardMaterial({ color: 0x8d8579, roughness: 0.85, metalness: 0.25, flatShading: true })
-  const bladeMaterial = new THREE.MeshStandardMaterial({ color: 0xc2bcae, roughness: 0.7, flatShading: true })
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.3, 7.6, 6), mastMaterial)
-  mast.position.y = 3.8
-  group.add(mast)
-  const strut = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.4, 0.12), mastMaterial)
-  strut.position.set(0.78, 2.5, 0.18)
-  strut.rotation.z = -0.34
-  group.add(strut)
-  const hub = new THREE.Group()
-  hub.position.set(0, 7.1, 0.36)
-  hub.rotation.x = -0.2
-  const blades = new THREE.Group()
-  for (let i = 0; i < 3; i++) {
-    const arm = new THREE.Group()
-    arm.rotation.z = (i / 3) * TAU + (i === 1 ? 0.55 : 0)
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.22, 2.8, 0.07), bladeMaterial)
-    blade.position.y = 1.7
-    blade.rotation.y = i === 1 ? 1.1 : 0.05
-    arm.add(blade)
-    blades.add(arm)
-  }
-  hub.add(blades)
-  group.add(hub)
-  return { group, blades }
-}
-
 /** A lander probe half swallowed by the dunes. */
 function buildProbeWreck(): THREE.Group {
   const group = new THREE.Group()
@@ -680,7 +653,6 @@ function buildProbeWreck(): THREE.Group {
 
 function* marsPropStage(
   planet: PlanetDef, seed: number, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
-  windmillBlades: THREE.Group[],
 ): Generator<void, void, void> {
   const rnd = makeRnd(seed ^ 0x7c3d55)
   const site = landerSite(planet.id)
@@ -701,21 +673,6 @@ function* marsPropStage(
   rockMesh.instanceMatrix.needsUpdate = true
   group.add(rockMesh)
   yield
-
-  for (let i = 0; i < 3; i++) {
-    const windmill = buildWindmill()
-    let lat = site.lat
-    let lon = site.lon
-    for (let attempt = 0; attempt < 12; attempt++) {
-      lat = site.lat + (rnd() * 2 - 1) * 0.5
-      lon = site.lon + (rnd() * 2 - 1) * 0.5
-      if (padDistance(lat, lon, site) > 0.26) break
-    }
-    placeGroup(windmill.group, radiusOf, lat, lon, 0, rnd() * TAU)
-    group.add(windmill.group)
-    windmillBlades.push(windmill.blades)
-    yield
-  }
 
   for (let i = 0; i < 2; i++) {
     const wreck = buildProbeWreck()
@@ -781,13 +738,12 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {
   const planet = planetById(planetId)
   const detail = new THREE.Group()
   const standIn = new THREE.Mesh<THREE.SphereGeometry, THREE.MeshStandardMaterial>(
-    new THREE.SphereGeometry(SURFACE_RADIUS - 7, 40, 26),
+    new THREE.SphereGeometry(SURFACE_RADIUS - 7 * SURFACE_SCALE, 40, 26),
     new THREE.MeshStandardMaterial({
       color: planet.groundLow, flatShading: true, roughness: 1, transparent: true, opacity: 1,
     }),
   )
   const terrainRadius = (lat: number, lon: number) => SURFACE_RADIUS + terrainHeight(lat, lon, seed, planetId)
-  const windmillBlades: THREE.Group[] = []
   let lander: LanderParts | null = null
 
   const stages: (() => Generator<void, void, void>)[] = [
@@ -803,7 +759,7 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {
   } else if (planet.theme === 'moon') {
     stages.push(() => moonPropStage(planet, seed, terrainRadius, detail))
   } else {
-    stages.push(() => marsPropStage(planet, seed, terrainRadius, detail, windmillBlades))
+    stages.push(() => marsPropStage(planet, seed, terrainRadius, detail))
   }
   stages.push(function* padStage() {
     lander = buildLander(planet, terrainRadius, detail)
@@ -833,7 +789,6 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {
           landingRing: lander.landingRing,
           ringMaterial: lander.ringMaterial,
           padBeacon: lander.padBeacon,
-          windmillBlades,
           terrainRadius,
         }
       }

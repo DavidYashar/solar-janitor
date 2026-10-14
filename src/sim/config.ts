@@ -14,7 +14,24 @@ export const TAU = Math.PI * 2
 export const SPACE_SCALE = 10
 
 // ---------------------------------------------------------------- surface
-export const SURFACE_RADIUS = 55
+/**
+ * Every landing site is a ball this big. It is the world's own size rather than
+ * the player's, which is the whole point: at 55 the horizon was fifteen metres
+ * off and the field you could work was forty metres across, and no amount of
+ * landscape design gets around that - a ring far enough out to hold more ground
+ * would have to be taller than the ball it stands on.
+ */
+export const SURFACE_RADIUS = 96
+
+/**
+ * The landscape of every landing site was composed against a ball of radius 55,
+ * and this is what carries that design up: a crater stays in proportion to the
+ * ground it sits in, the bowl keeps a walkable slope, and the ring keeps its
+ * place on the skyline instead of going over the curve. Everything measured in
+ * metres in a terrain function is the radius-55 design multiplied by this.
+ */
+export const SURFACE_SCALE = SURFACE_RADIUS / 55
+
 /** Players walk anywhere except the last 30 degrees to each pole (keeps the maths sane). */
 export const POLE_CLAMP = 1.04
 export const WALK_SPEED = 7.4

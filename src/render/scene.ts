@@ -710,31 +710,10 @@ export function createWorld(container: HTMLElement): World {
     surfaceScene.add(mesh)
     junkMeshes[cls] = mesh
   }
-  const beaconMaterial = new THREE.MeshBasicMaterial({
-    transparent: true, opacity: 0.2, side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  })
-  const beaconMesh = new THREE.InstancedMesh(
-    new THREE.CylinderGeometry(0.035, 0.32, 3.4, 6, 1, true), beaconMaterial, MAX_JUNK,
-  )
-  beaconMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-  beaconMesh.frustumCulled = false
-  beaconMesh.count = 0
-  surfaceScene.add(beaconMesh)
-
-  // relics get their own taller beam and a spinning halo on top
-  const relicBeamMesh = new THREE.InstancedMesh(
-    new THREE.CylinderGeometry(0.09, 1.1, 15, 8, 1, true),
-    new THREE.MeshBasicMaterial({
-      color: JUNK_COLORS.relic, transparent: true, opacity: 0.3, side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }),
-    MAX_JUNK,
-  )
-  relicBeamMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-  relicBeamMesh.frustumCulled = false
-  relicBeamMesh.count = 0
-  surfaceScene.add(relicBeamMesh)
+  // No pickup beacons: junk is found by looking at the ground, not by following a
+  // marker to it. The relic keeps its halo and its glow - one piece, hidden on
+  // purpose, and the only thing on the surface that has to be findable from a
+  // distance.
   const relicHaloMesh = new THREE.InstancedMesh(
     new THREE.TorusGeometry(1.5, 0.07, 6, 20),
     new THREE.MeshBasicMaterial({
@@ -1029,12 +1008,6 @@ export function createWorld(container: HTMLElement): World {
       surface.landingRing.scale.setScalar(1)
     }
 
-    // a puff of wind in the Martian rotors
-    if (surface.windmillBlades.length > 0 && !reducedMotion) {
-      const spin = dt * (0.5 + game.hazards.stormIntensity * 2.2)
-      for (const blades of surface.windmillBlades) blades.rotation.z += spin
-    }
-
     // cargo pile beside the pad: what is waiting in the hold
     const stored = holdCount(game)
     for (let i = 0; i < cargoCapacity; i++) {
@@ -1053,10 +1026,8 @@ export function createWorld(container: HTMLElement): World {
     }
     cargoMesh.instanceMatrix.needsUpdate = true
 
-    // ground junk + beacons for the planet under our feet only
+    // ground junk for the planet under our feet only
     const counts: Record<JunkClass, number> = { scrap: 0, tech: 0, hazardous: 0, relic: 0 }
-    let beaconCount = 0
-    let relicBeamCount = 0
     let relicHaloCount = 0
     let glowPlaced = false
     for (const glow of relicGlows) glow.visible = false
@@ -1075,27 +1046,7 @@ export function createWorld(container: HTMLElement): World {
         junkMeshes[item.cls].setMatrixAt(count, dummy.matrix)
         counts[item.cls] = count + 1
       }
-      if (beaconCount < MAX_JUNK) {
-        // a beacon stands on the ground it belongs to. Aligned to the world's
-        // vertical instead, a nine-metre cone on a tilted surface lies across the
-        // sky like a dropped plank - and this world is small enough that the
-        // whole field is tilted relative to the axis it spins on.
-        dummy.position.copy(up).multiplyScalar(radius + 1.7)
-        dummy.quaternion.setFromUnitVectors(UP, up)
-        dummy.updateMatrix()
-        beaconMesh.setMatrixAt(beaconCount, dummy.matrix)
-        beaconMesh.setColorAt(beaconCount, tmpColor.setHex(JUNK_COLORS[item.cls]))
-        beaconCount++
-      }
       if (item.cls !== 'relic') continue
-      if (relicBeamCount < relicBeamMesh.instanceMatrix.count) {
-        dummy.position.copy(up).multiplyScalar(radius + 7.6)
-        dummy.quaternion.setFromUnitVectors(UP, up)
-        dummy.scale.setScalar(1)
-        dummy.updateMatrix()
-        relicBeamMesh.setMatrixAt(relicBeamCount, dummy.matrix)
-        relicBeamCount++
-      }
       if (relicHaloCount < relicHaloMesh.instanceMatrix.count) {
         dummy.position.copy(up).multiplyScalar(radius + 2.6 + Math.sin(elapsed * 1.9) * 0.22)
         dummy.quaternion.setFromUnitVectors(UP, up)
@@ -1117,12 +1068,6 @@ export function createWorld(container: HTMLElement): World {
       junkMeshes[cls].count = counts[cls]
       junkMeshes[cls].instanceMatrix.needsUpdate = true
     }
-    beaconMesh.count = beaconCount
-    beaconMesh.instanceMatrix.needsUpdate = true
-    if (beaconMesh.instanceColor) beaconMesh.instanceColor.needsUpdate = true
-    beaconMaterial.opacity = 0.13 + Math.sin(elapsed * 2.8) * 0.05
-    relicBeamMesh.count = relicBeamCount
-    relicBeamMesh.instanceMatrix.needsUpdate = true
     relicHaloMesh.count = relicHaloCount
     relicHaloMesh.instanceMatrix.needsUpdate = true
 
