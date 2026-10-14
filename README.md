@@ -198,7 +198,16 @@ texture pack, used under the
 | `earth_clouds.webp` | `2k_earth_clouds.jpg` | greyscale → WebP q80, 1024×512, 121 kB |
 | `moon_surface.webp` | `2k_moon.jpg` | WebP q85, 1024×512, 138 kB |
 | `mars_surface.webp` | `2k_mars.jpg` | WebP q82, 2048×1024, 200 kB |
+| `mars_bump.webp` | derived from `mars_surface.webp` | normal map, WebP q88, 1024×512, 85 kB |
 | `sun_surface.webp` | `2k_sun.jpg` | WebP q82, 2048×1024, 219 kB |
+
+`mars_bump.webp` is a normal map baked from the Mars photograph with a Sobel
+pass over its luminance (`pip install Pillow`, then
+`python bake-bump.py public/textures/mars_surface.webp public/textures/mars_bump.webp 6`).
+It is deliberately a *shading* trick and not a claim about height: a photo's light
+and dark are albedo, not elevation — dark basalt is a plateau and bright dust can
+be the deepest basin on the planet. It makes the ground read as bumpy under the
+sun; it does not move a single vertex.
 
 The cloud map is greyscale and drives the cloud deck's `alphaMap`. The Moon is
 downsampled to 1K because its disc stays under ~370 px on screen even at its
@@ -209,6 +218,17 @@ Everything else in the game — every mesh, every other texture, every sound —
 generated in code. Each map loads lazily, only when its world refines to full
 detail, and if one is missing the globe falls back to its painted canvas, so the
 game still runs offline.
+
+**The ground underfoot is the same photograph.** When you land on Mars the terrain
+takes that world's own map — the one you were just flying over, at the same
+coordinates, so the crater you saw from orbit is the crater you stand in — with a
+close-up grain layer overlaid because 2K across a whole planet smears like a poster
+from eye height. `groundTexture()` bakes the two together once per session
+(7 ms, cached) and the ground swaps to it the moment the map lands; the painted,
+vertex-coloured terrain is what you see until then. Nothing about the shape you
+walk on changes: `terrainHeight` is untouched, so the bump map is shading only.
+The other two worlds still land on their painted ground on purpose — Earth's
+lander site sits in open ocean on the real map, and the Moon's is a smooth plain.
 
 ### How to check the streaming in a browser (M3)
 

@@ -4,6 +4,7 @@ import {
 } from '../sim/config.ts'
 import { cratersFor, landerSite, planetById, terrainHeight } from '../sim/planets.ts'
 import type { PlanetDef } from '../sim/planets.ts'
+import { groundMaps, whenReady } from './bodies.ts'
 
 const UP = new THREE.Vector3(0, 1, 0)
 const scratchDir = new THREE.Vector3()
@@ -97,6 +98,67 @@ export function glowTexture(inner: string, outer: string): THREE.CanvasTexture {
   })
 }
 
+/** Monochrome value noise on its own canvas, for the close-up ground grain. */
+function noiseCanvas(width: number, height: number, seed: number, spread: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return canvas
+  const image = ctx.createImageData(width, height)
+  const rnd = makeRnd(seed)
+  for (let i = 0; i < width * height; i++) {
+    const value = 128 + (rnd() - 0.5) * 255 * spread
+    image.data[i * 4] = value
+    image.data[i * 4 + 1] = value
+    image.data[i * 4 + 2] = value
+    image.data[i * 4 + 3] = 255
+  }
+  ctx.putImageData(image, 0, 0)
+  return canvas
+}
+
+/**
+ * The photographic ground underfoot. The world's own 2:1 map gives 0.17 surface
+ * units per texel, which reads as a landmark but smears like a poster from eye
+ * height, so two noise layers are overlaid on it: soft patches at four texels,
+ * then grain at texel size. Deliberately not derived from the map's brightness -
+ * a photo's light and dark are albedo, not relief.
+ */
+function bakeGround(photo: THREE.Texture, planetId: number): THREE.CanvasTexture {
+  const width = 2048
+  const height = 1024
+  const build = canvasBuild(width, height, 4242 + planetId)
+  const ctx = build.ctx
+  const image = photo.image as CanvasImageSource | undefined
+  if (!ctx) return finishTexture(build.canvas)
+  if (image) ctx.drawImage(image, 0, 0, width, height)
+  ctx.globalCompositeOperation = 'overlay'
+  // gentle: an overlay blend pulls every tone toward the middle, so strong grain
+  // would flatten the photograph's own contrast instead of adding to it
+  ctx.globalAlpha = 0.3
+  ctx.drawImage(noiseCanvas(256, 128, 717 + planetId, 0.38), 0, 0, width, height)
+  ctx.globalAlpha = 0.16
+  ctx.drawImage(noiseCanvas(512, 256, 131 + planetId, 0.45), 0, 0, width, height)
+  ctx.globalAlpha = 1
+  ctx.globalCompositeOperation = 'source-over'
+  const texture = finishTexture(build.canvas)
+  texture.anisotropy = 4
+  return texture
+}
+
+const groundTextures = new Map<number, THREE.CanvasTexture>()
+
+/** Baked once per session: a surface can be rebuilt on every landing. */
+function groundTexture(planetId: number, photo: THREE.Texture): THREE.CanvasTexture {
+  let texture = groundTextures.get(planetId)
+  if (!texture) {
+    texture = bakeGround(photo, planetId)
+    groundTextures.set(planetId, texture)
+  }
+  return texture
+}
+
 export function dir(lat: number, lon: number, target = new THREE.Vector3()): THREE.Vector3 {
   const cosLat = Math.cos(lat)
   return target.set(cosLat * Math.cos(lon), Math.sin(lat), cosLat * Math.sin(lon))
@@ -184,10 +246,29 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
 
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geometry.computeVertexNormals()
-  group.add(new THREE.Mesh(
-    geometry,
-    new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 }),
-  ))
+  const painted = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 })
+  const ground = new THREE.Mesh(geometry, painted)
+  group.add(ground)
+
+  // The world's own photograph, the moment it lands: what is underfoot is then
+  // the same ground you flew over, at the same coordinates. Shading relief rides
+  // along as a bump map, which is the one honest thing a photo can say about
+  // height - it is light and dark, not elevation.
+  const maps = groundMaps(planet.id)
+  if (maps) {
+    whenReady(maps.colour, () => {
+      const photographic = new THREE.MeshStandardMaterial({ map: groundTexture(planet.id, maps.colour.texture), roughness: 1, metalness: 0 })
+      // flat shading takes its normals from the geometry, which fights a normal
+      // map: the two cannot be mixed, so the photographic ground is smooth-shaded
+      ground.material.dispose()
+      ground.material = photographic
+      whenReady(maps.bump, () => {
+        photographic.normalMap = maps.bump.texture
+        photographic.normalScale = new THREE.Vector2(0.85, 0.85)
+        photographic.needsUpdate = true
+      })
+    })
+  }
   yield
 }
 
