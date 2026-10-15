@@ -15,18 +15,33 @@ export const SPACE_SCALE = 10
 
 // ---------------------------------------------------------------- surface
 /**
- * Every landing site is a ball this big. It is the world's own size rather than
- * the player's, which is the whole point: at 55 the horizon was fifteen metres
- * off and the field you could work was forty metres across, and no amount of
- * landscape design gets around that - a ring far enough out to hold more ground
- * would have to be taller than the ball it stands on.
+ * The Moon and Mars are balls of this radius, and their landscapes are written
+ * for it. Earth is not: its valley was composed as real ground - a 1300 m map,
+ * trees nine to twenty-four metres, turbines a hundred and fifty - and at 96 m
+ * the curvature alone would put every mountain of it under the horizon. So the
+ * radius is a property of the world, not of the engine; see `surfaceRadius` on
+ * each `PlanetDef`.
  */
 export const SURFACE_RADIUS = 96
 
 /**
- * The landscape of every landing site was composed against a ball of radius 55,
- * and this is what carries that design up: a crater stays in proportion to the
- * ground it sits in, the bowl keeps a walkable slope, and the ring keeps its
+ * Earth's landing site, sized by its own landscape rather than by taste.
+ *
+ * The valley's peaks stand 563 m from the landing pad and 260-330 m high, and
+ * whether they exist at all is pure geometry: a point only shows above the curve
+ * if it clears the tangent ray from your eye. On a ball of 550 their summits sit
+ * ten degrees *below* the horizon and the whole range is invisible; the flanks
+ * would need 381 m to show even a sliver. At 700 you get a twenty-metre smudge.
+ * A thousand is where they become mountains - about a hundred metres of peak
+ * standing six degrees above the horizon - and it is also the size at which the
+ * valley fits inside forty-two degrees, well clear of the poles.
+ */
+export const EARTH_SURFACE_RADIUS = 1000
+
+/**
+ * The landscape of the two small worlds was composed against a ball of radius
+ * 55, and this is what carries that design up: a crater stays in proportion to
+ * the ground it sits in, the bowl keeps a walkable slope, and the ring keeps its
  * place on the skyline instead of going over the curve. Everything measured in
  * metres in a terrain function is the radius-55 design multiplied by this.
  */

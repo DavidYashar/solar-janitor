@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import {
   EARTH_ORBIT, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_COLORS, LOD_COST_DETAIL, LOD_COST_STANDIN,
   LOD_SPACE_TUNING, LOD_SURFACE_TUNING, MARS_ORBIT, METEOR_RADIUS, MOON_ORBIT, OXYGEN_WARN,
-  SPACE_SCALE, SUN_RADIUS, SURFACE_RADIUS, TAU,
+  SPACE_SCALE, SUN_RADIUS, TAU,
 } from '../sim/config.ts'
 import { canDock, canLand, holdCount, landTarget, nearLander, scoopRadius } from '../sim/game.ts'
 import { quatForward, quatUp } from '../sim/orient.ts'
@@ -346,6 +346,18 @@ export function createWorld(container: HTMLElement): World {
 
   // ---------------------------------------------------------- surface scene
   const surfaceScene = new THREE.Scene()
+  /**
+   * How far out the sky sits, and where the sun hangs in it. Both are the far
+   * plane of a landing site rather than part of any one world, and the worlds are
+   * not the same size: Earth's valley is a ball of a kilometre, so a dome sized
+   * for the Moon's ninety-six metres would leave you standing outside it, looking
+   * at the inside of the ground.
+   */
+  const SURFACE_SKY_RADIUS = 6000
+  const SURFACE_SUN_DISTANCE = 4800
+  /** the sprite's size at that distance: the original 130 units at 604 m */
+  const SUN_BASE_SCALE = 1030
+  const SUN_DIRECTION = new THREE.Vector3(240, 520, 160).normalize()
   surfaceScene.fog = new THREE.Fog(0xbfe4ff, 170, 560)
   const surfaceHemisphere = new THREE.HemisphereLight(0xcfe9ff, 0x2f5a3a, 1.2)
   surfaceScene.add(surfaceHemisphere)
@@ -358,8 +370,10 @@ export function createWorld(container: HTMLElement): World {
 
   const themeLooks: Record<PlanetTheme, ThemeLook> = {
     earth: {
-      keyLight: 0xfff4df, keyIntensity: 2.0, skyLight: 0xcfe9ff, groundLight: 0x2f5a3a,
-      hemiIntensity: 1.2, fill: 0x9fd0ff, fillIntensity: 0.45, sunTint: 0xffffff, sunScale: 130,
+      // bright overcast daylight, the way the reference photographs are lit:
+      // a strong cool-white key, a blue sky fill and very little else
+      keyLight: 0xfff6e2, keyIntensity: 2.6, skyLight: 0xcfe4ff, groundLight: 0x4a7a3a,
+      hemiIntensity: 1.35, fill: 0xa8c8ff, fillIntensity: 0.4, sunTint: 0xfffaf0, sunScale: 130,
     },
     moon: {
       keyLight: 0xffffff, keyIntensity: 2.7, skyLight: 0x2c3a58, groundLight: 0x14161c,
@@ -384,8 +398,12 @@ export function createWorld(container: HTMLElement): World {
     ctx.fillRect(0, 0, 64, 256)
   }))
 
+  // The sky and the sun are the far plane of a landing site, not part of any one
+  // world - and the worlds are not the same size. Earth's valley is a ball of a
+  // kilometre, so a dome sized for the Moon's ninety-six metres would leave you
+  // standing outside it, looking at the inside of the ground.
   const sky = new THREE.Mesh(
-    new THREE.SphereGeometry(760, 32, 16),
+    new THREE.SphereGeometry(SURFACE_SKY_RADIUS, 32, 16),
     new THREE.MeshBasicMaterial({ map: skyTextures[0], side: THREE.BackSide, fog: false }),
   )
   surfaceScene.add(sky)
@@ -393,8 +411,8 @@ export function createWorld(container: HTMLElement): World {
     map: glowTexture('rgba(255, 246, 214, 1)', 'rgba(255, 214, 140, 0)'),
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
   }))
-  sunSprite.position.set(240, 520, 160)
-  sunSprite.scale.setScalar(130)
+  sunSprite.position.copy(SUN_DIRECTION).multiplyScalar(SURFACE_SUN_DISTANCE)
+  sunSprite.scale.setScalar(SUN_BASE_SCALE)
   surfaceScene.add(sunSprite)
 
   // the LOD streamer: one queue, one per-frame budget, every world in the game
@@ -422,7 +440,7 @@ export function createWorld(container: HTMLElement): World {
 
   function radiusAt(planetId: number, lat: number, lon: number): number {
     const build = surfaceBuild(planetId)
-    return build ? build.terrainRadius(lat, lon) : SURFACE_RADIUS
+    return build ? build.terrainRadius(lat, lon) : planetById(planetId).surfaceRadius
   }
 
   function applyPlanetTheme(planetId: number) {
@@ -431,7 +449,7 @@ export function createWorld(container: HTMLElement): World {
     sky.material.map = skyTextures[planet.id] ?? skyTextures[0]
     sky.material.needsUpdate = true
     sunSprite.material.color.setHex(look.sunTint)
-    sunSprite.scale.setScalar(look.sunScale)
+    sunSprite.scale.setScalar(SUN_BASE_SCALE * (look.sunScale / 130))
     surfaceHemisphere.color.setHex(look.skyLight)
     surfaceHemisphere.groundColor.setHex(look.groundLight)
     surfaceKey.color.setHex(look.keyLight)

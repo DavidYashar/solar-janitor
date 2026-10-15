@@ -211,7 +211,30 @@ generated in code. Each map loads lazily, only when its world refines to full
 detail, and if one is missing the globe falls back to its painted canvas, so the
 game still runs offline.
 
-**Mars is designed, not photographed.** Earth and the Moon land on their painted,
+**Earth is a valley, and it set its own size.** The reference build is a karst
+valley - a flat paddy floor, a meandering river, ten faceted peaks and a layered
+range closing the far end - drawn on a 1300 m plane in real metres, with trees
+nine to twenty-four metres and turbines a hundred and fifty. It could not be
+dropped into a ball of ninety-six metres and stay recognisable, and the numbers
+said so: their peaks stand 563 m from the landing pad, and on a 550 m ball their
+summits sit ten degrees *below* the horizon, hidden by the curve of the ground
+itself. At 700 m you get a twenty-metre smudge; at a kilometre they become
+mountains, about a hundred metres of peak standing six degrees above the horizon.
+So `EARTH_SURFACE_RADIUS` is 1000, and it is the same size that puts the whole
+valley inside forty-two degrees - comfortably clear of the poles, where a
+longitude-based mapping would tear.
+
+Everything else scales off that. The terrain grid is ten metres a segment (the
+river is forty across, so a channel is four or five vertices and the water ribbon
+hides the rest); the river is indexed by z rather than searched, because finding
+the nearest point on a 240-segment spline per vertex would be thirty million
+operations; and the river bed follows the valley instead of sitting at the
+constant height the reference uses, which makes it shoulder-deep in one place and
+a gorge in the next. The grass is a canvas tile - blades, clumps, bare earth and
+a few flowers - stamped nine times apiece so it repeats without a seam, with the
+blades repeated as ridges in the normal map.
+
+**Mars is designed, not photographed.** The Moon lands on its painted,
 vertex-coloured ground on purpose — Earth's lander site sits in open ocean on the
 real map, and the Moon's is a smooth plain. Mars gets a surface of its own, laid
 out in `src/sim/marsfield.ts` in metres and bearings from the landing pad:

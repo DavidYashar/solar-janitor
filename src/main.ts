@@ -386,7 +386,7 @@ function compassFor(state: Game): CompassState {
 
   if (state.mode === 'surface') {
     const site = landerSite(state.planetId)
-    const distance = latLonDistance(state.player, site)
+    const distance = latLonDistance(state.player, site, state.planetId)
     return {
       // the rendered world is mirror-handed, so bearings are negated for the HUD
       angle: -wrapAngle(bearingTo(state.player, site) - state.player.facing),
@@ -432,7 +432,7 @@ function radarFor(state: Game): RadarState {
   const site = landerSite(state.planetId)
   blips.push({
     bearing: wrapAngle(bearingTo(state.player, site) - state.player.facing),
-    distance: latLonDistance(state.player, site),
+    distance: latLonDistance(state.player, site, state.planetId),
     kind: 'lander',
   })
   return {

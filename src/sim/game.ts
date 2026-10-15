@@ -18,7 +18,7 @@ import {
 } from './config.ts'
 import { RELIC_BY_PLANET, SHOP_BY_ID } from './economy.ts'
 import { quatForward, quatFromBasis, quatIntegrate, quatNlerp, quatRight, quatToFlightAngles } from './orient.ts'
-import { PLANETS, landerSite, planetById } from './planets.ts'
+import { PLANETS, landerSite, planetById, surfaceRadiusOf } from './planets.ts'
 import { nextRandom, randomBetween } from './rng.ts'
 import type {
   Game, GameEvent, HazardState, Input, Junk, JunkClass, PlayMode, Quat, Rank, Vec3,
@@ -45,14 +45,18 @@ export function screenMoveVector(aim: number, screenX: number, screenY: number):
   return { x: -Math.sin(beta) * length, y: Math.cos(beta) * length }
 }
 
-/** Great-circle distance between two surface points, in surface units. */
+/**
+ * Great-circle distance between two surface points, in metres. The radius is
+ * the world's own, because Earth's landing site is a valley half a kilometre
+ * across and the Moon's is a crater field - one number cannot serve both.
+ */
 export function latLonDistance(
-  a: { lat: number; lon: number }, b: { lat: number; lon: number }, radius = SURFACE_RADIUS,
+  a: { lat: number; lon: number }, b: { lat: number; lon: number }, planetId = 0,
 ): number {
   const dLat = a.lat - b.lat
   const dLon = wrapAngle(a.lon - b.lon)
   const x = dLon * Math.cos((a.lat + b.lat) / 2)
-  return Math.hypot(x, dLat) * radius
+  return Math.hypot(x, dLat) * surfaceRadiusOf(planetId)
 }
 
 /** Compass bearing from a to b: 0 = north, positive = east. */
@@ -244,7 +248,7 @@ export function scannerPings(game: Game): Ping[] {
   const pings: Ping[] = []
   for (const item of game.junk) {
     if (item.status !== 'ground' || item.planet !== game.planetId) continue
-    const distance = latLonDistance(game.player, item)
+    const distance = latLonDistance(game.player, item, game.planetId)
     if (!eye && distance > range) continue
     pings.push({
       lat: item.lat,
@@ -385,11 +389,12 @@ function buildJunk(game: Game) {
       }
       // never drop junk onto the lander pad itself; relics keep their distance
       const minimum = relic ? LANDER_RING_RADIUS + 8 : LANDER_RING_RADIUS + 3
-      if (latLonDistance(item, lander) < minimum) {
-        lat = clamp(lat + (relic ? 0.34 : 0.28), -POLE_CLAMP + 0.05, POLE_CLAMP - 0.05)
+      if (latLonDistance(item, lander, planet.id) < minimum) {
+        const nudge = (relic ? 0.34 : 0.28) * (SURFACE_RADIUS / planet.surfaceRadius)
+        lat = clamp(lat + nudge, -POLE_CLAMP + 0.05, POLE_CLAMP - 0.05)
         item.lat = lat
-        if (latLonDistance(item, lander) < minimum) {
-          item.lon = wrapAngle(item.lon + 0.3)
+        if (latLonDistance(item, lander, planet.id) < minimum) {
+          item.lon = wrapAngle(item.lon + nudge)
         }
       }
       game.junk.push(item)
@@ -666,7 +671,7 @@ export function placeShipOnPad(game: Game) {
 // ------------------------------------------------------------------ queries
 
 export const nearLander = (game: Game): boolean =>
-  latLonDistance(game.player, landerSite(game.planetId)) <= LANDER_RING_RADIUS
+  latLonDistance(game.player, landerSite(game.planetId), game.planetId) <= LANDER_RING_RADIUS
 
 export function canDock(game: Game): boolean {
   return game.mode === 'space' && !game.transition && distance3(game.ship, game.dockPos) <= dockRadius(game)
@@ -998,7 +1003,7 @@ function updateVacuum(game: Game) {
   for (const item of game.junk) {
     if (carried >= slots) break
     if (item.status !== 'ground' || item.planet !== game.planetId) continue
-    const ground = latLonDistance(game.player, item)
+    const ground = latLonDistance(game.player, item, game.planetId)
     if (Math.hypot(ground, game.player.h) > range) continue
     item.status = 'carried'
     carried++
@@ -1032,6 +1037,7 @@ function updateOxygen(game: Game, dt: number) {
 
 function updateSurface(game: Game, dt: number, input: Input) {
   const planet = planetById(game.planetId)
+  const surfaceR = planet.surfaceRadius
   const player = game.player
   const length = Math.hypot(input.x, input.y)
   const speed = walkSpeed(game, input.boost)
@@ -1058,14 +1064,14 @@ function updateSurface(game: Game, dt: number, input: Input) {
   const turn = clamp(input.turn ?? 0, -1, 1)
   if (turn !== 0) player.facing = wrapAngle(player.facing + turn * SURFACE_TURN_RATE * dt)
 
-  player.lat = clamp(player.lat + (player.vN * dt) / SURFACE_RADIUS, -POLE_CLAMP, POLE_CLAMP)
+  player.lat = clamp(player.lat + (player.vN * dt) / surfaceR, -POLE_CLAMP, POLE_CLAMP)
   const cosLat = Math.max(0.3, Math.cos(player.lat))
-  player.lon = wrapAngle(player.lon + (player.vE * dt) / (SURFACE_RADIUS * cosLat))
+  player.lon = wrapAngle(player.lon + (player.vE * dt) / (surfaceR * cosLat))
 
   // storm wind shoves the janitor sideways while a dust storm blows
   if (game.hazards.stormActive && game.hazards.stormIntensity > 0.05) {
     const push = STORM_PUSH * game.hazards.stormIntensity * game.hazards.stormWind * dt
-    player.lon = wrapAngle(player.lon + push / (SURFACE_RADIUS * cosLat))
+    player.lon = wrapAngle(player.lon + push / (surfaceR * cosLat))
   }
 
   player.hopCooldown = Math.max(0, player.hopCooldown - dt)
@@ -1105,7 +1111,7 @@ export function updateHazards(game: Game, dt: number) {
       if (hazards.meteorTelegraph >= hazards.meteorDelay) {
         hazards.meteorTelegraph = -1
         hazards.meteorTimer = randomBetween(game, METEOR_INTERVAL_MIN, METEOR_INTERVAL_MAX)
-        const distance = latLonDistance(game.player, { lat: hazards.meteorLat, lon: hazards.meteorLon })
+        const distance = latLonDistance(game.player, { lat: hazards.meteorLat, lon: hazards.meteorLon }, game.planetId)
         emitSurface(game, 'meteor', 'METEOR IMPACT', 0, {
           lat: hazards.meteorLat, lon: hazards.meteorLon, h: 0,
         })
@@ -1119,12 +1125,13 @@ export function updateHazards(game: Game, dt: number) {
         hazards.meteorDelay = METEOR_TELEGRAPH + (hasRelic(game, 'stormsense') ? METEOR_TELEGRAPH_BONUS : 0)
         hazards.meteorTelegraph = 0
         const cosLat = Math.max(0.35, Math.cos(game.player.lat))
+        const surfaceR = surfaceRadiusOf(game.planetId)
         hazards.meteorLat = clamp(
-          game.player.lat + randomBetween(game, -1, 1) * (METEOR_RANGE / SURFACE_RADIUS),
+          game.player.lat + randomBetween(game, -1, 1) * (METEOR_RANGE / surfaceR),
           -POLE_CLAMP + 0.05, POLE_CLAMP - 0.05,
         )
         hazards.meteorLon = wrapAngle(
-          game.player.lon + randomBetween(game, -1, 1) * (METEOR_RANGE / (SURFACE_RADIUS * cosLat)),
+          game.player.lon + randomBetween(game, -1, 1) * (METEOR_RANGE / (surfaceR * cosLat)),
         )
         emitSurface(
           game, 'hint',

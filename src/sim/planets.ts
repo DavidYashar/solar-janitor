@@ -1,8 +1,9 @@
 import {
-  EARTH_ORBIT, EARTH_ORBIT_RATE, EARTH_RADIUS, MARS_ORBIT, MARS_ORBIT_RATE, MARS_RADIUS,
-  MOON_ORBIT, MOON_ORBIT_RATE, MOON_RADIUS, SURFACE_SCALE,
+  EARTH_ORBIT, EARTH_ORBIT_RATE, EARTH_RADIUS, EARTH_SURFACE_RADIUS, MARS_ORBIT, MARS_ORBIT_RATE,
+  MARS_RADIUS, MOON_ORBIT, MOON_ORBIT_RATE, MOON_RADIUS, SURFACE_RADIUS, SURFACE_SCALE,
 } from './config.ts'
 import { flattenPad, marsFieldHeight } from './marsfield.ts'
+import { earthFieldHeight, flattenPad as flattenEarthPad, padCentre as fieldPadCentre } from './earthfield.ts'
 import { valueNoise } from './noise.ts'
 
 export type PlanetTheme = 'earth' | 'moon' | 'mars'
@@ -24,6 +25,8 @@ export interface PlanetDef {
   /** -1 = the Sun, otherwise the planet this body orbits */
   parent: number
   landable: boolean
+  /** radius of the ball you stand on, in metres - a property of the world */
+  surfaceRadius: number
   /** junk pieces including the single relic */
   junkCount: number
   landerLat: number
@@ -59,23 +62,29 @@ export const EARTH: PlanetDef = {
   orbitRate: EARTH_ORBIT_RATE,
   parent: -1,
   landable: true,
+  surfaceRadius: EARTH_SURFACE_RADIUS,
   junkCount: 24,
   landerLat: 0,
   landerLon: 0.6,
-  spread: { lat: 0.62, lon: 1.05 },
+  // a valley of half a kilometre, and a tank of air that carries you about two
+  // hundred metres out and back - so the sweep is what fits in a tank and the
+  // rest of the valley is somewhere you go over several trips
+  spread: { lat: 0.35, lon: 0.35 },
   hazard: 'none',
   spaceColor: 0x2f6fd0,
   atmosphere: 0x7fc4ff,
-  groundLow: 0x2f7d4f,
-  groundHigh: 0x7cc46a,
-  accent: 0x9fe8ff,
-  rock: 0x8b929b,
-  skyTop: '#0d2c66',
-  skyMid: '#4a8fd6',
-  skyHorizon: '#e6f4ff',
-  fogColor: 0xbfe4ff,
-  fogNear: 170 * SURFACE_SCALE,
-  fogFar: 560 * SURFACE_SCALE,
+  groundLow: 0x3d8426,
+  groundHigh: 0x9ee850,
+  accent: 0xa8c84a,
+  rock: 0x6e6e6a,
+  // the reference valley's own sky: deep blue overhead going to a pale, hazy
+  // horizon, with the fog the same colour as the haze it is meant to be
+  skyTop: '#2a5aa0',
+  skyMid: '#7fa8d4',
+  skyHorizon: '#b8d4ec',
+  fogColor: 0xa8c0d8,
+  fogNear: 260,
+  fogFar: 1500,
 }
 
 export const MOON: PlanetDef = {
@@ -90,6 +99,7 @@ export const MOON: PlanetDef = {
   orbitRate: MOON_ORBIT_RATE,
   parent: 0,
   landable: true,
+  surfaceRadius: SURFACE_RADIUS,
   junkCount: 22,
   landerLat: -0.3,
   landerLon: 1.25,
@@ -121,6 +131,7 @@ export const MARS: PlanetDef = {
   orbitRate: MARS_ORBIT_RATE,
   parent: -1,
   landable: true,
+  surfaceRadius: SURFACE_RADIUS,
   junkCount: 22,
   landerLat: 0.26,
   landerLon: -0.85,
@@ -153,6 +164,11 @@ export function planetById(id: number): PlanetDef {
   return PLANETS[id] ?? EARTH
 }
 
+/** The radius of the ball a landing site is, in metres. */
+export function surfaceRadiusOf(planetId: number): number {
+  return planetById(planetId).surfaceRadius
+}
+
 /** Where the lander sits on the surface, in sim lat/lon. */
 export function landerSite(planetId: number): { lat: number; lon: number } {
   const planet = planetById(planetId)
@@ -164,11 +180,30 @@ export function landerSite(planetId: number): { lat: number; lon: number } {
 // (props and the player ride the same surface). Pure and deterministic.
 
 /** Rolling hills in surface units, roughly -2 .. +2 (Earth's terrain). */
-function earthTerrain(lat: number, lon: number, seed: number): number {
-  const x = (lon * 9.5) / SURFACE_SCALE
-  const y = (lat * 9.5) / SURFACE_SCALE
-  return ((valueNoise(x, y, seed) - 0.5) * 3.4 + (valueNoise(x * 2.7, y * 2.7, seed ^ 0x9e3779b9) - 0.5) * 1.1)
-    * SURFACE_SCALE
+function earthTerrain(lat: number, lon: number, _seed: number): number {
+  const planet = EARTH
+  const radius = planet.surfaceRadius
+  const height = earthFieldHeight(planet.landerLat, planet.landerLon, lat, lon, radius)
+  return flattenEarthPad(
+    planet.landerLat, planet.landerLon, lat, lon, radius, height, earthPadCentre(radius),
+  )
+}
+
+/**
+ * The height at the middle of Earth's apron, which everything within sixteen
+ * metres of it is blended toward. A constant for a given world, so it is worked
+ * out once - and worked out from the unfinished landscape, which is why the
+ * pad's own blend cannot feed back into itself.
+ */
+let earthPadRadius = -1
+let earthPadHeight = 0
+
+function earthPadCentre(radius: number): number {
+  if (earthPadRadius !== radius) {
+    earthPadRadius = radius
+    earthPadHeight = fieldPadCentre(EARTH.landerLat, EARTH.landerLon, radius)
+  }
+  return earthPadHeight
 }
 
 // ------------------------------------------------------------------ craters

@@ -5,7 +5,7 @@ import {
   HARD_LAND_DAMAGE, HOLD_SLOTS, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_POINTS, METEOR_DAMAGE,
   METEOR_TELEGRAPH_BONUS, MOON_ORBIT, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
   SHIP_SPEED, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH,
-  SUFFOCATION_DAMAGE, SURFACE_RADIUS, TRANSITION_TIME,
+  SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, SURFACE_RADIUS, TRANSITION_TIME,
 } from '../src/sim/config.ts'
 import {
   allPlanetsClean, bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
@@ -191,7 +191,7 @@ test('surface movement is frame-rate independent', () => {
   assert.ok(Math.abs(results[0].lat - results[2].lat) < 1e-9)
   // and that the janitor actually went somewhere. A second of walking is a
   // second of walking whatever the ball is sized at, so this is in metres.
-  assert.ok(results[0].lat * SURFACE_RADIUS > 4, 'a second of walking covers ground')
+  assert.ok(results[0].lat * EARTH_SURFACE_RADIUS > 4, 'a second of walking covers ground')
 })
 
 test('compass bearings point the right way', () => {
@@ -504,8 +504,8 @@ test('the Wide Scoop upgrade widens the vacuum radius', () => {
   const far = running(13)
   far.upgrades.push('widescoop')
   const item = near.junk[0]
-  park(near, item.lat + 3.2 / SURFACE_RADIUS, item.lon)
-  park(far, item.lat + 3.2 / SURFACE_RADIUS, item.lon)
+  park(near, item.lat + 3.2 / EARTH_SURFACE_RADIUS, item.lon)
+  park(far, item.lat + 3.2 / EARTH_SURFACE_RADIUS, item.lon)
   step(near, STEP, idle)
   step(far, STEP, idle)
   assert.equal(near.junk[0].status, 'ground')
@@ -713,7 +713,10 @@ test('the Junk Scanner pings nearby junk; the Eye in the Sky tracks everything',
 
   const scanner = grounded(62, 0)
   scanner.upgrades.push('scanner')
-  park(scanner, 0.30, 0.60)
+  // stand at a piece: Earth's valley is a kilometre across and the scanner only
+  // reaches thirty metres, so "somewhere on the ground" is no longer near enough
+  const piece = scanner.junk.find((item) => item.planet === 0 && item.status === 'ground')
+  park(scanner, piece.lat + 2 / EARTH_SURFACE_RADIUS, piece.lon)
   const pings = scannerPings(scanner)
   assert.ok(pings.length > 0, 'the scanner sees the junk')
   assert.ok(pings.every(ping => ping.distance <= SCANNER_RANGE))
