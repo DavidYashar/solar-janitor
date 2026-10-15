@@ -125,9 +125,11 @@ export const hazardDamage = (game: Game, base: number) =>
   base * (hasUpgrade(game, 'hazardweave') ? 1 - HAZARD_WEAVE_REDUCTION : 1)
 
 export const oxygenDrainRate = (game: Game, storming: boolean) =>
-  OXYGEN_DRAIN
-  * (hasUpgrade(game, 'recycler') ? 1 - RECYCLER_REDUCTION : 1)
-  * (storming ? STORM_DRAIN_MULT : 1)
+  planetById(game.planetId).breathable
+    ? 0
+    : OXYGEN_DRAIN
+      * (hasUpgrade(game, 'recycler') ? 1 - RECYCLER_REDUCTION : 1)
+      * (storming ? STORM_DRAIN_MULT : 1)
 
 export const dockRadius = (game: Game) => (hasUpgrade(game, 'dockingassist') ? DOCK_ASSIST_RADIUS : DOCK_RADIUS)
 export const scannerRange = (game: Game) => (hasUpgrade(game, 'scanner') ? SCANNER_RANGE : 0)

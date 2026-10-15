@@ -5,7 +5,7 @@ import {
   HARD_LAND_DAMAGE, HOLD_SLOTS, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_POINTS, METEOR_DAMAGE,
   METEOR_TELEGRAPH_BONUS, MOON_ORBIT, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
   SHIP_SPEED, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH,
-  SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, SURFACE_RADIUS, TRANSITION_TIME,
+  SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, HEALTH_MAX, SURFACE_RADIUS, TRANSITION_TIME,
 } from '../src/sim/config.ts'
 import {
   allPlanetsClean, bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
@@ -316,8 +316,11 @@ test('landing needs a slow approach to the right planet', () => {
 // ----------------------------------------------------------------- oxygen
 
 test('oxygen drains off-pad, refills at the lander and never drains in space', () => {
+  // on Mars, because Earth's air is breathable and the tanks are not the clock
   const game = running(5)
-  park(game, 0.5, 0.6)
+  game.planetId = 2
+  placePlayerAtLander(game)
+  park(game, 0.26 + 0.5, -0.85)
   advance(game, 10)
   assert.ok(Math.abs(game.oxygen - (OXYGEN_MAX - OXYGEN_DRAIN * 10)) < 0.05)
 
@@ -334,9 +337,19 @@ test('oxygen drains off-pad, refills at the lander and never drains in space', (
   assert.equal(game.oxygen, 50)
 })
 
+test('the air on Earth is breathable, so the tanks are not the clock', () => {
+  const game = running(66)
+  park(game, 0.6, 0.9)
+  advance(game, 120)
+  assert.equal(game.oxygen, OXYGEN_MAX, 'two minutes off-pad costs no air')
+  assert.equal(game.health, HEALTH_MAX, 'and never starts suffocating')
+})
+
 test('the oxygen warning fires once below the threshold', () => {
   const game = running(6)
-  park(game, 0.7, 0.6)
+  game.planetId = 2
+  placePlayerAtLander(game)
+  park(game, 0.26 + 0.7, -0.85)
   advance(game, 50)
   const warnings = game.events.filter(event => event.kind === 'oxygen' && event.text.includes('LOW'))
   assert.equal(warnings.length, 1)

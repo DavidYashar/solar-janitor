@@ -27,6 +27,8 @@ export interface PlanetDef {
   landable: boolean
   /** radius of the ball you stand on, in metres - a property of the world */
   surfaceRadius: number
+  /** true where the air is breathable, so the suit's tanks are not the clock */
+  breathable: boolean
   /** junk pieces including the single relic */
   junkCount: number
   landerLat: number
@@ -63,6 +65,7 @@ export const EARTH: PlanetDef = {
   parent: -1,
   landable: true,
   surfaceRadius: EARTH_SURFACE_RADIUS,
+  breathable: true,
   junkCount: 24,
   landerLat: 0,
   landerLon: 0.6,
@@ -100,6 +103,7 @@ export const MOON: PlanetDef = {
   parent: 0,
   landable: true,
   surfaceRadius: SURFACE_RADIUS,
+  breathable: false,
   junkCount: 22,
   landerLat: -0.3,
   landerLon: 1.25,
@@ -132,6 +136,7 @@ export const MARS: PlanetDef = {
   parent: -1,
   landable: true,
   surfaceRadius: SURFACE_RADIUS,
+  breathable: false,
   junkCount: 22,
   landerLat: 0.26,
   landerLon: -0.85,

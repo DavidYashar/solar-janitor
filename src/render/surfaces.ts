@@ -627,6 +627,47 @@ function buildStarField(): THREE.Points {
 // ------------------------------------------------------------------- props
 
 /**
+ * Moving water needs something to move, and the river is drawn as a ribbon with
+ * no texture at all. This is a small tiling ripple with a normal map's channels:
+ * the same whole-cycle trick as the soil tile, so it repeats without a seam, and
+ * the caller scrolls it along the channel each frame.
+ */
+let riverRipple: THREE.CanvasTexture | null = null
+
+export function riverFlow(): THREE.CanvasTexture {
+  if (riverRipple) return riverRipple
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    const data = ctx.createImageData(size, size)
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const u = x / size
+        const v = y / size
+        const wave = Math.sin((u * 4 + v * 2) * TAU) * 0.5 + Math.sin((u * 7 - v * 5) * TAU) * 0.5
+        const slope = clampValue(128 + wave * 46, 0, 255) | 0
+        const i = (y * size + x) * 4
+        data.data[i] = 128
+        data.data[i + 1] = slope
+        data.data[i + 2] = 255
+        data.data[i + 3] = 255
+      }
+    }
+    ctx.putImageData(data, 0, 0)
+  }
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.NoColorSpace
+  texture.wrapS = THREE.RepeatWrapping
+  texture.wrapT = THREE.RepeatWrapping
+  texture.anisotropy = 8
+  riverRipple = texture
+  return texture
+}
+
+/**
  * The river, as a ribbon laid along the meander.
  *
  * The channel is carved into the terrain, but the grid is ten metres a segment
@@ -639,8 +680,10 @@ function buildRiver(planet: PlanetDef): THREE.Mesh {
   const radius = planet.surfaceRadius
   const samples = riverSamples()
   const positions: number[] = []
+  const uvs: number[] = []
   const indices: number[] = []
   const vertex = new THREE.Vector3()
+  let along = 0
 
   for (let i = 0; i < samples.length; i++) {
     const s = samples[i]
@@ -651,6 +694,10 @@ function buildRiver(planet: PlanetDef): THREE.Mesh {
     const dz = next.z - prev.z
     const length = Math.hypot(dx, dz) || 1
     const half = s.width * 0.8
+    if (i > 0) along += Math.hypot(s.x - prev.x, s.z - prev.z)
+    // v runs downstream in metres, so the ripple scrolls at the same rate the
+    // river falls however wide it gets
+    const v = along / 9
     for (const side of [-1, 1]) {
       const at = fromPad(
         planet.landerLat, planet.landerLon,
@@ -660,6 +707,7 @@ function buildRiver(planet: PlanetDef): THREE.Mesh {
       )
       dir(at.lat, at.lon, vertex).multiplyScalar(radius + s.water)
       positions.push(vertex.x, vertex.y, vertex.z)
+      uvs.push(side < 0 ? 0 : 1, v)
     }
     if (i > 0) {
       const a = (i - 1) * 2
@@ -669,10 +717,12 @@ function buildRiver(planet: PlanetDef): THREE.Mesh {
 
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
   return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
     color: 0x4a7aaa, roughness: 0.16, metalness: 0.05,
+    normalMap: riverFlow(), normalScale: new THREE.Vector2(0.5, 0.5),
     transparent: true, opacity: 0.86, side: THREE.DoubleSide,
   }))
 }

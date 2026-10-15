@@ -109,9 +109,9 @@ export function sightline(distance: number, radius: number): number {
 
 const RIVER_HALF_WIDTH = 15
 /** how deep the bed sits below the ground at that point on the meander */
-const RIVER_DEPTH = 1.6
-/** how deep the water stands above the bed - wadeable, and the janitor is two metres */
-const RIVER_WATER = 0.85
+const RIVER_DEPTH = 2.6
+/** how deep the water stands above the bed - chest deep on the janitor, so it reads as a river */
+const RIVER_WATER = 1.5
 /**
  * Where the bank finishes climbing back to the valley floor, as a multiple of
  * the channel's own width. The reference runs it out to 2.6 widths, and the
@@ -123,8 +123,7 @@ const RIVER_WATER = 0.85
 const RIVER_BANK = 0.7
 const RIVER_REACH = 1.8
 
-export interface RiverSample {
-  x: number
+export interface RiverSample {  x: number
   z: number
   width: number
   /** >0 turning left, <0 turning right; decides gravel bar from cut bank */

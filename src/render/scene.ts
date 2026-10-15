@@ -15,7 +15,7 @@ import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
 import { buildShip } from './ship.ts'
 import {
-  canvasTexture, clampValue, createSurfaceJob, dir, glowTexture, makeRnd, surfacePoint,
+  canvasTexture, clampValue, createSurfaceJob, dir, glowTexture, makeRnd, riverFlow, surfacePoint,
 } from './surfaces.ts'
 import type { SurfaceBuild, SurfaceJob } from './surfaces.ts'
 
@@ -1108,6 +1108,10 @@ export function createWorld(container: HTMLElement): World {
     if (carriedMesh.instanceColor) carriedMesh.instanceColor.needsUpdate = true
 
     sky.rotation.y += dt * 0.004
+    // the river runs: scroll the ripple downstream, so standing water between
+    // two banks becomes a river that is going somewhere
+    const flow = riverFlow()
+    flow.offset.y -= dt * 0.42
     updateSurfaceMood(game)
     updateMeteorTelegraph(game)
     updateDustStorm(game, dt)
