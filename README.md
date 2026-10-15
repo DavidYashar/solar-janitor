@@ -178,8 +178,9 @@ to ~66 ms in the dev harness (where every number is worse than production).
 
 Tuning levers, in the order to reach for them: `world.setQuality(true)` (drops
 the pixel ratio to 1), the reduced-motion setting (skips the warm-up and all
-shake), and the per-world texture resolution (`public/textures` — 2.9 MB for all
-ten maps, of which Earth's two ground tiles are the largest single item at 1.7 MB).
+shake), and the per-world texture resolution (`public/textures` — 3.3 MB for all
+fifteen maps, of which Earth's two ground tiles are the largest single item at
+1.7 MB).
 
 ## Credits & licences
 
@@ -207,13 +208,13 @@ closest approach, so the extra resolution would never be visible. The Sun's map
 drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
 thins as the ship gets close so the photosphere is what you see up close.
 Everything else in the game — every mesh, every other texture, every sound — is
-generated in code, with one exception: **Earth's ground is two photographs**, and
-both are graded before they ship. Each repeats hundreds of times across a valley
-fifteen hundred metres wide, so their low frequencies are flattened first — a
-patch of shade would otherwise print itself at a perfectly regular interval — and
-their tone is trimmed to sit under the terrain's vertex colours rather than fight
-them. The ground is green on the palette's authority; all the tiles carry is the
-detail.
+generated in code, with two exceptions: **Earth's ground and its trees**. The
+ground is two photographs, and both are graded before they ship. Each repeats
+hundreds of times across a valley fifteen hundred metres wide, so their low
+frequencies are flattened first — a patch of shade would otherwise print itself
+at a perfectly regular interval — and their tone is trimmed to sit under the
+terrain's vertex colours rather than fight them. The ground is green on the
+palette's authority; all the tiles carry is the detail.
 
 | File | Role | Re-encoded |
 |---|---|---|
@@ -221,6 +222,24 @@ detail.
 | `earth_grass_normal.webp` | its relief, derived from the same frame | lossless WebP, 512×512, 645 kB |
 | `earth_canopy.webp` | the slopes above the treeline, one tile per 16 m | WebP q90, 1024×1024, 298 kB |
 | `earth_canopy_normal.webp` | its relief, derived from the same frame | lossless WebP, 512×512, 626 kB |
+| `tree_1` … `tree_5` | the five tree species, one cut-out each | WebP q90 with alpha, 331 kB for all five |
+
+The trees are placed as **crossed quads** — one image on two planes at right
+angles, bottom-anchored so the trunk meets the ground and scaled taller than the
+tree by however much of its tile the tree fills. A single card would vanish when
+seen edge-on, and the janitor walks among these. Each quad is indexed twice, once
+each way round, so the card is solid from both sides without `DoubleSide`, which
+would flip the normal on the back face and leave half of every tree facing the
+ground and unlit. Normals point straight up: a tree cut from a picture already has
+its shading painted in, so it is lit as ground rather than as a surface.
+
+They are **cut, not blended** — `alphaTest` with alpha-to-coverage — because two
+thousand of them facing every which way would need a sort order that cannot
+exist. That makes the colour in the see-through pixels matter: a mipmap averages
+colour and alpha together, so leaving them white grows a pale halo as the tree
+shrinks, and at distance it was a scatter of specks around every crown. Each
+cut-out is therefore **bled** — the visible colour is pushed outward across the
+transparent area before it ships.
 
 The relief is lossless on purpose. A normal map is noise-like — the worst case
 for any lossy codec — and at q95 it still carried 12° of mean angular error that

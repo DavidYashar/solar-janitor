@@ -737,6 +737,51 @@ function buildRiver(planet: PlanetDef): THREE.Mesh {
   }))
 }
 
+/**
+ * A tree card. Cut, not blended: two thousand of these facing every which way
+ * would need a sort order that cannot exist, and cutting gives the depth buffer
+ * something to write. With MSAA on, alpha-to-coverage softens the cut so the
+ * leaves do not come out as a jagged stencil.
+ */
+function treeMaterial(file: string): THREE.MeshStandardMaterial {
+  const map = new THREE.TextureLoader().load(`/textures/${file}.webp`)
+  map.colorSpace = THREE.SRGBColorSpace
+  map.anisotropy = 8
+  return new THREE.MeshStandardMaterial({
+    map, side: THREE.FrontSide, roughness: 1, metalness: 0, alphaTest: 0.35, alphaToCoverage: true,
+  })
+}
+
+/**
+ * Two quads crossed at right angles, sharing a bottom-centre origin.
+ *
+ * Each quad is indexed twice, once each way round, so the card is solid from both
+ * sides without `DoubleSide` - which would flip the normal on the back face and
+ * leave half of every tree facing the ground and unlit.
+ *
+ * Normals point straight up, all of them. A tree cut from a picture already has
+ * its shading painted in, so lighting it as a surface fights the image; lit as
+ * ground it takes the sun's colour and no more, which is what a billboard wants.
+ */
+function crossTreeGeometry(): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -0.5, 0, 0, 0.5, 0, 0, 0.5, 1, 0, -0.5, 1, 0,
+    0, 0, -0.5, 0, 0, 0.5, 0, 1, 0.5, 0, 1, -0.5,
+  ], 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute([
+    0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1,
+  ], 2))
+  const normals = new Float32Array(24)
+  for (let i = 0; i < 8; i++) normals[i * 3 + 1] = 1
+  geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
+  geometry.setIndex([
+    0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
+    2, 1, 0, 3, 2, 0, 6, 5, 4, 7, 6, 4,
+  ])
+  return geometry
+}
+
 function* earthPropStage(
   planet: PlanetDef, seed: number, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
 ): Generator<void, void, void> {
@@ -753,42 +798,26 @@ function* earthPropStage(
    * is the only frame in which "on the shoulder of a peak" means anything.
    */
   /**
-   * Four species rather than one shape a thousand times. A hillside of identical
-   * cones reads as a pattern, not a forest; the variety costs nothing, because
-   * a species is still two instanced draw calls.
+   * Five species rather than one shape a thousand times. A hillside of identical
+   * cards reads as a pattern, not a forest, and the variety costs nothing - a
+   * species is one instanced draw call, where the geometry it replaces needed two.
    */
   const SPECIES = [
-    {
-      name: 'broadleaf', trunk: new THREE.CylinderGeometry(0.24, 0.32, 1.7, 5),
-      canopy: new THREE.IcosahedronGeometry(2.0, 0), trunkColour: 0x6b4a2f, canopyColour: 0x468f3c,
-      lift: 2.1, scale: [1.5, 2.6] as const,
-    },
-    {
-      name: 'conifer', trunk: new THREE.CylinderGeometry(0.18, 0.26, 1.4, 5),
-      canopy: new THREE.ConeGeometry(1.5, 3.8, 6), trunkColour: 0x5d4030, canopyColour: 0x2b7048,
-      lift: 2.2, scale: [1.7, 3.0] as const,
-    },
-    {
-      name: 'cypress', trunk: new THREE.CylinderGeometry(0.13, 0.19, 1.1, 5),
-      canopy: new THREE.ConeGeometry(0.8, 6.0, 6), trunkColour: 0x5d4030, canopyColour: 0x255f38,
-      lift: 3.4, scale: [1.4, 2.3] as const,
-    },
-    {
-      // a bare one, for the treeline where the forest gives out
-      name: 'standing dead', trunk: new THREE.CylinderGeometry(0.16, 0.3, 3.6, 5),
-      canopy: new THREE.IcosahedronGeometry(0.75, 0), trunkColour: 0x7d6a52, canopyColour: 0x8d7a5e,
-      lift: 1.5, scale: [1.4, 2.2] as const,
-    },
+    // `fill` is how much of the tile's height the tree occupies, so the quad has
+    // to stand taller than the tree by that much for the trunk to meet the ground
+    { file: 'tree_1', fill: 0.96, height: [12, 20] as const },
+    { file: 'tree_2', fill: 0.96, height: [10, 17] as const },
+    { file: 'tree_3', fill: 0.88, height: [14, 24] as const },
+    // several trunks in one picture rather than a single tree, so it reads as a
+    // thicket - which is what the top of a treeline actually looks like
+    { file: 'tree_4', fill: 0.80, height: [9, 15] as const },
+    { file: 'tree_5', fill: 0.96, height: [11, 18] as const },
   ]
-  const capacity = 700
+  const capacity = 900
+  const card = crossTreeGeometry()
   const kinds = SPECIES.map((species) => ({
     species,
-    trunk: new THREE.InstancedMesh(
-      species.trunk, new THREE.MeshStandardMaterial({ color: species.trunkColour, flatShading: true }), capacity,
-    ),
-    canopy: new THREE.InstancedMesh(
-      species.canopy, new THREE.MeshStandardMaterial({ color: species.canopyColour, flatShading: true }), capacity,
-    ),
+    mesh: new THREE.InstancedMesh(card, treeMaterial(species.file), capacity),
     count: 0,
   }))
   const tint = new THREE.Color()
@@ -815,42 +844,37 @@ function* earthPropStage(
     if (height > 8 && rnd() > treeline) continue
     if (height < 8 && rnd() > 0.05) continue
 
-    // what grows where: broadleaf down on the paddy floor, the tall narrow ones
-    // up the slopes, and the dead standing among the top of the treeline
-    let pick: number
-    if (height < 8) pick = rnd() < 0.72 ? 0 : rnd() < 0.5 ? 1 : 3
-    else if (height > 105) pick = rnd() < 0.5 ? 3 : rnd() < 0.6 ? 2 : 1
-    else pick = rnd() < 0.34 ? 1 : rnd() < 0.55 ? 2 : rnd() < 0.9 ? 0 : 3
-    const kind = kinds[pick]
+    // what grows where: which species a height band favours, and how often. The
+    // meadow gets the broadleaves, the treeline thins into thickets, and the
+    // slopes between them take everything.
+    const bands = height < 8 ? [0, 0, 1, 4] : height > 105 ? [3, 3, 2, 0] : [1, 4, 2, 0, 3]
+    const kind = kinds[bands[Math.floor(rnd() * bands.length)]]
     if (kind.count >= capacity) continue
 
     const species = kind.species
-    const scale = species.scale[0] + rnd() * (species.scale[1] - species.scale[0])
+    const treeHeight = species.height[0] + rnd() * (species.height[1] - species.height[0])
     dir(at.lat, at.lon, scratchDir)
-    const ground = radiusOf(at.lat, at.lon)
-    dummy.position.copy(scratchDir).multiplyScalar(ground + species.lift * 0.3 * scale)
+    // the card's origin is its bottom edge, so the tree stands on the ground
+    // rather than through it. Its up runs along the radial, which is what keeps a
+    // tree on a slope growing at the sky instead of out of the hillside.
+    dummy.position.copy(scratchDir).multiplyScalar(radiusOf(at.lat, at.lon))
     dummy.quaternion.setFromUnitVectors(UP, scratchDir)
     dummy.rotateY(rnd() * TAU)
-    dummy.scale.setScalar(scale)
+    dummy.scale.setScalar(treeHeight / species.fill)
     dummy.updateMatrix()
-    kind.trunk.setMatrixAt(kind.count, dummy.matrix)
-    dummy.position.copy(scratchDir).multiplyScalar(ground + species.lift * scale)
-    dummy.updateMatrix()
-    kind.canopy.setMatrixAt(kind.count, dummy.matrix)
-    // and every tree its own shade, so the canopy is not one flat green
-    tint.setHSL(0.26 + (rnd() - 0.5) * 0.06, 0.42 + rnd() * 0.24, 0.26 + rnd() * 0.16)
-    kind.canopy.setColorAt(kind.count, tint)
+    kind.mesh.setMatrixAt(kind.count, dummy.matrix)
+    // and every tree its own shade, so the wood is not one flat green
+    tint.setScalar(0.86 + rnd() * 0.28)
+    kind.mesh.setColorAt(kind.count, tint)
     kind.count++
     trees++
     if (trees % LOD_PROP_SLICE === 0) yield
   }
   for (const kind of kinds) {
-    kind.trunk.count = kind.count
-    kind.canopy.count = kind.count
-    kind.trunk.instanceMatrix.needsUpdate = true
-    kind.canopy.instanceMatrix.needsUpdate = true
-    if (kind.canopy.instanceColor) kind.canopy.instanceColor.needsUpdate = true
-    group.add(kind.trunk, kind.canopy)
+    kind.mesh.count = kind.count
+    kind.mesh.instanceMatrix.needsUpdate = true
+    if (kind.mesh.instanceColor) kind.mesh.instanceColor.needsUpdate = true
+    group.add(kind.mesh)
   }
   yield
 
