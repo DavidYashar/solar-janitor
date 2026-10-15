@@ -439,8 +439,16 @@ function terrace(x: number, z: number, floor: number, seed: number): number {
 
 // ------------------------------------------------------------ the pad
 
-/** The design's own origin: the point that becomes the landing pad. */
-export const PAD_ORIGIN = { x: 0, z: 0 }
+/**
+ * The design's own origin: the point that becomes the landing pad.
+ *
+ * Not the valley's origin, which is where the reference puts it - and that spot
+ * is ten metres from the meander, four metres down in its bed, so the tug was
+ * landing in the river. This one is picked for the job instead: ninety-eight
+ * metres clear of the water, on ground that falls a third of a percent, and
+ * still near enough to the middle of the valley to see both sides of it.
+ */
+export const PAD_ORIGIN = { x: 80, z: -40 }
 
 const scratch: PadOffset = { arc: 0, bearing: 0, north: 0, east: 0 }
 

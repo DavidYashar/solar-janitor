@@ -793,6 +793,9 @@ function* earthPropStage(
     at.lat = point.lat
     at.lon = point.lon
     if (padDistance(at.lat, at.lon, landerSite(planet.id)) < 0.02) continue
+    // nothing grows in the water: the trees were planted by looking at the
+    // ground and never at the river, so some of them stood in the channel
+    if (riverDistance(north, east) < 26) continue
     const height = radiusOf(at.lat, at.lon) - radius
     // the treeline: forest thins out as it climbs and stops at the rock, so the
     // peaks read as wooded shoulders under bare stone rather than as pines to
@@ -876,7 +879,8 @@ function* earthPropStage(
     const point = fromPad(planet.landerLat, planet.landerLon, north, east, radius)
     const height = radiusOf(point.lat, point.lon) - radius
     const nearRiver = riverDistance(north, east)
-    // boulders belong on the slopes and in the shallows, not out in the paddy
+    // boulders belong on the slopes and along the water, but not in it
+    if (nearRiver < 20) continue
     if (height < 6 && nearRiver > 30) continue
     if (rnd() < 0.45 && bushesPlaced < 700) {
       placeProp(dummy, radiusOf, point.lat, point.lon, -0.25, 0.7 + rnd() * 1.5, rnd)
