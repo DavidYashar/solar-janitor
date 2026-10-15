@@ -354,6 +354,54 @@ function riverCut(x: number, z: number, floor: number): number {
   return floor + (target - floor) * carve
 }
 
+// ------------------------------------------------------------ the terraces
+
+/** one paddy bench: a tread this deep, then a riser up to the next one */
+const TERRACE_STEP = 1.45
+
+/**
+ * Paddy terraces on the flanks of the valley.
+ *
+ * The valley is a paddy floor, and terraces are what that landscape actually
+ * looks like: flat benches cut into a slope with a low earth bund along each
+ * edge, field after field stepping up toward the peaks. They are also the one
+ * thing on this map that is *laid out* rather than scattered, which is what
+ * stops a kilometre of ground being the same ground everywhere - the eye reads
+ * a made thing and navigates by it.
+ *
+ * Two masks decide where they are, and both matter. They only make sense on a
+ * slope, so they fade in above the paddy floor and out again before the rock
+ * starts; and a noise mask breaks that band into patches, because a valley
+ * where every slope is terraced is as repetitive as one where none is.
+ *
+ * The tread is a little longer than the riser on purpose. A terrace riser is
+ * nearly vertical in life, and a riser sharper than the distance between two
+ * terrain vertices lands between them and comes back as a sawtooth - which is a
+ * lesson Mars already taught us twice.
+ */
+function terrace(x: number, z: number, floor: number, seed: number): number {
+  if (floor < 0.5 || floor > 70) return floor
+  const patch = clamp((valueNoise(x * 0.0019, z * 0.0019, seed ^ 0x77aa11) - 0.36) / 0.16, 0, 1)
+  if (patch <= 0) return floor
+  // on the floor, not the flanks. Measured: a peak's shoulder climbs 30 degrees,
+  // where a 1.45 m step occupies two and a half metres of ground - far inside a
+  // ten metre mesh, so terraces there are aliased into nothing. On the paddy
+  // floor the same step spans twenty to two hundred metres and reads.
+  const strength = patch
+    * clamp((floor - 0.5) / 3, 0, 1)
+    * clamp((70 - floor) / 25, 0, 1)
+
+  const scaled = floor / TERRACE_STEP
+  const level = Math.floor(scaled)
+  const frac = scaled - level
+  const riser = clamp((frac - 0.55) / 0.45, 0, 1)
+  const eased = riser * riser * (3 - 2 * riser)
+  let bench = level * TERRACE_STEP + eased * TERRACE_STEP
+  // the bund: a low earth lip along the top edge of every field
+  bench += Math.exp(-Math.pow((frac - 0.5) / 0.07, 2)) * 0.32
+  return floor + (bench - floor) * strength
+}
+
 // ------------------------------------------------------------ the pad
 
 /** The design's own origin: the point that becomes the landing pad. */
@@ -379,7 +427,9 @@ export function earthFieldHeight(
   const offset = padOffset(anchorLat, anchorLon, lat, lon, radius, scratch)
   const x = offset.east + PAD_ORIGIN.x
   const z = offset.north + PAD_ORIGIN.z
-  return riverCut(x, z, valleyFloor(x, z))
+  // terraces first, then the river: water is older than fields, and it cuts
+  // through them rather than going round
+  return riverCut(x, z, terrace(x, z, valleyFloor(x, z), SEED))
 }
 
 /** The height at the middle of the pad, which the apron is blended toward. */

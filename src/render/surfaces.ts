@@ -692,20 +692,50 @@ function* earthPropStage(
    * Placement is decided in the design's own metres and converted, because that
    * is the only frame in which "on the shoulder of a peak" means anything.
    */
-  const treeCapacity = 1100
-  const trunkMesh = new THREE.InstancedMesh(
-    new THREE.CylinderGeometry(0.2, 0.26, 1.4, 5),
-    new THREE.MeshStandardMaterial({ color: 0x6b4a2f, flatShading: true }),
-    treeCapacity,
-  )
-  const canopyMesh = new THREE.InstancedMesh(
-    new THREE.ConeGeometry(1.5, 3.4, 6),
-    new THREE.MeshStandardMaterial({ color: 0x2f7d4f, flatShading: true }),
-    treeCapacity,
-  )
+  /**
+   * Four species rather than one shape a thousand times. A hillside of identical
+   * cones reads as a pattern, not a forest; the variety costs nothing, because
+   * a species is still two instanced draw calls.
+   */
+  const SPECIES = [
+    {
+      name: 'broadleaf', trunk: new THREE.CylinderGeometry(0.24, 0.32, 1.7, 5),
+      canopy: new THREE.IcosahedronGeometry(2.0, 0), trunkColour: 0x6b4a2f, canopyColour: 0x468f3c,
+      lift: 2.1, scale: [1.5, 2.6] as const,
+    },
+    {
+      name: 'conifer', trunk: new THREE.CylinderGeometry(0.18, 0.26, 1.4, 5),
+      canopy: new THREE.ConeGeometry(1.5, 3.8, 6), trunkColour: 0x5d4030, canopyColour: 0x2b7048,
+      lift: 2.2, scale: [1.7, 3.0] as const,
+    },
+    {
+      name: 'cypress', trunk: new THREE.CylinderGeometry(0.13, 0.19, 1.1, 5),
+      canopy: new THREE.ConeGeometry(0.8, 6.0, 6), trunkColour: 0x5d4030, canopyColour: 0x255f38,
+      lift: 3.4, scale: [1.4, 2.3] as const,
+    },
+    {
+      // a bare one, for the treeline where the forest gives out
+      name: 'standing dead', trunk: new THREE.CylinderGeometry(0.16, 0.3, 3.6, 5),
+      canopy: new THREE.IcosahedronGeometry(0.75, 0), trunkColour: 0x7d6a52, canopyColour: 0x8d7a5e,
+      lift: 1.5, scale: [1.4, 2.2] as const,
+    },
+  ]
+  const capacity = 700
+  const kinds = SPECIES.map((species) => ({
+    species,
+    trunk: new THREE.InstancedMesh(
+      species.trunk, new THREE.MeshStandardMaterial({ color: species.trunkColour, flatShading: true }), capacity,
+    ),
+    canopy: new THREE.InstancedMesh(
+      species.canopy, new THREE.MeshStandardMaterial({ color: species.canopyColour, flatShading: true }), capacity,
+    ),
+    count: 0,
+  }))
+  const tint = new THREE.Color()
+
   let trees = 0
   let attempts = 0
-  while (trees < 1000 && attempts < 9000) {
+  while (trees < 2400 && attempts < 26000) {
     attempts++
     const north = (rnd() * 2 - 1) * 760
     const east = (rnd() * 2 - 1) * 760
@@ -714,52 +744,112 @@ function* earthPropStage(
     at.lon = point.lon
     if (padDistance(at.lat, at.lon, landerSite(planet.id)) < 0.02) continue
     const height = radiusOf(at.lat, at.lon) - radius
-    // forested up to about 140 m up a peak, bare rock above it, and one tree in
-    // twenty-five out on the meadow
-    if (height > 140) continue
-    if (height < 8 && rnd() > 0.04) continue
-    const scale = 2.4 + rnd() * 2.4
+    // the treeline: forest thins out as it climbs and stops at the rock, so the
+    // peaks read as wooded shoulders under bare stone rather than as pines to
+    // the summit
+    if (height > 150) continue
+    const treeline = clampValue((150 - height) / 55, 0, 1)
+    if (height > 8 && rnd() > treeline) continue
+    if (height < 8 && rnd() > 0.05) continue
+
+    // what grows where: broadleaf down on the paddy floor, the tall narrow ones
+    // up the slopes, and the dead standing among the top of the treeline
+    let pick: number
+    if (height < 8) pick = rnd() < 0.72 ? 0 : rnd() < 0.5 ? 1 : 3
+    else if (height > 105) pick = rnd() < 0.5 ? 3 : rnd() < 0.6 ? 2 : 1
+    else pick = rnd() < 0.34 ? 1 : rnd() < 0.55 ? 2 : rnd() < 0.9 ? 0 : 3
+    const kind = kinds[pick]
+    if (kind.count >= capacity) continue
+
+    const species = kind.species
+    const scale = species.scale[0] + rnd() * (species.scale[1] - species.scale[0])
     dir(at.lat, at.lon, scratchDir)
-    dummy.position.copy(scratchDir).multiplyScalar(radiusOf(at.lat, at.lon) + 0.6 * scale)
+    const ground = radiusOf(at.lat, at.lon)
+    dummy.position.copy(scratchDir).multiplyScalar(ground + species.lift * 0.3 * scale)
     dummy.quaternion.setFromUnitVectors(UP, scratchDir)
     dummy.rotateY(rnd() * TAU)
     dummy.scale.setScalar(scale)
     dummy.updateMatrix()
-    trunkMesh.setMatrixAt(trees, dummy.matrix)
-    dummy.position.copy(scratchDir).multiplyScalar(radiusOf(at.lat, at.lon) + 2.05 * scale)
+    kind.trunk.setMatrixAt(kind.count, dummy.matrix)
+    dummy.position.copy(scratchDir).multiplyScalar(ground + species.lift * scale)
     dummy.updateMatrix()
-    canopyMesh.setMatrixAt(trees, dummy.matrix)
+    kind.canopy.setMatrixAt(kind.count, dummy.matrix)
+    // and every tree its own shade, so the canopy is not one flat green
+    tint.setHSL(0.26 + (rnd() - 0.5) * 0.06, 0.42 + rnd() * 0.24, 0.26 + rnd() * 0.16)
+    kind.canopy.setColorAt(kind.count, tint)
+    kind.count++
     trees++
     if (trees % LOD_PROP_SLICE === 0) yield
   }
-  trunkMesh.count = trees
-  canopyMesh.count = trees
-  trunkMesh.instanceMatrix.needsUpdate = true
-  canopyMesh.instanceMatrix.needsUpdate = true
+  for (const kind of kinds) {
+    kind.trunk.count = kind.count
+    kind.canopy.count = kind.count
+    kind.trunk.instanceMatrix.needsUpdate = true
+    kind.canopy.instanceMatrix.needsUpdate = true
+    if (kind.canopy.instanceColor) kind.canopy.instanceColor.needsUpdate = true
+    group.add(kind.trunk, kind.canopy)
+  }
+  yield
 
-  const rockMesh = new THREE.InstancedMesh(
-    new THREE.IcosahedronGeometry(0.9, 0),
-    new THREE.MeshStandardMaterial({ color: planet.rock, flatShading: true }),
-    160,
+  /**
+   * Rocks in three shapes rather than one, and bushes among them: what the
+   * ground needs at this size is a scatter that does not read as a scatter. The
+   * reference valley has boulders along the water, outcrops on the slopes and
+   * scrub in between, and each of those is a different silhouette.
+   */
+  const STONES = [
+    { geometry: new THREE.IcosahedronGeometry(0.9, 0), flat: 1.0 },
+    { geometry: new THREE.DodecahedronGeometry(0.85, 0), flat: 0.8 },
+    { geometry: new THREE.BoxGeometry(1.5, 0.8, 1.1), flat: 0.6 },
+  ]
+  const stones = STONES.map((stone) => ({
+    mesh: new THREE.InstancedMesh(
+      stone.geometry,
+      new THREE.MeshStandardMaterial({ color: planet.rock, flatShading: true }),
+      220,
+    ),
+    flat: stone.flat,
+    count: 0,
+  }))
+  const bushes = new THREE.InstancedMesh(
+    new THREE.IcosahedronGeometry(1.0, 0),
+    new THREE.MeshStandardMaterial({ color: 0x3f7a38, flatShading: true }),
+    700,
   )
+  let bushesPlaced = 0
   let rocks = 0
-  let rockAttempts = 0
-  while (rocks < 160 && rockAttempts < 2400) {
-    rockAttempts++
+  let attempts2 = 0
+  while (rocks < 480 && attempts2 < 9000) {
+    attempts2++
     const north = (rnd() * 2 - 1) * 700
     const east = (rnd() * 2 - 1) * 700
     const point = fromPad(planet.landerLat, planet.landerLon, north, east, radius)
     const height = radiusOf(point.lat, point.lon) - radius
-    // boulders belong on the slopes and in the shallows, not in the paddy
-    if (height < 6 && riverDistance(north, east) > 30) continue
-    placeProp(dummy, radiusOf, point.lat, point.lon, 0.25, 0.8 + rnd() * 3.2, rnd)
-    rockMesh.setMatrixAt(rocks, dummy.matrix)
-    rocks++
-    if (rocks % LOD_PROP_SLICE === 0) yield
+    const nearRiver = riverDistance(north, east)
+    // boulders belong on the slopes and in the shallows, not out in the paddy
+    if (height < 6 && nearRiver > 30) continue
+    if (rnd() < 0.45 && bushesPlaced < 700) {
+      placeProp(dummy, radiusOf, point.lat, point.lon, -0.25, 0.7 + rnd() * 1.5, rnd)
+      bushes.setMatrixAt(bushesPlaced, dummy.matrix)
+      bushesPlaced++
+    } else {
+      const stone = stones[Math.floor(rnd() * stones.length)]
+      if (stone.count >= 220) continue
+      placeProp(dummy, radiusOf, point.lat, point.lon, 0.2, (0.8 + rnd() * 3.4) * stone.flat, rnd)
+      stone.mesh.setMatrixAt(stone.count, dummy.matrix)
+      stone.count++
+      rocks++
+    }
+    if ((rocks + bushesPlaced) % LOD_PROP_SLICE === 0) yield
   }
-  rockMesh.count = rocks
-  rockMesh.instanceMatrix.needsUpdate = true
-  group.add(trunkMesh, canopyMesh, rockMesh)
+  bushes.count = bushesPlaced
+  bushes.instanceMatrix.needsUpdate = true
+  group.add(bushes)
+  for (const stone of stones) {
+    stone.mesh.count = stone.count
+    stone.mesh.instanceMatrix.needsUpdate = true
+    group.add(stone.mesh)
+  }
   yield
 }
 
