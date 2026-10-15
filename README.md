@@ -178,8 +178,8 @@ to ~66 ms in the dev harness (where every number is worse than production).
 
 Tuning levers, in the order to reach for them: `world.setQuality(true)` (drops
 the pixel ratio to 1), the reduced-motion setting (skips the warm-up and all
-shake), and the per-world texture resolution (`public/textures` — 954 kB for all
-six maps at the sizes above, or roughly 380 kB if every one were cut to 1K).
+shake), and the per-world texture resolution (`public/textures` — 2.0 MB for all
+eight maps, of which Earth's ground tile is the largest single item at 1.1 MB).
 
 ## Credits & licences
 
@@ -207,9 +207,28 @@ closest approach, so the extra resolution would never be visible. The Sun's map
 drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
 thins as the ship gets close so the photosphere is what you see up close.
 Everything else in the game — every mesh, every other texture, every sound — is
-generated in code. Each map loads lazily, only when its world refines to full
-detail, and if one is missing the globe falls back to its painted canvas, so the
-game still runs offline.
+generated in code, with one exception: **Earth's ground tile is a photograph**,
+and it is graded before it ships. It repeats every five metres across a valley
+fifteen hundred metres wide, so its low frequencies are flattened first — a patch
+of shade four metres across would otherwise print itself two hundred times at a
+perfectly regular interval — and its tone is trimmed to sit under the terrain's
+vertex colours rather than fight them. The field is green on the palette's
+authority; all the tile carries is the detail.
+
+| File | Role | Re-encoded |
+|---|---|---|
+| `earth_grass.webp` | Earth's ground colour, one tile per 5 m | WebP q92, 1024×1024, 469 kB |
+| `earth_grass_normal.webp` | its relief, derived from the same frame | lossless WebP, 512×512, 645 kB |
+
+The relief is lossless on purpose. A normal map is noise-like — the worst case
+for any lossy codec — and at q95 it still carried 12° of mean angular error that
+did not improve with quality. Half resolution, losslessly, is both smaller and
+correct.
+
+Each map loads lazily, only when its world refines to full detail, and if one is
+missing the globe falls back to its painted canvas, so the game still runs
+offline. Earth's ground tile loads the same way, and if it is missing the field
+is merely untextured rather than unbuilt.
 
 **Earth is a valley, and it set its own size.** The reference build is a karst
 valley - a flat paddy floor, a meandering river, ten faceted peaks and a layered

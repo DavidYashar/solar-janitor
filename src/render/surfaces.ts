@@ -134,21 +134,31 @@ const SOIL_TEXELS = 1024
 /** metres of ground one tile covers at the landing site; sets the repeat below */
 const SOIL_SPAN = 6
 /**
+ * Earth's floor is a photograph of mown grass rather than a brush stroke, and
+ * its tile is five metres instead of six: the source was shot close enough that
+ * a blade of grass is a few pixels wide, and at five metres a blade still lands
+ * about the size it should be under a boot.
+ */
+const EARTH_GRASS_SPAN = 5
+/** the tile, and the relief that lets it catch a low sun */
+const EARTH_GRASS_COLOUR = '/textures/earth_grass.webp'
+const EARTH_GRASS_RELIEF = '/textures/earth_grass_normal.webp'
+/**
  * How many times the tile wraps its world - measured at the landing site, so a
  * tile of the sphere's own UVs comes out square on the ground you actually walk
  * on. It is a property of the world, because Earth's site is a valley five and
  * a half times the size of a crater field.
  */
-function soilRepeat(radius: number, lat: number): { x: number; y: number } {
+function soilRepeat(radius: number, lat: number, span = SOIL_SPAN): { x: number; y: number } {
   return {
-    x: Math.max(1, Math.round((TAU * radius * Math.cos(lat)) / SOIL_SPAN)),
-    y: Math.max(1, Math.round((Math.PI * radius) / SOIL_SPAN)),
+    x: Math.max(1, Math.round((TAU * radius * Math.cos(lat)) / span)),
+    y: Math.max(1, Math.round((Math.PI * radius) / span)),
   }
 }
 
 export interface SoilMaps {
-  colour: THREE.CanvasTexture
-  normal: THREE.CanvasTexture
+  colour: THREE.Texture
+  normal: THREE.Texture
 }
 
 /**
@@ -332,121 +342,46 @@ function* paintSoil(planet: PlanetDef): Generator<void, SoilMaps, void> {
 const soilMaps = new Map<number, SoilMaps>()
 
 /**
- * The same tile, painted as grass: pale and near-neutral on purpose, because the
- * terrain's vertex colours are multiplied over it and they carry the greens. What
- * this layer owns is everything smaller than a boot - the blades, the clumps, the
- * grit - and the relief that makes them catch a low sun.
+ * Earth's floor is a photograph of mown grass rather than a brush stroke.
+ * `load()` returns at once and fills the texture in when the file arrives, so the
+ * terrain builds without waiting on the network.
+ *
+ * The tile is graded before it ships, and both corrections come from the same
+ * fact: it repeats every five metres across a valley fifteen hundred metres
+ * wide. The low frequencies are flattened, because a patch of shade four metres
+ * across would otherwise print itself two hundred times at a perfectly regular
+ * interval. And the tone is trimmed to sit under the vertex colours rather than
+ * fight them, because this field is green on the palette's authority and all the
+ * tile has to carry is the detail.
  */
-function* paintGrass(planet: PlanetDef): Generator<void, SoilMaps, void> {
-  const planetId = planet.id
-  const repeat = soilRepeat(planet.surfaceRadius, planet.landerLat)
-  const size = SOIL_TEXELS
-  const rnd = makeRnd(6151 + planetId)
-  const colour = document.createElement('canvas')
-  colour.width = size
-  colour.height = size
-  const ctx = colour.getContext('2d')
-  const relief = document.createElement('canvas')
-  relief.width = size
-  relief.height = size
-  const depth = relief.getContext('2d')
-  if (!ctx || !depth) return { colour: finishTexture(colour), normal: flatTexture(128, 128, 255) }
-
-  ctx.fillStyle = '#cfd6c6'
-  ctx.fillRect(0, 0, size, size)
-  depth.fillStyle = '#808080'
-  depth.fillRect(0, 0, size, size)
-  yield
-
-  // clumps: a meadow is never one tone, it is patches of longer and shorter grass
-  for (let i = 0; i < 700; i++) {
-    const x = rnd() * size
-    const y = rnd() * size
-    const r = 18 + rnd() * 110
-    const lighter = rnd() > 0.5
-    const alpha = 0.03 + rnd() * 0.07
-    ctx.fillStyle = lighter ? `rgba(232, 240, 216, ${alpha})` : `rgba(88, 104, 74, ${alpha})`
-    stampWrapped(size, x, y, r, (px, py) => {
-      ctx.beginPath()
-      ctx.arc(px, py, r, 0, TAU)
-      ctx.fill()
-    })
-    if (i % 100 === 0) yield
+function earthGrass(planet: PlanetDef): SoilMaps {
+  const repeat = soilRepeat(planet.surfaceRadius, planet.landerLat, EARTH_GRASS_SPAN)
+  const loader = new THREE.TextureLoader()
+  const colour = loader.load(EARTH_GRASS_COLOUR)
+  colour.colorSpace = THREE.SRGBColorSpace
+  const normal = loader.load(EARTH_GRASS_RELIEF)
+  // a normal map carries directions, not colour, so it must not be sRGB-decoded
+  normal.colorSpace = THREE.NoColorSpace
+  for (const texture of [colour, normal]) {
+    texture.wrapS = THREE.RepeatWrapping
+    texture.wrapT = THREE.RepeatWrapping
+    texture.repeat.set(repeat.x, repeat.y)
+    texture.anisotropy = 8
   }
-
-  // the blades: short strokes, mostly upright, each one a ridge in the relief map
-  for (let i = 0; i < 7000; i++) {
-    const x = rnd() * size
-    const y = rnd() * size
-    const len = 4 + rnd() * 26
-    const lean = (rnd() - 0.5) * 0.9
-    const dx = Math.sin(lean) * len
-    const dy = -Math.cos(lean) * len
-    const lighter = rnd() > 0.42
-    const alpha = 0.06 + rnd() * 0.16
-    ctx.strokeStyle = lighter ? `rgba(236, 244, 220, ${alpha})` : `rgba(74, 92, 62, ${alpha})`
-    ctx.lineWidth = 0.6 + rnd() * 1.5
-    const reach = len + 2
-    stampWrapped(size, x, y, reach, (px, py) => {
-      ctx.beginPath()
-      ctx.moveTo(px, py)
-      ctx.lineTo(px + dx, py + dy)
-      ctx.stroke()
-    })
-    depth.strokeStyle = lighter ? `rgba(196, 196, 196, 0.5)` : `rgba(58, 58, 58, 0.5)`
-    depth.lineWidth = 0.6 + rnd() * 1.5
-    stampWrapped(size, x, y, reach, (px, py) => {
-      depth.beginPath()
-      depth.moveTo(px, py)
-      depth.lineTo(px + dx, py + dy)
-      depth.stroke()
-    })
-    if (i % 700 === 0) yield
-  }
-
-  // bare earth showing through, then a few flowers - both are in the reference
-  for (let i = 0; i < 90; i++) {
-    const x = rnd() * size
-    const y = rnd() * size
-    const r = 3 + rnd() * 20
-    const gradient = ctx.createRadialGradient(x, y, 0, x, y, r)
-    gradient.addColorStop(0, 'rgba(150, 132, 96, 0.4)')
-    gradient.addColorStop(1, 'rgba(150, 132, 96, 0)')
-    ctx.fillStyle = gradient
-    stampWrapped(size, x, y, r, (px, py) => {
-      ctx.beginPath()
-      ctx.arc(px, py, r, 0, TAU)
-      ctx.fill()
-    })
-  }
-  for (let i = 0; i < 140; i++) {
-    const x = rnd() * size
-    const y = rnd() * size
-    const r = 0.7 + rnd() * 1.4
-    const warm = rnd() > 0.5
-    ctx.fillStyle = warm ? 'rgba(244, 232, 150, 0.75)' : 'rgba(246, 246, 238, 0.75)'
-    stampWrapped(size, x, y, r + 1, (px, py) => {
-      ctx.beginPath()
-      ctx.arc(px, py, r, 0, TAU)
-      ctx.fill()
-    })
-  }
-  yield
-
-  const normal = yield* soilNormal(relief, size, repeat)
-  const soil = finishTexture(colour)
-  soil.wrapS = THREE.RepeatWrapping
-  soil.wrapT = THREE.RepeatWrapping
-  soil.repeat.set(repeat.x, repeat.y)
-  soil.anisotropy = 8
-  return { colour: soil, normal }
+  return { colour, normal }
 }
 
-/** Painted once per session: a surface can be rebuilt on every landing. */
+/** Loaded or painted once per session: a surface is rebuilt on every landing. */
 function* soilTextures(planet: PlanetDef): Generator<void, SoilMaps, void> {
   const cached = soilMaps.get(planet.id)
   if (cached) return cached
-  const maps = yield* (planet.theme === 'earth' ? paintGrass(planet) : paintSoil(planet))
+  // only Earth's floor has a source photograph; the other two are still painted
+  if (planet.theme === 'earth') {
+    const maps = earthGrass(planet)
+    soilMaps.set(planet.id, maps)
+    return maps
+  }
+  const maps = yield* paintSoil(planet)
   soilMaps.set(planet.id, maps)
   return maps
 }
