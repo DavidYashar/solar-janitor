@@ -738,12 +738,12 @@ function buildRiver(planet: PlanetDef): THREE.Mesh {
 }
 
 /**
- * A tree card. Cut, not blended: two thousand of these facing every which way
- * would need a sort order that cannot exist, and cutting gives the depth buffer
- * something to write. With MSAA on, alpha-to-coverage softens the cut so the
- * leaves do not come out as a jagged stencil.
+ * A cut-out card, for a tree or a bush. Cut, not blended: thousands of these
+ * facing every which way would need a sort order that cannot exist, and cutting
+ * gives the depth buffer something to write. With MSAA on, alpha-to-coverage
+ * softens the cut so leaves do not come out as a jagged stencil.
  */
-function treeMaterial(file: string): THREE.MeshStandardMaterial {
+function billboardMaterial(file: string): THREE.MeshStandardMaterial {
   const map = new THREE.TextureLoader().load(`/textures/${file}.webp`)
   map.colorSpace = THREE.SRGBColorSpace
   map.anisotropy = 8
@@ -817,7 +817,7 @@ function* earthPropStage(
   const card = crossTreeGeometry()
   const kinds = SPECIES.map((species) => ({
     species,
-    mesh: new THREE.InstancedMesh(card, treeMaterial(species.file), capacity),
+    mesh: new THREE.InstancedMesh(card, billboardMaterial(species.file), capacity),
     count: 0,
   }))
   const tint = new THREE.Color()
@@ -898,12 +898,6 @@ function* earthPropStage(
     flat: stone.flat,
     count: 0,
   }))
-  const bushes = new THREE.InstancedMesh(
-    new THREE.IcosahedronGeometry(1.0, 0),
-    new THREE.MeshStandardMaterial({ color: 0x3f7a38, flatShading: true }),
-    700,
-  )
-  let bushesPlaced = 0
   let rocks = 0
   let attempts2 = 0
   while (rocks < 480 && attempts2 < 9000) {
@@ -916,27 +910,88 @@ function* earthPropStage(
     // boulders belong on the slopes and along the water, but not in it
     if (nearRiver < 20) continue
     if (height < 6 && nearRiver > 30) continue
-    if (rnd() < 0.45 && bushesPlaced < 700) {
-      placeProp(dummy, radiusOf, point.lat, point.lon, -0.25, 0.7 + rnd() * 1.5, rnd)
-      bushes.setMatrixAt(bushesPlaced, dummy.matrix)
-      bushesPlaced++
-    } else {
-      const stone = stones[Math.floor(rnd() * stones.length)]
-      if (stone.count >= 220) continue
-      placeProp(dummy, radiusOf, point.lat, point.lon, 0.2, (0.8 + rnd() * 3.4) * stone.flat, rnd)
-      stone.mesh.setMatrixAt(stone.count, dummy.matrix)
-      stone.count++
-      rocks++
-    }
-    if ((rocks + bushesPlaced) % LOD_PROP_SLICE === 0) yield
+    const stone = stones[Math.floor(rnd() * stones.length)]
+    if (stone.count >= 220) continue
+    placeProp(dummy, radiusOf, point.lat, point.lon, 0.2, (0.8 + rnd() * 3.4) * stone.flat, rnd)
+    stone.mesh.setMatrixAt(stone.count, dummy.matrix)
+    stone.count++
+    rocks++
+    if (rocks % LOD_PROP_SLICE === 0) yield
   }
-  bushes.count = bushesPlaced
-  bushes.instanceMatrix.needsUpdate = true
-  group.add(bushes)
   for (const stone of stones) {
     stone.mesh.count = stone.count
     stone.mesh.instanceMatrix.needsUpdate = true
     group.add(stone.mesh)
+  }
+  yield
+
+  /**
+   * Undergrowth: bushes and flowers, on the same crossed cards as the trees.
+   *
+   * Scattered in clumps rather than evenly. A uniform scatter reads as a pattern
+   * however random the numbers are; what makes ground look planted is that things
+   * grow in patches with bare ground between them, so it is the clump centres that
+   * get scattered and the plants that gather round them.
+   */
+  const PLANTS = [
+    { file: 'plant_1', fill: 0.75, height: [1.1, 2.0] as const },
+    { file: 'plant_2', fill: 0.62, height: [0.45, 0.75] as const },
+    { file: 'plant_3', fill: 0.61, height: [0.8, 1.4] as const },
+    { file: 'plant_4', fill: 0.87, height: [0.7, 1.2] as const },
+    { file: 'plant_5', fill: 0.62, height: [0.35, 0.6] as const },
+    { file: 'plant_6', fill: 0.64, height: [0.35, 0.6] as const },
+    { file: 'plant_7', fill: 0.67, height: [0.9, 1.6] as const },
+  ]
+  const plantCapacity = 4000
+  const plantKinds = PLANTS.map((species) => ({
+    species,
+    mesh: new THREE.InstancedMesh(card, billboardMaterial(species.file), plantCapacity),
+    count: 0,
+  }))
+
+  let planted = 0
+  for (let clumps = 0; clumps < 4500 && planted < 34000; clumps++) {
+    const clumpNorth = (rnd() * 2 - 1) * 730
+    const clumpEast = (rnd() * 2 - 1) * 730
+    const centre = fromPad(planet.landerLat, planet.landerLon, clumpNorth, clumpEast, radius)
+    if (padDistance(centre.lat, centre.lon, landerSite(planet.id)) < 0.04) continue
+    // undergrowth belongs to the meadow. It thins as the ground climbs, and the
+    // slopes above are wooded anyway, so a bush up there would be lost in the wood
+    const climb = radiusOf(centre.lat, centre.lon) - radius
+    if (rnd() > clampValue((55 - climb) / 45, 0, 1)) continue
+
+    const spread = 4 + rnd() * 11
+    const howMany = 4 + Math.floor(rnd() * 8)
+    for (let i = 0; i < howMany && planted < 34000; i++) {
+      const north = clumpNorth + (rnd() * 2 - 1) * spread
+      const east = clumpEast + (rnd() * 2 - 1) * spread
+      // along the water is fine, in it is not
+      if (riverDistance(north, east) < 7) continue
+      const point = fromPad(planet.landerLat, planet.landerLon, north, east, radius)
+      if (padDistance(point.lat, point.lon, landerSite(planet.id)) < 0.02) continue
+      const kind = plantKinds[Math.floor(rnd() * plantKinds.length)]
+      if (kind.count >= plantCapacity) continue
+      const species = kind.species
+      const size = species.height[0] + rnd() * (species.height[1] - species.height[0])
+      dir(point.lat, point.lon, scratchDir)
+      dummy.position.copy(scratchDir).multiplyScalar(radiusOf(point.lat, point.lon))
+      dummy.quaternion.setFromUnitVectors(UP, scratchDir)
+      dummy.rotateY(rnd() * TAU)
+      dummy.scale.setScalar(size / species.fill)
+      dummy.updateMatrix()
+      kind.mesh.setMatrixAt(kind.count, dummy.matrix)
+      tint.setScalar(0.88 + rnd() * 0.24)
+      kind.mesh.setColorAt(kind.count, tint)
+      kind.count++
+      planted++
+    }
+    if (clumps % 40 === 0) yield
+  }
+  for (const kind of plantKinds) {
+    kind.mesh.count = kind.count
+    kind.mesh.instanceMatrix.needsUpdate = true
+    if (kind.mesh.instanceColor) kind.mesh.instanceColor.needsUpdate = true
+    group.add(kind.mesh)
   }
   yield
 }
