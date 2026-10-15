@@ -262,11 +262,38 @@ export function valleyFloor(x: number, z: number): number {
   return h
 }
 
+/**
+ * The rock step the river crosses on its way down the valley.
+ *
+ * A river does not descend evenly. Where it meets a band of harder rock it
+ * holds level, then drops - and a drop you can walk up to is the loudest
+ * landmark on a map this size. The step is spread over `FALL_RUN` so the water
+ * ribbon has something to fall down rather than a cliff it teleports off.
+ */
+const FALL_Z = -180
+const FALL_DROP = 6.5
+const FALL_RUN = 30
+
+/** how far the water has dropped by the time it reaches this far down the valley */
+function fallDrop(z: number): number {
+  const t = clamp((FALL_Z - z) / FALL_RUN, 0, 1)
+  return FALL_DROP * t * t * (3 - 2 * t)
+}
+
 // the bed of the channel, filled in once the ground function exists
 for (let i = 0; i < RIVER_SAMPLES.length; i++) {
   const s = RIVER_SAMPLES[i]
-  s.bed = valleyFloor(s.x, s.z) - RIVER_DEPTH
-  s.water = s.bed + RIVER_WATER
+  // A pool on the outside of a bend and a riffle on the inside: the current is
+  // thrown outward, scours the far bank and drops its gravel where it slackens.
+  // Their build has one width and one depth for 1300 metres of river, which is
+  // why it reads as a canal.
+  const scour = clamp(Math.abs(s.curvature) / 25, 0, 1)
+  s.width *= 1 + scour * 0.7
+  const level = valleyFloor(s.x, s.z) - RIVER_DEPTH
+  // the bed scours; the surface stays smooth and only steps at the fall, which
+  // is what water does
+  s.bed = level - scour * 1.7 - fallDrop(s.z)
+  s.water = level + RIVER_WATER - fallDrop(s.z)
 }
 
 interface RiverHit {
