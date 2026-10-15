@@ -144,6 +144,14 @@ const EARTH_GRASS_SPAN = 5
 const EARTH_GRASS_COLOUR = '/textures/earth_grass.webp'
 const EARTH_GRASS_RELIEF = '/textures/earth_grass_normal.webp'
 /**
+ * The slopes wear a second photograph - canopy - and it is a much wider tile than
+ * the grass, because one tree crown is tens of metres across and a crown per five
+ * metres would read as a pattern rather than a wood.
+ */
+const EARTH_CANOPY_SPAN = 16
+const EARTH_CANOPY_COLOUR = '/textures/earth_canopy.webp'
+const EARTH_CANOPY_RELIEF = '/textures/earth_canopy_normal.webp'
+/**
  * How many times the tile wraps its world - measured at the landing site, so a
  * tile of the sphere's own UVs comes out square on the ground you actually walk
  * on. It is a property of the world, because Earth's site is a valley five and
@@ -159,6 +167,8 @@ function soilRepeat(radius: number, lat: number, span = SOIL_SPAN): { x: number;
 export interface SoilMaps {
   colour: THREE.Texture
   normal: THREE.Texture
+  /** Earth only: the canopy that covers the slopes, which the shader mixes over the floor */
+  canopy?: { colour: THREE.Texture; normal: THREE.Texture }
 }
 
 /**
@@ -342,33 +352,89 @@ function* paintSoil(planet: PlanetDef): Generator<void, SoilMaps, void> {
 const soilMaps = new Map<number, SoilMaps>()
 
 /**
- * Earth's floor is a photograph of mown grass rather than a brush stroke.
- * `load()` returns at once and fills the texture in when the file arrives, so the
- * terrain builds without waiting on the network.
+ * Earth's floor is a photograph of mown grass rather than a brush stroke, and its
+ * slopes are a second photograph of canopy. `load()` returns at once and fills the
+ * textures in when the files arrive, so the terrain builds without waiting on the
+ * network.
  *
- * The tile is graded before it ships, and both corrections come from the same
- * fact: it repeats every five metres across a valley fifteen hundred metres
- * wide. The low frequencies are flattened, because a patch of shade four metres
- * across would otherwise print itself two hundred times at a perfectly regular
- * interval. And the tone is trimmed to sit under the vertex colours rather than
- * fight them, because this field is green on the palette's authority and all the
- * tile has to carry is the detail.
+ * Both tiles are graded before they ship, and the corrections come from the same
+ * fact: each one repeats hundreds of times across a valley fifteen hundred metres
+ * wide. Low frequencies are flattened, because a patch of shade would otherwise
+ * print itself at a perfectly regular interval. And the tone is trimmed to sit
+ * under the vertex colours rather than fight them, because this ground is green on
+ * the palette's authority and all the tiles carry is the detail.
+ *
+ * The canopy is loaded without a repeat of its own - the shader derives its
+ * coordinates from the grass tile's, because a mesh has one set of UVs and the two
+ * tiles are different widths.
  */
 function earthGrass(planet: PlanetDef): SoilMaps {
   const repeat = soilRepeat(planet.surfaceRadius, planet.landerLat, EARTH_GRASS_SPAN)
   const loader = new THREE.TextureLoader()
-  const colour = loader.load(EARTH_GRASS_COLOUR)
-  colour.colorSpace = THREE.SRGBColorSpace
-  const normal = loader.load(EARTH_GRASS_RELIEF)
-  // a normal map carries directions, not colour, so it must not be sRGB-decoded
-  normal.colorSpace = THREE.NoColorSpace
-  for (const texture of [colour, normal]) {
+  const load = (url: string, srgb: boolean): THREE.Texture => {
+    const texture = loader.load(url)
+    // a normal map carries directions, not colour, so it must not be sRGB-decoded
+    texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace
     texture.wrapS = THREE.RepeatWrapping
     texture.wrapT = THREE.RepeatWrapping
-    texture.repeat.set(repeat.x, repeat.y)
     texture.anisotropy = 8
+    return texture
   }
-  return { colour, normal }
+  const colour = load(EARTH_GRASS_COLOUR, true)
+  const normal = load(EARTH_GRASS_RELIEF, false)
+  for (const texture of [colour, normal]) texture.repeat.set(repeat.x, repeat.y)
+  return {
+    colour,
+    normal,
+    canopy: { colour: load(EARTH_CANOPY_COLOUR, true), normal: load(EARTH_CANOPY_RELIEF, false) },
+  }
+}
+
+/**
+ * Two ground textures on one mesh. The terrain is a single sphere under a single
+ * material, so a second surface can only arrive through the shader: `forest` is a
+ * per-vertex mask baked in the same pass that painted the colours, and the
+ * fragment stage mixes the canopy over the grass by it.
+ *
+ * `vMapUv` is already the grass tile's transformed coordinate, so multiplying it by
+ * the ratio of the two spans converts one tile's coordinates into the other's.
+ * That ratio is constant across the world because both spans are measured at the
+ * same latitude.
+ */
+function blendCanopy(material: THREE.MeshStandardMaterial, canopy: SoilMaps, uvScale: number): void {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.canopyMap = { value: canopy.colour }
+    shader.uniforms.canopyNormalMap = { value: canopy.normal }
+    shader.uniforms.canopyUvScale = { value: uvScale }
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float forest;\nvarying float vForest;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n\tvForest = forest;')
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+uniform sampler2D canopyMap;
+uniform sampler2D canopyNormalMap;
+uniform float canopyUvScale;
+varying float vForest;`)
+      .replace('#include <map_fragment>', `#ifdef USE_MAP
+	diffuseColor *= mix(
+		texture2D( map, vMapUv ),
+		texture2D( canopyMap, vMapUv * canopyUvScale ),
+		vForest
+	);
+#endif`)
+      .replace('#include <normal_fragment_maps>', `#ifdef USE_NORMALMAP_TANGENTSPACE
+	vec3 mapN = normalize( mix(
+		texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0,
+		texture2D( canopyNormalMap, vNormalMapUv * canopyUvScale ).xyz * 2.0 - 1.0,
+		vForest
+	) );
+	mapN.xy *= normalScale;
+	normal = normalize( tbn * mapN );
+#endif`)
+  }
+  // the shader is built from strings, so the program cache needs telling that this
+  // material is not the plain one
+  material.customProgramCacheKey = () => 'earth-ground-canopy'
 }
 
 /** Loaded or painted once per session: a surface is rebuilt on every landing. */
@@ -458,6 +524,7 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
   const position = geometry.attributes.position
   const source = Float32Array.from(position.array as ArrayLike<number>)
   const colors = new Float32Array(position.count * 3)
+  const forests = new Float32Array(position.count)
   const low = new THREE.Color(planet.groundLow)
   const high = new THREE.Color(planet.groundHigh)
   const rock = new THREE.Color(planet.rock)
@@ -494,6 +561,12 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
         const patch = (valueNoise(lon * 9, lat * 9, seed ^ 0x51ed270b) - 0.5) * 0.16
           + (valueNoise(lon * 31, lat * 31, seed ^ 0x2f1b3c) - 0.5) * 0.08
         color.offsetHSL(0, 0, patch)
+        // where the canopy takes over. Uncapped, this is the same curve that just
+        // tinted the colour toward forest; the wobble keeps the treeline a ragged
+        // edge rather than a height contour, and it keeps the floor clear.
+        forests[i] = clampValue(
+          (h - 8) / 34 + (valueNoise(lon * 26, lat * 26, seed ^ 0x7f3a91) - 0.5) * 0.5, 0, 1,
+        )
       } else {
         const t = clampValue((h + 2.5) / 10, 0, 1)
         color.copy(low).lerp(high, t)
@@ -521,6 +594,7 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
   }
 
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  if (planet.theme === 'earth') geometry.setAttribute('forest', new THREE.BufferAttribute(forests, 1))
   geometry.computeVertexNormals()
   let painted: THREE.MeshStandardMaterial
   if (planet.theme !== 'moon') {
@@ -532,6 +606,7 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
     painted = new THREE.MeshStandardMaterial({
       map: soil.colour, normalMap: soil.normal, vertexColors: true, roughness: 1, metalness: 0,
     })
+    if (soil.canopy) blendCanopy(painted, soil.canopy, EARTH_GRASS_SPAN / EARTH_CANOPY_SPAN)
   } else {
     painted = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 })
   }

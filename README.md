@@ -178,8 +178,8 @@ to ~66 ms in the dev harness (where every number is worse than production).
 
 Tuning levers, in the order to reach for them: `world.setQuality(true)` (drops
 the pixel ratio to 1), the reduced-motion setting (skips the warm-up and all
-shake), and the per-world texture resolution (`public/textures` — 2.0 MB for all
-eight maps, of which Earth's ground tile is the largest single item at 1.1 MB).
+shake), and the per-world texture resolution (`public/textures` — 2.9 MB for all
+ten maps, of which Earth's two ground tiles are the largest single item at 1.7 MB).
 
 ## Credits & licences
 
@@ -207,23 +207,40 @@ closest approach, so the extra resolution would never be visible. The Sun's map
 drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
 thins as the ship gets close so the photosphere is what you see up close.
 Everything else in the game — every mesh, every other texture, every sound — is
-generated in code, with one exception: **Earth's ground tile is a photograph**,
-and it is graded before it ships. It repeats every five metres across a valley
-fifteen hundred metres wide, so its low frequencies are flattened first — a patch
-of shade four metres across would otherwise print itself two hundred times at a
-perfectly regular interval — and its tone is trimmed to sit under the terrain's
-vertex colours rather than fight them. The field is green on the palette's
-authority; all the tile carries is the detail.
+generated in code, with one exception: **Earth's ground is two photographs**, and
+both are graded before they ship. Each repeats hundreds of times across a valley
+fifteen hundred metres wide, so their low frequencies are flattened first — a
+patch of shade would otherwise print itself at a perfectly regular interval — and
+their tone is trimmed to sit under the terrain's vertex colours rather than fight
+them. The ground is green on the palette's authority; all the tiles carry is the
+detail.
 
 | File | Role | Re-encoded |
 |---|---|---|
-| `earth_grass.webp` | Earth's ground colour, one tile per 5 m | WebP q92, 1024×1024, 469 kB |
+| `earth_grass.webp` | Earth's floor, one tile per 5 m | WebP q92, 1024×1024, 469 kB |
 | `earth_grass_normal.webp` | its relief, derived from the same frame | lossless WebP, 512×512, 645 kB |
+| `earth_canopy.webp` | the slopes above the treeline, one tile per 16 m | WebP q90, 1024×1024, 298 kB |
+| `earth_canopy_normal.webp` | its relief, derived from the same frame | lossless WebP, 512×512, 626 kB |
 
 The relief is lossless on purpose. A normal map is noise-like — the worst case
 for any lossy codec — and at q95 it still carried 12° of mean angular error that
 did not improve with quality. Half resolution, losslessly, is both smaller and
 correct.
+
+The canopy source was **not** tileable: its opposite edges differed by 3.5× the
+typical neighbouring-pixel difference, which is a visible line. It is therefore
+blended with its own half-rolls before anything else, so opposite edges are built
+from the same source pixels and meet by construction. The seam measured 1.34×
+afterwards — better than the grass tile, which arrived tileable.
+
+**Two textures on one mesh.** The terrain is a single sphere under a single
+material, so the canopy has to arrive through the shader: `forest` is a per-vertex
+mask baked in the same pass that paints the colours — off across the whole valley
+floor, on above the treeline, with a noise wobble so the edge is a ragged treeline
+rather than a height contour — and the fragment stage mixes the canopy over the
+grass by it, colour map and relief map alike. The canopy carries its own UV scale
+rather than its own repeat, because a mesh has one set of UVs and the two tiles
+are different widths.
 
 Each map loads lazily, only when its world refines to full detail, and if one is
 missing the globe falls back to its painted canvas, so the game still runs
