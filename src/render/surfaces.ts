@@ -693,7 +693,7 @@ function buildRiver(planet: PlanetDef): THREE.Mesh {
     const dx = next.x - prev.x
     const dz = next.z - prev.z
     const length = Math.hypot(dx, dz) || 1
-    const half = s.width * 0.8
+    const half = s.width * 0.85
     if (i > 0) along += Math.hypot(s.x - prev.x, s.z - prev.z)
     // v runs downstream in metres, so the ripple scrolls at the same rate the
     // river falls however wide it gets

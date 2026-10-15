@@ -107,21 +107,19 @@ export function sightline(distance: number, radius: number): number {
 
 // ------------------------------------------------------------ the meander
 
-const RIVER_HALF_WIDTH = 15
+const RIVER_HALF_WIDTH = 11
 /**
- * How deep the channel is cut below the valley floor, and how much water
- * stands in it.
+ * How deep the channel is cut below the valley floor, and how much water stands
+ * in it.
  *
  * The first pass had a two-and-a-half metre trench spread over fifty metres of
  * ground, which is a one-in-twenty slope - invisible from two metres up, so the
  * water simply looked laid on the grass. A river that has cut into its flood
- * plain is a valley: five metres down and about forty across, with the water
- * almost two deep in the bottom of it. That is a hollow you stand on the edge
- * of and look down into.
+ * plain is a valley: five metres down, with the water chest deep in the bottom.
  */
 const RIVER_DEPTH = 5
 /** how deep the water stands above the bed - chest deep on the janitor */
-const RIVER_WATER = 1.6
+const RIVER_WATER = 1.2
 /**
  * The channel's cross-section: a flat bed out to `RIVER_BED` widths, then the
  * bank climbing back to the valley floor over `RIVER_BANK` more. A bank sharper
@@ -298,10 +296,12 @@ for (let i = 0; i < RIVER_SAMPLES.length; i++) {
   const scour = clamp(Math.abs(s.curvature) / 25, 0, 1)
   s.width *= 1 + scour * 0.7
   const level = valleyFloor(s.x, s.z) - RIVER_DEPTH
-  // the bed scours and drops at the fall; the surface only drops at the fall,
-  // which is what water does
-  s.bed = level - scour * 1.7 - fallDrop(s.z)
+  // The surface is what is fixed and the bed hangs off it, not the other way
+  // round. Scouring the bed alone is what made a pool three metres deep while a
+  // riffle was one - the water was drawn at a level that ignored the pool, so
+  // standing anywhere in a bend put you over your head.
   s.water = level + RIVER_WATER - fallDrop(s.z)
+  s.bed = s.water - (RIVER_WATER + scour * 0.35)
 }
 
 interface RiverHit {
