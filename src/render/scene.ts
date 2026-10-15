@@ -15,7 +15,7 @@ import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
 import { buildShip } from './ship.ts'
 import {
-  canvasTexture, clampValue, createSurfaceJob, dir, glowTexture, makeRnd, riverFlow, surfacePoint,
+  canvasTexture, clampValue, createSurfaceJob, dir, glowTexture, makeRnd, riverFlow, surfacePoint, windRotors,
 } from './surfaces.ts'
 import type { SurfaceBuild, SurfaceJob } from './surfaces.ts'
 
@@ -1112,6 +1112,10 @@ export function createWorld(container: HTMLElement): World {
     // two banks becomes a river that is going somewhere
     const flow = riverFlow()
     flow.offset.y -= dt * 0.42
+    // and the wind park turns, which is the difference between a turbine and a
+    // mast with three planks on it
+    const spin = dt * (0.5 + (game.hazards.stormIntensity ?? 0) * 2.4)
+    for (const rotor of windRotors) rotor.rotation.z += spin
     updateSurfaceMood(game)
     updateMeteorTelegraph(game)
     updateDustStorm(game, dt)

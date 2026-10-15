@@ -997,6 +997,179 @@ function* moonPropStage(
   yield
 }
 
+// -------------------------------------------------------------- settlement
+
+/** the wind park, on a shoulder of the eastern peak */
+const WIND_SITE = { x: 470, z: -250 }
+/** where the village sits: east of the meander, which never reaches past x = 76 */
+const VILLAGE = { x: 168, z: -52 }
+
+/** A cottage: a box, a pitched roof, a chimney and a doorway. */
+function buildCottage(rnd: () => number): THREE.Group {
+  const group = new THREE.Group()
+  const wall = new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(0.09, 0.16 + rnd() * 0.1, 0.52 + rnd() * 0.16),
+    flatShading: true, roughness: 0.95,
+  })
+  const roof = new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(0.03, 0.3 + rnd() * 0.2, 0.2 + rnd() * 0.1),
+    flatShading: true, roughness: 0.9,
+  })
+  const w = 6 + rnd() * 4
+  const d = 5 + rnd() * 3
+  const h = 3.2 + rnd() * 1.4
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wall)
+  body.position.y = h / 2
+  group.add(body)
+  const pitch = new THREE.Mesh(new THREE.ConeGeometry(Math.hypot(w, d) * 0.62, 2.4 + rnd(), 4), roof)
+  pitch.position.y = h + 1.1
+  pitch.rotation.y = Math.PI / 4
+  group.add(pitch)
+  const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.8, 0.7), roof)
+  chimney.position.set(w * 0.28, h + 1.6, -d * 0.24)
+  group.add(chimney)
+  return group
+}
+
+/** A wind turbine: a tapered tower, a nacelle and three blades on a hub. */
+function buildTurbine(height: number): THREE.Group {
+  const tower = new THREE.MeshStandardMaterial({ color: 0xe8eef2, roughness: 0.5, metalness: 0.2 })
+  const group = new THREE.Group()
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 1.5, height, 8), tower)
+  mast.position.y = height / 2
+  group.add(mast)
+  const rotor = new THREE.Group()
+  rotor.position.set(0, height, 1.2)
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1.4, 8), tower)
+  hub.rotation.x = Math.PI / 2
+  rotor.add(hub)
+  for (let i = 0; i < 3; i++) {
+    const arm = new THREE.Group()
+    arm.rotation.z = (i / 3) * TAU
+    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.5, height * 0.36, 0.16), tower)
+    blade.position.y = height * 0.19
+    arm.add(blade)
+    rotor.add(arm)
+  }
+  group.add(rotor)
+  group.userData.rotor = rotor
+  return group
+}
+
+function* earthSettlementStage(
+  planet: PlanetDef, seed: number, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
+): Generator<void, void, void> {
+  const rnd = makeRnd(seed ^ 0x2b9f41)
+  const radius = planet.surfaceRadius
+
+  /**
+   * The path, and the fence beside it. Laid out in the design's own metres and
+   * converted, because a path is a line between two places and neither of those
+   * places is a latitude.
+   */
+  const from = { x: PAD_ORIGIN.x, z: PAD_ORIGIN.z }
+  const to = VILLAGE
+  const steps = 90
+  const positions: number[] = []
+  const uvs: number[] = []
+  const indices: number[] = []
+  const posts: THREE.Matrix4[] = []
+  const vertex = new THREE.Vector3()
+  const dummy = new THREE.Object3D()
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps
+    // a walk does not go straight: it wanders, most of all halfway
+    const sway = Math.sin(t * Math.PI * 1.6) * 17 * Math.sin(t * Math.PI)
+    const dx = to.x - from.x
+    const dz = to.z - from.z
+    const len = Math.hypot(dx, dz) || 1
+    const north = from.z + dz * t + (dx / len) * sway
+    const east = from.x + dx * t - (dz / len) * sway
+    if (i > 0) {
+      for (const side of [-1, 1]) {
+        const nx = north + (dx / len) * 1.3 * side
+        const nz = east - (dz / len) * 1.3 * side
+        const edge = fromPad(planet.landerLat, planet.landerLon, nx, nz, radius)
+        dir(edge.lat, edge.lon, vertex).multiplyScalar(radiusOf(edge.lat, edge.lon) + 0.08)
+        positions.push(vertex.x, vertex.y, vertex.z)
+        uvs.push(side < 0 ? 0 : 1, i * 0.5)
+      }
+      const a = (i - 1) * 2
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3)
+    }
+    // fence posts on the downhill side, every few metres
+    if (i % 5 === 0 && i > 2) {
+      const nx = north + (dx / len) * 2.4
+      const nz = east - (dz / len) * 2.4
+      const post = fromPad(planet.landerLat, planet.landerLon, nx, nz, radius)
+      dir(post.lat, post.lon, scratchDir)
+      dummy.position.copy(scratchDir).multiplyScalar(radiusOf(post.lat, post.lon) + 0.7)
+      dummy.quaternion.setFromUnitVectors(UP, scratchDir)
+      dummy.rotateY(rnd() * 0.3)
+      dummy.scale.setScalar(1)
+      dummy.updateMatrix()
+      posts.push(dummy.matrix.clone())
+    }
+    if (i % 30 === 0) yield
+  }
+
+  const pathGeometry = new THREE.BufferGeometry()
+  pathGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  pathGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  pathGeometry.setIndex(indices)
+  pathGeometry.computeVertexNormals()
+  group.add(new THREE.Mesh(pathGeometry, new THREE.MeshStandardMaterial({
+    color: 0xc9bda2, roughness: 1, side: THREE.DoubleSide,
+  })))
+  yield
+
+  if (posts.length) {
+    const fence = new THREE.InstancedMesh(
+      new THREE.CylinderGeometry(0.11, 0.14, 1.4, 5),
+      new THREE.MeshStandardMaterial({ color: 0x6b5238, flatShading: true }),
+      posts.length,
+    )
+    for (let i = 0; i < posts.length; i++) fence.setMatrixAt(i, posts[i])
+    fence.instanceMatrix.needsUpdate = true
+    group.add(fence)
+  }
+  yield
+
+  // the village: a loose cluster either side of where the path arrives
+  for (let i = 0; i < 7; i++) {
+    const spread = 46
+    const north = VILLAGE.z + (rnd() * 2 - 1) * spread
+    const east = VILLAGE.x + (rnd() * 2 - 1) * spread
+    if (riverDistance(north, east) < 70) continue
+    const point = fromPad(planet.landerLat, planet.landerLon, north, east, radius)
+    const cottage = buildCottage(rnd)
+    placeGroup(cottage, radiusOf, point.lat, point.lon, -0.15, rnd() * TAU)
+    group.add(cottage)
+    yield
+  }
+
+  // the wind park, on the shoulder of the peak where the wind actually is
+  for (let i = 0; i < 5; i++) {
+    const north = WIND_SITE.z + i * 62
+    const east = WIND_SITE.x - i * 26
+    if (riverDistance(north, east) < 40) continue
+    const point = fromPad(planet.landerLat, planet.landerLon, north, east, radius)
+    const height = radiusOf(point.lat, point.lon) - radius
+    if (height < 45) continue
+    const turbine = buildTurbine(46 + rnd() * 10)
+    placeGroup(turbine, radiusOf, point.lat, point.lon, -0.4, rnd() * TAU)
+    group.add(turbine)
+    windRotors.push(turbine.userData.rotor as THREE.Group)
+    yield
+  }
+}
+
+/** rotors the caller spins, so a wind park is not a line of statues */
+export const windRotors: THREE.Group[] = []
+
+// -------------------------------------------------------------- settlement end
+
 /** A lander probe half swallowed by the dunes. */
 function buildProbeWreck(): THREE.Group {
   const group = new THREE.Group()
@@ -1136,6 +1309,7 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {  
       yield
     })
     stages.push(() => earthPropStage(planet, seed, terrainRadius, detail))
+    stages.push(() => earthSettlementStage(planet, seed, terrainRadius, detail))
   } else if (planet.theme === 'moon') {
     stages.push(() => moonPropStage(planet, seed, terrainRadius, detail))
   } else {
