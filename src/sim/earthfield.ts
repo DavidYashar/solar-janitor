@@ -108,20 +108,29 @@ export function sightline(distance: number, radius: number): number {
 // ------------------------------------------------------------ the meander
 
 const RIVER_HALF_WIDTH = 15
-/** how deep the bed sits below the ground at that point on the meander */
-const RIVER_DEPTH = 2.6
-/** how deep the water stands above the bed - chest deep on the janitor, so it reads as a river */
-const RIVER_WATER = 1.5
 /**
- * Where the bank finishes climbing back to the valley floor, as a multiple of
- * the channel's own width. The reference runs it out to 2.6 widths, and the
- * consequence is that the bank crosses the water line sixty metres from the
- * centreline - a river a hundred and thirty metres wide, which on screen reads
- * as a lake. A bank that climbs over seven tenths of a width puts the water's
- * edge twenty metres out, which reads as a river.
+ * How deep the channel is cut below the valley floor, and how much water
+ * stands in it.
+ *
+ * The first pass had a two-and-a-half metre trench spread over fifty metres of
+ * ground, which is a one-in-twenty slope - invisible from two metres up, so the
+ * water simply looked laid on the grass. A river that has cut into its flood
+ * plain is a valley: five metres down and about forty across, with the water
+ * almost two deep in the bottom of it. That is a hollow you stand on the edge
+ * of and look down into.
  */
-const RIVER_BANK = 0.7
-const RIVER_REACH = 1.8
+const RIVER_DEPTH = 5
+/** how deep the water stands above the bed - chest deep on the janitor */
+const RIVER_WATER = 1.6
+/**
+ * The channel's cross-section: a flat bed out to `RIVER_BED` widths, then the
+ * bank climbing back to the valley floor over `RIVER_BANK` more. A bank sharper
+ * than the distance between two terrain vertices lands between them and comes
+ * back as a sawtooth, so the run is metres, not centimetres.
+ */
+const RIVER_BED = 0.45
+const RIVER_BANK = 1.5
+const RIVER_REACH = 2.1
 
 export interface RiverSample {  x: number
   z: number
@@ -289,8 +298,8 @@ for (let i = 0; i < RIVER_SAMPLES.length; i++) {
   const scour = clamp(Math.abs(s.curvature) / 25, 0, 1)
   s.width *= 1 + scour * 0.7
   const level = valleyFloor(s.x, s.z) - RIVER_DEPTH
-  // the bed scours; the surface stays smooth and only steps at the fall, which
-  // is what water does
+  // the bed scours and drops at the fall; the surface only drops at the fall,
+  // which is what water does
   s.bed = level - scour * 1.7 - fallDrop(s.z)
   s.water = level + RIVER_WATER - fallDrop(s.z)
 }
@@ -366,12 +375,12 @@ function riverCut(x: number, z: number, floor: number): number {
 
   const t = info.distance / w
   let target: number
-  if (t < 0.9) {
+  if (t < RIVER_BED) {
     target = info.bed
   } else {
     const sample = RIVER_SAMPLES[info.index]
     const inner = info.side * sample.curvature > 0
-    const u = Math.min((t - 0.9) / RIVER_BANK, 1)
+    const u = Math.min((t - RIVER_BED) / RIVER_BANK, 1)
     target = info.bed + (floor - info.bed) * Math.pow(u, inner ? 1.7 : 1.05)
   }
 
