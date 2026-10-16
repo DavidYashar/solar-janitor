@@ -48,6 +48,8 @@ export interface RadarState {
 export interface HazardHud {
   text: string
   level: 'warn' | 'danger' | ''
+  /** 0..1: how hot the hull is, which the HUD paints as a glow round the frame */
+  heat: number
 }
 
 export interface HudFrame {
@@ -113,6 +115,7 @@ export function createHud(callbacks: HudCallbacks): Hud {
   const compassArrow = pick('compass-arrow')
   const compassLabel = pick('compass-label')
   const hazardEl = pick('hazard')
+  const heatEl = pick('heat')
   const systemEl = pick('system')
   const radarCanvas = pick<HTMLCanvasElement>('radar')
   const radarWrap = pick('radar-wrap')
@@ -143,6 +146,7 @@ export function createHud(callbacks: HudCallbacks): Hud {
   let lastHold = -1
   let lastPrompt = ''
   let lastHazard = ''
+  let lastHeat = -1
   let lastSystem = ''
   let overlayUp = false
 
@@ -371,6 +375,12 @@ export function createHud(callbacks: HudCallbacks): Hud {
         hazardEl.classList.toggle('hidden', hazard.text === '')
         hazardEl.classList.toggle('danger', hazard.level === 'danger')
         hazardEl.classList.toggle('warn', hazard.level === 'warn')
+      }
+      if (hazard.heat !== lastHeat) {
+        lastHeat = hazard.heat
+        // the glow is the warning you cannot miss: it arrives before the banner
+        // text gets loud and it does not care where you are looking
+        heatEl.style.opacity = String(Math.min(1, hazard.heat) * 0.85)
       }
 
       const report = systemReport(game)

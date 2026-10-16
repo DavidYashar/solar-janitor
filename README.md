@@ -34,7 +34,10 @@ credits on gear. Clean all three worlds to restore the system.
   one with, and his legs stride as he walks.
 - **Hazards, all telegraphed:** Moon meteor showers (a stone falls out of the sky
   for 2.5 s, getting larger the closer it gets — watch it come down, then run —
-  and being mid-hop clears you) and Mars dust storms
+  and being mid-hop clears you), Mars dust storms, and **the Sun**, which is not
+  weather and does not telegraph: fly close and the hull heats, keep flying close
+  and it burns through, and there is no rescue for that one — the run is over and
+  the next shift starts from the beginning.
   (every ~45 s: 35 % faster O₂ drain, thick haze, a sideways shove). Earth's ground
   stays safe; its danger is the debris in orbit.
 - **Full-freedom flight:** pitch + yaw + roll about the ship's own axes, thrust
@@ -104,7 +107,7 @@ $env:PATH = "C:\Users\yasha\vsCode\gameTwitgpine\.tools\node-v24.15.0-win-x64;$e
 $env:npm_config_cache = "C:\Users\yasha\vsCode\gameTwitgpine\.tools\npm-cache"
 npm install
 npm run dev       # open the printed localhost URL
-npm test          # 72 headless regression tests
+npm test          # 86 headless regression tests
 npm run build     # strict type-check + production bundle in dist/
 npm run preview   # serve the production build
 ```
@@ -121,7 +124,7 @@ real browser is still outstanding** — see the box below for the exact steps.
 quaternion flight maths, upgrade effects, ranks, determinism, a headless full
 three-world run, and the LOD scheduler — hysteresis, warm-ahead ordering, the
 frame budget, plus the renderer's budget loop driven with a fake scene graph),
-`tsc --noEmit` clean and the production build clean (~690 kB JS / 192 kB
+`tsc --noEmit` clean and the production build clean (~692 kB JS / 192 kB
 gzipped, plus 13 kB CSS and 397 kB of Earth maps — well inside the payload
 budget, and *smaller at boot* than before: the space globes and the three
 surfaces are no longer generated during startup). Stack: Vite, strict
@@ -550,6 +553,36 @@ itself — thrown in a **cone**, not a ball. The generic burst is a ball, which 
 for a hop or a landing and wrong for a crater: a hole throws its contents up and out,
 and a sphere of debris reads as something bursting in mid-air. It fires twice, heavy
 chips fast with the ground's own pull on them and fine dust slow with almost none.
+
+**The Sun is the one thing out here that is not weather.** Every other hazard is
+telegraphed and survivable — a meteor you dodge, a storm you wait out — but the
+Sun is a place, and the only way not to die of it is not to be there. It is a body
+with a well of its own now, like the worlds but wider: wider than any planet's
+sphere of influence, so it takes over exactly where nothing else reaches, and no
+wider than that. A Sun holding half the map in its pull would quietly rewrite how
+the tug handles everywhere, which is not what this is for — so its sphere reaches a
+little past the heat ring and stops, and ordinary flying, Earth to Mars, is nowhere
+near it. The autopilot does not trim there either: parking you in a tidy orbit a
+thousand units off a star would undo the whole hazard.
+
+Heat is a **distance, not a timer**. It goes in at a rate that rises as the square
+of how far inside the warning ring the ship is, and the sky takes it back out at a
+flat rate whenever the ship is clear. That is the decision the hazard asks you to
+make — turning round early always works and turning round late sometimes does not —
+and it is why the warning has to arrive while there is still somewhere to turn round
+to. Past the damage threshold the hull fails progressively and the failure feeds
+itself, so the last second is the expensive one.
+
+There is no beacon for this one, and that is deliberate: the beacon calls a rescue
+to a *suit* that has failed, and here it is the ship that has failed. The shift ends
+where it began. The warning is a glow round the frame as much as it is text, because
+heat is the one hazard that has to reach you wherever you are looking, and because
+brightness can say "nearly cooked" where words have to spell it out.
+
+This is also the change that moved a test fixture: two space-flight tests parked the
+tug at two thousand units and called it open space. It is not open space any more —
+it is inside a star's sphere of influence — so they park at fourteen thousand, which
+is where the fly-by-wire handling they are actually about still applies.
 
 ### How to check the streaming in a browser (M3)
 

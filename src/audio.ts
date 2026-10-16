@@ -1,7 +1,7 @@
 export type SoundKind =
   | 'pickup' | 'deposit' | 'deliver' | 'buy' | 'dock' | 'undock' | 'takeoff' | 'land'
   | 'hop' | 'oxygen' | 'rescue' | 'block' | 'clean' | 'win' | 'lose' | 'ui' | 'scrape' | 'thrust'
-  | 'meteor' | 'storm' | 'relic' | 'hint'
+  | 'meteor' | 'storm' | 'relic' | 'hint' | 'heat'
 
 export type LoopKind = 'vacuum' | 'thruster' | 'wind'
 
@@ -84,6 +84,11 @@ const TONES: Record<string, Tone[]> = {
   meteor: [
     { wave: 'sawtooth', from: 1500, to: 260, duration: 0.55, gain: 0.12, noise: true },
     { wave: 'sine', from: 110, to: 38, duration: 0.6, gain: 0.17, delay: 0.48 },
+  ],
+  heat: [
+    { wave: 'sawtooth', from: 320, to: 900, duration: 0.5, gain: 0.1, noise: true },
+    { wave: 'sine', from: 900, to: 1500, duration: 0.42, gain: 0.09, delay: 0.16 },
+    { wave: 'sine', from: 170, to: 90, duration: 0.5, gain: 0.11, delay: 0.06 },
   ],
   storm: [
     { wave: 'sawtooth', from: 140, to: 460, duration: 1.0, gain: 0.12, noise: true },

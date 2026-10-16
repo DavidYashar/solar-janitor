@@ -1,5 +1,6 @@
 import {
   BEST_KEY, JUNK_COLORS, JUNK_POINTS, MUTE_KEY, OXYGEN_WARN, SAVE_KEY, SCANNER_RANGE, SPACE_SCALE,
+  SUN_DAMAGE_HEAT, SUN_WARN_HEAT,
 } from './sim/config.ts'
 import {
   bearingTo, buyItem, canDock, canLand, contextAction, contextLabel, createGame, hasRelic,
@@ -337,6 +338,10 @@ function handleEvent(event: GameEvent) {
       world.addShake(0.8)
       audio.play('meteor', 0.8)
       break
+    case 'heat':
+      world.addShake(0.2)
+      audio.play('heat', 0.8)
+      break
     case 'storm':
       world.addShake(0.3)
       audio.play('storm', 0.8)
@@ -445,21 +450,32 @@ function radarFor(state: Game): RadarState {
 }
 
 function hazardFor(state: Game): HazardHud {
-  if (state.mode !== 'surface' || state.phase !== 'playing' || state.transition) {
-    return { text: '', level: '' }
+  if (state.phase !== 'playing' || state.transition) return { text: '', level: '', heat: 0 }
+  if (state.mode === 'space') {
+    // the Sun is the only thing out here that hurts, and how much it hurts is
+    // simply how hot the hull has got
+    const heat = state.ship.heat
+    if (heat >= SUN_DAMAGE_HEAT) {
+      return { text: 'HULL BURNING — PULL AWAY NOW', level: 'danger', heat }
+    }
+    if (heat >= SUN_WARN_HEAT) {
+      return { text: 'SOLAR HEAT — HULL TEMPERATURE RISING', level: 'warn', heat }
+    }
+    return { text: '', level: '', heat }
   }
+  if (state.mode !== 'surface') return { text: '', level: '', heat: 0 }
   const hazards = state.hazards
   if (hazards.meteorTelegraph >= 0) {
     const remaining = Math.max(0, hazards.meteorDelay - hazards.meteorTelegraph)
-    return { text: `METEOR INBOUND ${remaining.toFixed(1)}s — KEEP MOVING`, level: 'danger' }
+    return { text: `METEOR INBOUND ${remaining.toFixed(1)}s — KEEP MOVING`, level: 'danger', heat: 0 }
   }
   if (hazards.stormActive) {
-    return { text: 'DUST STORM — OXYGEN DRAINING FAST', level: 'danger' }
+    return { text: 'DUST STORM — OXYGEN DRAINING FAST', level: 'danger', heat: 0 }
   }
   if (Number.isFinite(hazards.stormTimer) && hazards.stormTimer <= 8) {
-    return { text: `DUST STORM IN ${Math.max(0, hazards.stormTimer).toFixed(0)}s`, level: 'warn' }
+    return { text: `DUST STORM IN ${Math.max(0, hazards.stormTimer).toFixed(0)}s`, level: 'warn', heat: 0 }
   }
-  return { text: '', level: '' }
+  return { text: '', level: '', heat: 0 }
 }
 
 function currentContext(): string {

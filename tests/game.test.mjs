@@ -6,6 +6,7 @@ import {
   METEOR_TELEGRAPH_BONUS, MOON_ORBIT, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
   SHIP_SPEED, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH,
   SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, HEALTH_MAX, SURFACE_RADIUS, TRANSITION_TIME,
+  SUN_BURN_RADIUS, SUN_DAMAGE_HEAT, SUN_HEAT_RADIUS, SUN_WARN_HEAT,
 } from '../src/sim/config.ts'
 import {
   allPlanetsClean, bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
@@ -42,11 +43,13 @@ function grounded(seed, planetId = 0) {
   return game
 }
 
-function flying(seed, x = 0, y = 200 * SPACE_SCALE, z = 0) {
+function flying(seed, x = 0, y = 1400 * SPACE_SCALE, z = 0) {
   const game = running(seed)
   game.mode = 'space'
   game.transition = null
-  // level with the orbital plane, parked out in open space
+  // level with the orbital plane, parked out in open space - which has to mean
+  // outside the Sun's sphere of influence too, or the tug flies on real gravity
+  // instead of the fly-by-wire handling these tests are about
   game.ship.q = { x: 0, y: 0, z: 0, w: 1 }
   game.ship.x = x
   game.ship.y = y
@@ -279,6 +282,42 @@ test('space flight is frame-rate independent', () => {
     assert.ok(Math.abs(result.y - results[2].y) < 0.5)
   }
   assert.ok(results[0].z > 50, 'the boost actually goes somewhere')
+})
+
+test('the Sun pulls the tug in, and the corona cooks it', () => {
+  const outside = flying(90, 0, SUN_HEAT_RADIUS + 2000, 0)
+  advance(outside, 1.5, idle)
+  assert.equal(outside.ship.heat, 0, 'nothing heats up outside the ring')
+  assert.ok(Math.abs(outside.ship.vy) < 1, 'and nothing pulls out there either')
+
+  const inside = flying(91, 0, SUN_BURN_RADIUS - 60, 0)
+  advance(inside, 1, idle)
+  assert.ok(inside.ship.heat > 0, 'inside the ring the hull takes heat')
+  assert.ok(inside.ship.vy < -20, 'and the Sun is pulling the ship in')
+  assert.ok(inside.ship.heat > SUN_WARN_HEAT, 'far enough in to be worth warning about')
+  assert.ok(inside.events.some(event => event.kind === 'heat'), 'and it says so')
+})
+
+test('pulling back out takes the heat back out', () => {
+  const game = flying(92, 0, SUN_BURN_RADIUS - 60, 0)
+  advance(game, 1.2, idle)
+  const hot = game.ship.heat
+  assert.ok(hot > SUN_WARN_HEAT, 'hot to begin with')
+  game.ship.y = SUN_HEAT_RADIUS + 900
+  advance(game, 2, idle)
+  assert.ok(game.ship.heat < hot, 'the sky cools it faster than the Sun heats it')
+})
+
+test('staying in the corona burns the hull through and ends the run', () => {
+  const game = flying(93, 0, SUN_BURN_RADIUS - 60, 0)
+  advance(game, 1, idle)
+  assert.ok(game.health > 0, 'not dead yet')
+  advanceUntil(game, state => state.phase === 'finished', 60, idle)
+  assert.equal(game.phase, 'finished')
+  assert.equal(game.outcome, 'lost')
+  assert.equal(game.health, 0)
+  assert.equal(game.ship.heat, 1)
+  assert.ok(game.events.some(event => event.kind === 'lose'), 'and the shift is over')
 })
 
 test('the ship cannot fly through a planet', () => {

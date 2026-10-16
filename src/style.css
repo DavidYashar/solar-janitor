@@ -512,6 +512,28 @@ kbd {
   color: var(--bad);
 }
 
+/*
+* The Sun's heat, as a glow round the frame.
+*
+* Absolutely positioned on purpose: .hud is a grid and a fifth child in the flow
+* would push the four panels around. It is here because heat is the one hazard
+* whose warning has to work wherever you are looking, and because it can say
+* "nearly cooked" with a brightness where text has to say it with words.
+*/
+.heat {
+ position: absolute;
+ inset: 0;
+ pointer-events: none;
+ opacity: 0;
+ background:
+   radial-gradient(
+     118% 92% at 50% 50%,
+     rgba(255, 88, 24, 0) 42%,
+     rgba(255, 116, 40, 0.4) 76%,
+     rgba(255, 56, 10, 0.85) 100%
+   );
+}
+
 .system { font-size: 10px; letter-spacing: 1.3px; color: var(--muted); text-align: right; max-width: 44vw; }
 
 .look-hint {

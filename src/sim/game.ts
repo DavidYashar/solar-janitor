@@ -15,6 +15,8 @@ import {
   SHIP_STRAFE_SPEED, SURFACE_TURN_RATE, SURFACE_PITCH_RATE, BODY_BOUNCE, BODY_REST_SPEED,
   GRAVITY_SOI, GRAVITY_SOI_FADE, PLANET_MU, SHIP_WELL_ACCEL, SHIP_WELL_SOFT,
   ORBIT_TRIM_BAND_MIN, ORBIT_TRIM_BAND_MAX, ORBIT_TRIM_RATE, ORBIT_HOLD_RANGE, DEEP_SPACE_ASSIST_FADE,
+  SUN_BODY, SUN_MU, SUN_COOL_RATE, SUN_DAMAGE_HEAT, SUN_DAMAGE_PER_SEC, SUN_BURN_RADIUS,
+  SUN_HEAT_RADIUS, SUN_HEAT_RATE, SUN_WARN_HEAT, GRAVITY_SOI_SUN, GRAVITY_SOI_FADE_SUN,
 } from './config.ts'
 import { RELIC_BY_PLANET, SHOP_BY_ID } from './economy.ts'
 import { quatForward, quatFromBasis, quatIntegrate, quatNlerp, quatRight, quatToFlightAngles } from './orient.ts'
@@ -324,13 +326,15 @@ export function createGame(options: CreateOptions = {}): Game {
     oxygen: OXYGEN_MAX,
     lowOxygenWarned: false,
     oxygenEmptyWarned: false,
+    heatWarned: false,
+    heatCriticalWarned: false,
     atLander: true,
     scrapeTimer: 0,
     planetId: options.planetId ?? 0,
     player: { lat: 0, lon: 0, h: 0, vH: 0, vN: 0, vE: 0, facing: 0, lookPitch: 0, hopCooldown: 0 },
     ship: {
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
-      q: { ...IDENTITY_Q }, speed: 0, thrust: 0, boosting: false,
+      q: { ...IDENTITY_Q }, speed: 0, thrust: 0, boosting: false, heat: 0,
     },
     hazards: freshHazards(),
     earthAngle: 0,
@@ -429,6 +433,10 @@ const ORBIT_VEL_B: Vec3 = { x: 0, y: 0, z: 0 }
  * is part of the coordinate conversion, not a force on the ship.
  */
 function frameAcceleration(game: Game, body: number, target: Vec3): Vec3 {
+  target.x = 0
+  target.y = 0
+  target.z = 0
+  if (body === SUN_BODY) return target
   const planet = PLANETS[body]
   const centre = game.planetPos[body]
   const parentX = body === 1 ? game.planetPos[0].x : 0
@@ -447,6 +455,11 @@ function frameAcceleration(game: Game, body: number, target: Vec3): Vec3 {
 
 /** The world's own velocity in the map frame - the Moon rides Earth's orbit too. */
 function planetVelocity(game: Game, body: number, target: Vec3): Vec3 {
+  target.x = 0
+  target.y = 0
+  target.z = 0
+  // the Sun is the one body that never moves, so its frame is the map's
+  if (body === SUN_BODY) return target
   const planet = PLANETS[body]
   const angle = body === 0 ? game.earthAngle : body === 1 ? game.moonAngle : game.marsAngle
   orbitVelocity(planet.orbit, planet.orbitRate, angle, target)
@@ -481,10 +494,18 @@ const SCRATCH_RELATIVE: Vec3 = { x: 0, y: 0, z: 0 }
 const SCRATCH_ACCEL: Vec3 = { x: 0, y: 0, z: 0 }
 const SCRATCH_TARGET_VEL: Vec3 = { x: 0, y: 0, z: 0 }
 
+/** The point a well is centred on. The Sun sits at the origin and never moves. */
+const SUN_CENTRE: Vec3 = { x: 0, y: 0, z: 0 }
+function wellCentre(game: Game, body: number): Vec3 {
+  return body === SUN_BODY ? SUN_CENTRE : game.planetPos[body]
+}
+
 /**
  * The well holding the ship, or null in deep space. The smallest sphere of
  * influence containing it wins, so the Moon takes over from Earth near the
  * Moon, and every world keeps a clean pull of its own in a map this compressed.
+ * The Sun is the floor underneath all of them: its sphere is the widest, so it
+ * only applies where nothing else does, and it is what the whole map falls into.
  */
 function sampleGravity(game: Game, x: number, y: number, z: number): Well | null {
   let body = -1
@@ -494,7 +515,27 @@ function sampleGravity(game: Game, x: number, y: number, z: number): Well | null
     if (Math.hypot(x - position.x, y - position.y, z - position.z) >= GRAVITY_SOI[planet.id]) continue
     body = planet.id
   }
-  if (body < 0) return null
+  if (body < 0) {
+    const distance = Math.hypot(x, y, z)
+    if (distance >= GRAVITY_SOI_SUN || distance < 1e-6) return null
+    const inner = GRAVITY_SOI_SUN * (1 - GRAVITY_SOI_FADE_SUN)
+    let weight = 1
+    if (distance > inner) {
+      const t = (GRAVITY_SOI_SUN - distance) / (GRAVITY_SOI_SUN - inner)
+      weight = t * t * (3 - 2 * t)
+    }
+    const strength = (SUN_MU / (distance * distance)) * weight
+    const well = SCRATCH_WELL
+    well.x = (-x / distance) * strength
+    well.y = (-y / distance) * strength
+    well.z = (-z / distance) * strength
+    well.mu = SUN_MU
+    well.body = SUN_BODY
+    well.radius = distance
+    well.weight = weight
+    well.circular = Math.sqrt(SUN_MU / distance)
+    return well
+  }
   const position = game.planetPos[body]
   const soi = GRAVITY_SOI[body]
   const dx = position.x - x
@@ -546,6 +587,9 @@ function distanceBeyondWells(game: Game, ship: Game['ship']): number {
  * approach) it keeps out of the way and gravity is left to do whatever it does.
  */
 function orbitTrim(game: Game, relative: Vec3, x: number, y: number, z: number, well: Well, dt: number) {
+  // the autopilot parks you in orbit around worlds, not around stars: trimming
+  // into a circle a thousand units off the Sun would quietly undo the hazard
+  if (well.body === SUN_BODY) return
   if (well.weight < 1) return
   const radius = Math.hypot(x, y, z)
   if (radius < 1e-6) return
@@ -948,6 +992,66 @@ function damageSuit(game: Game, amount: number, label: string, at: { lat: number
   if (game.health <= 0) knockout(game)
 }
 
+/**
+ * The tug is gone.
+ *
+ * There is no beacon for this one, and that is the point: the beacon calls a
+ * rescue to a suit that has failed, and here it is the ship that has failed. The
+ * run ends where it started and the next one begins from the beginning.
+ */
+function burnUp(game: Game) {
+  game.health = 0
+  game.ship.heat = 1
+  game.phase = 'finished'
+  game.outcome = 'lost'
+  emitSpace(game, 'lose', 'HULL BURNED THROUGH', 0, shipPoint(game))
+}
+
+/**
+ * The Sun's corona, and what it does to a hull.
+ *
+ * Heat is not a timer, it is a distance: it goes in at a rate that rises as the
+ * square of how far inside the warning ring the ship is, and the sky takes it
+ * back out at a flat rate whenever the ship is out. That is the whole decision
+ * the hazard asks you to make - turning round early always works and turning
+ * round late sometimes does not - and it is why the warning has to arrive while
+ * there is still somewhere to turn round to.
+ *
+ * Past the damage threshold the hull fails progressively, and the failure feeds
+ * itself: the hotter it gets the faster it goes, so the last second is the
+ * expensive one.
+ */
+function updateSunHeat(game: Game, dt: number) {
+  const ship = game.ship
+  const distance = Math.hypot(ship.x, ship.y, ship.z)
+  const closeness = clamp((SUN_HEAT_RADIUS - distance) / (SUN_HEAT_RADIUS - SUN_BURN_RADIUS), 0, 1)
+  if (closeness > 0) {
+    ship.heat = Math.min(1, ship.heat + closeness * closeness * SUN_HEAT_RATE * dt)
+  } else {
+    ship.heat = Math.max(0, ship.heat - SUN_COOL_RATE * dt)
+  }
+
+  if (ship.heat >= SUN_DAMAGE_HEAT && !game.heatCriticalWarned) {
+    game.heatWarned = true
+    game.heatCriticalWarned = true
+    emitSpace(game, 'heat', 'HULL BURNING - PULL AWAY NOW', 0, shipPoint(game))
+  } else if (ship.heat >= SUN_WARN_HEAT && !game.heatWarned) {
+    game.heatWarned = true
+    emitSpace(game, 'heat', 'HULL TEMPERATURE RISING - TURN BACK', 0, shipPoint(game))
+  }
+  // the warnings re-arm once the hull is comfortably cool, so a second approach
+  // is warned about as loudly as the first
+  if (ship.heat < SUN_WARN_HEAT * 0.5) {
+    game.heatWarned = false
+    game.heatCriticalWarned = false
+  }
+
+  if (ship.heat <= SUN_DAMAGE_HEAT) return
+  const runaway = (ship.heat - SUN_DAMAGE_HEAT) / (1 - SUN_DAMAGE_HEAT)
+  game.health = Math.max(0, game.health - SUN_DAMAGE_PER_SEC * runaway * dt)
+  if (game.health <= 0) burnUp(game)
+}
+
 // -------------------------------------------------------------- transitions
 
 function finishTransition(game: Game) {
@@ -1304,7 +1408,7 @@ function updateShip(game: Game, dt: number, input: Input) {
     // gravity is the only force, thrust is a real acceleration, letting go is
     // coasting, and the ship rides along with the world. Nothing is drawn for the
     // field - you read it in the course of the ship.
-    const centre = game.planetPos[well.body]
+    const centre = wellCentre(game, well.body)
     const drift = planetVelocity(game, well.body, SCRATCH_VEL)
     const relative: Vec3 = SCRATCH_RELATIVE
     relative.x = ship.vx - drift.x
@@ -1398,6 +1502,7 @@ export function step(game: Game, elapsed: number, input: Input) {
     if (game.phase === 'playing') updateHazards(game, dt)
   } else {
     updateShip(game, dt, input)
+    if (game.phase === 'playing') updateSunHeat(game, dt)
   }
 }
 

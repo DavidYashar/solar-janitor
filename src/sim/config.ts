@@ -210,6 +210,45 @@ export const ORBIT_HOLD_RANGE = DOCK_ASSIST_RANGE
 /** leaving a well, the fly-by-wire handling eases back in over this distance */
 export const DEEP_SPACE_ASSIST_FADE = 40 * SPACE_SCALE
 
+// ------------------------------------------------------------------ the Sun
+/**
+ * The Sun is a body like the others here: it has a well of its own, wider than
+ * every world's sphere of influence, so it only ever takes over where no planet's
+ * pull reaches. What makes it different is that it does not move, nothing lands
+ * on it, and standing off it is a way to die.
+ */
+export const SUN_BODY = 3
+
+/** its gravitational parameter, from the acceleration at its own surface */
+export const SUN_SURFACE_G = 190
+export const SUN_MU = SUN_SURFACE_G * SUN_RADIUS * SUN_RADIUS
+
+/**
+ * The Sun's sphere of influence.
+ *
+ * Deliberately small: it reaches a little past the heat ring and no further, so
+ * the pull is felt before the heat is, and ordinary flying - Earth to Mars, the
+ * Moon to Earth - is nowhere near it. A Sun that held half the map in its well
+ * would quietly rewrite how the tug handles everywhere, which is not what this
+ * is for.
+ */
+export const GRAVITY_SOI_SUN = SUN_RADIUS * 4.4
+export const GRAVITY_SOI_FADE_SUN = 0.45
+
+/** where the corona starts to bite, and where the hull is being cooked outright */
+export const SUN_HEAT_RADIUS = SUN_RADIUS * 3.1
+export const SUN_BURN_RADIUS = SUN_RADIUS * 1.5
+
+/** heat per second at the burn ring - it falls off as the square of the gap */
+export const SUN_HEAT_RATE = 0.3
+/** and the flat rate the sky takes it back out at */
+export const SUN_COOL_RATE = 0.34
+/** heat at which the hull is hot enough to warn about, and to start failing */
+export const SUN_WARN_HEAT = 0.22
+export const SUN_DAMAGE_HEAT = 0.72
+/** hull per second lost at full heat, above the damage threshold */
+export const SUN_DAMAGE_PER_SEC = 26
+
 // ---------------------------------------------------------------- hazards
 /** seconds between meteor volleys on the Moon */
 export const METEOR_INTERVAL_MIN = 6

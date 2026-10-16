@@ -9,7 +9,7 @@ export type EventKind =
   | 'pickup' | 'deposit' | 'deliver' | 'buy' | 'dock' | 'undock'
   | 'takeoff' | 'land' | 'oxygen' | 'refill' | 'rescue' | 'block'
   | 'clean' | 'win' | 'lose' | 'scrape'
-  | 'relic' | 'meteor' | 'storm' | 'hint'
+  | 'relic' | 'meteor' | 'storm' | 'hint' | 'heat'
 
 export interface Vec3 {
   x: number
@@ -62,6 +62,11 @@ export interface Ship {
   /** last commanded thrust, -1..1 (visual + audio juice) */
   thrust: number
   boosting: boolean
+  /**
+   * 0..1: how cooked the hull is. Only the Sun puts heat into it and only the sky
+   * takes it back out, so it is a distance readout as much as a damage one.
+   */
+  heat: number
 }
 
 export interface HazardState {
@@ -150,6 +155,9 @@ export interface Game {
   oxygen: number
   lowOxygenWarned: boolean
   oxygenEmptyWarned: boolean
+  /** the two solar-heat warnings have fired for this approach to the Sun */
+  heatWarned: boolean
+  heatCriticalWarned: boolean
   atLander: boolean
   scrapeTimer: number
   /** the planet whose surface the janitor is standing on (and the land target in space) */
