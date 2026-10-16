@@ -4,7 +4,7 @@ import {
   LOD_SPACE_TUNING, LOD_SURFACE_TUNING, MARS_ORBIT, METEOR_RADIUS, MOON_ORBIT, OXYGEN_WARN,
   SPACE_SCALE, SUN_RADIUS, TAU,
 } from '../sim/config.ts'
-import { canDock, canLand, holdCount, landTarget, nearLander, scoopRadius } from '../sim/game.ts'
+import { canDock, canLand, hasUpgrade, holdCount, landTarget, nearLander, scoopRadius } from '../sim/game.ts'
 import { quatForward, quatUp } from '../sim/orient.ts'
 import { PLANETS, planetById } from '../sim/planets.ts'
 import type { PlanetTheme } from '../sim/planets.ts'
@@ -1167,6 +1167,7 @@ export function createWorld(container: HTMLElement): World {
   parked.group.position.set(0, 2.2, 0)
   parked.heroLight.intensity = 0        // daylight surface needs no fill, and it would pool on the ground
   parked.setThrust(0, false)            // engines off: the bells read as dark holes
+  parked.thirdEngine.visible = false    // synced with the flown tug in the frame update
 
   const cargoCapacity = 30
   const cargoMesh = new THREE.InstancedMesh(
@@ -1345,6 +1346,8 @@ export function createWorld(container: HTMLElement): World {
     if (docked) shipModel.group.position.set(game.dockPos.x, game.dockPos.y, game.dockPos.z)
     else shipModel.group.position.set(ship.x, ship.y, ship.z)
     shipModel.group.quaternion.set(ship.q.x, ship.q.y, ship.q.z, ship.q.w)
+    // the dorsal third engine is a purchase, not part of the hull (plan §5.5)
+    shipModel.thirdEngine.visible = hasUpgrade(game, 'thirdengine')
     const thrust = Math.max(0, ship.thrust)
     const firing = thrust > 0.12
     shipModel.setThrust(firing ? thrust : 0, firing && ship.boosting)
@@ -1415,6 +1418,9 @@ export function createWorld(container: HTMLElement): World {
     surface.ringMaterial.color.setHex(game.oxygen < OXYGEN_WARN ? 0xffb0a0 : inRing ? 0x9dffb0 : 0x7fffb0)
     surface.ringMaterial.opacity = inRing ? 0.8 : 0.4 + Math.sin(elapsed * 2.2) * 0.1
     surface.padBeacon.material.opacity = inRing ? 0.95 : 0.45 + Math.sin(elapsed * 2.4) * 0.16
+    // the tug is the same ship on the ground as in the sky, so the third engine it
+    // was bought off the ISS has to be on the parked one too
+    parked.thirdEngine.visible = hasUpgrade(game, 'thirdengine')
     if (game.transition?.kind === 'takeoff') {
       const t = Math.min(1, game.transition.t / game.transition.duration)
       parked.group.position.set(0, 2.2 + t * t * 30, 0)

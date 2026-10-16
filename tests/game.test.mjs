@@ -8,13 +8,14 @@ import {
   STORM_PERIOD, STORM_PUSH, FINAL_SWEEP_MULT,
   SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, HEALTH_MAX, SURFACE_RADIUS, TRANSITION_TIME,
   SUN_BURN_RADIUS, SUN_DAMAGE_HEAT, SUN_HEAT_RADIUS, SUN_WARN_HEAT, SWEEP_STEP,
+  SHIP_REVERSE_SPEED, SHIP_STRAFE_SPEED, THIRD_ENGINE_BONUS,
 } from '../src/sim/config.ts'
 import {
-  allPlanetsClean, bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
+  allPlanetsClean, bearingTo, boostSpeed, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
   deliverValue, deliveredCount, deposit, dock, hasRelic, hasUpgrade, holdCount, holdSlots, hopSpeed, land,
   landTarget, landingZone, latLonDistance, maxOxygen, nearLander, objective, placePlayerAtLander,
-  planetJunkTotal, progressSummary, rankForScore, remainingCount, resetHazards, scannerPings,
-  shipSpeed, step, sweepState, takeOff, undock, updateHazards, walkSpeed, systemReport,
+  planetJunkTotal, progressSummary, rankForScore, remainingCount, resetHazards, reverseSpeed, scannerPings,
+  shipSpeed, strafeSpeed, step, sweepState, takeOff, undock, updateHazards, walkSpeed, systemReport,
   screenMoveVector, wrapAngle,
 } from '../src/sim/game.ts'
 import { PLANETS, landerSite } from '../src/sim/planets.ts'
@@ -1025,12 +1026,42 @@ test('Recycler Mask slows the oxygen clock, O2 tanks stretch it', () => {
   assert.equal(maxOxygen(masked), OXYGEN_MAX + 70)
 })
 
+test('the dorsal third engine doubles every commanded speed', () => {
+  const game = flying(75)
+  assert.equal(shipSpeed(game), SHIP_SPEED)
+  assert.equal(boostSpeed(game), SHIP_BOOST_SPEED)
+  assert.equal(reverseSpeed(game), SHIP_REVERSE_SPEED)
+  assert.equal(strafeSpeed(game), SHIP_STRAFE_SPEED)
+
+  game.upgrades.push('thirdengine')
+  assert.equal(shipSpeed(game), SHIP_SPEED * THIRD_ENGINE_BONUS, 'twice the cruise')
+  assert.equal(boostSpeed(game), SHIP_BOOST_SPEED * THIRD_ENGINE_BONUS)
+  assert.equal(reverseSpeed(game), SHIP_REVERSE_SPEED * THIRD_ENGINE_BONUS, 'twice the brakes as well')
+  assert.equal(strafeSpeed(game), SHIP_STRAFE_SPEED * THIRD_ENGINE_BONUS)
+
+  // and it stacks on the Thruster Kit instead of replacing it
+  game.upgrades.push('thrusterkit')
+  assert.ok(Math.abs(shipSpeed(game) - SHIP_SPEED * 1.25 * THIRD_ENGINE_BONUS) < 1e-9)
+})
+
+test('a tug with the third engine crosses twice the ground in the same time', () => {
+  const flown = (engine) => {
+    const game = flying(76)
+    if (engine) game.upgrades.push('thirdengine')
+    advance(game, 4, { ...idle, y: 1 })
+    return Math.hypot(game.ship.vx, game.ship.vy, game.ship.vz)
+  }
+  const plain = flown(false)
+  const fast = flown(true)
+  assert.ok(Math.abs(plain - SHIP_SPEED) < 1, `a plain tug settles at cruise (${plain})`)
+  assert.ok(Math.abs(fast / plain - 2) < 0.02, `expected twice the speed, got ${(fast / plain).toFixed(3)}x`)
+})
+
 test('Thruster Kit and Docking Assist change the ship numbers', () => {
   const game = flying(67)
   assert.equal(shipSpeed(game), SHIP_SPEED)
   game.upgrades.push('thrusterkit')
   assert.ok(Math.abs(shipSpeed(game) - SHIP_SPEED * 1.25) < 1e-9)
-
   const plain = flying(68)
   plain.ship.x = plain.dockPos.x + 8
   plain.ship.y = plain.dockPos.y

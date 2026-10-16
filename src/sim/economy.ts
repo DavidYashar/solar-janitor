@@ -48,6 +48,9 @@ export const SHOP_ITEMS: ShopItem[] = [
     id: 'thrusterkit', name: 'Thruster Kit', description: '+25% ship speed', kind: 'ship', cost: 800,
   },
   {
+    id: 'thirdengine', name: 'Third Engine', description: 'Dorsal thruster: x2 ship speed', kind: 'ship', cost: 1600,
+  },
+  {
     id: 'navcomputer', name: 'Nav Computer', description: 'System radar: junk left on every world', kind: 'ship', cost: 700,
   },
   {

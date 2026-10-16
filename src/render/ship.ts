@@ -15,6 +15,12 @@ export interface ShipModel {
   /** short-range fill light that keeps the hull readable in space */
   heroLight: THREE.PointLight
   /**
+   * The dorsal third engine (plan §5.5). Not bolted on until the player buys it, so
+   * the game toggles this rather than rebuilding the tug - and hiding it hides the
+   * mount pylon, the bell and the boost flare with it.
+   */
+  thirdEngine: THREE.Group
+  /**
    * Drive the exhaust. `level` is 0..1 of commanded thrust: at 0 the bells read
    * as dark holes, and the plume grows with the level. `boosting` lights the
    * afterburner - brighter core, shock diamonds and the dorsal pod's flare.
@@ -493,38 +499,44 @@ export function buildShip(): ShipModel {
   }
 
   // ------------------------------------------------------------ pod barrel
+  // The dorsal third engine (plan §5.5) is its own group because it is not bolted to
+  // the tug until the player buys it: the game hides this rather than rebuilding the
+  // ship, and the mount pylon goes with it so an un-upgraded tug has no empty socket.
+  const thirdEngine = new THREE.Group()
+  group.add(thirdEngine)
+
   const pylon = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.3, 1.0), podBand)
   pylon.position.set(0, 0.62, -2.4)
-  group.add(pylon)
+  thirdEngine.add(pylon)
 
   const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.5, 20), podBody)
   pod.rotation.x = Math.PI / 2
   pod.position.set(0, 0.86, -2.5)
-  group.add(pod)
+  thirdEngine.add(pod)
   const podCollarA = new THREE.Mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.18, 20), podBand)
   podCollarA.rotation.x = Math.PI / 2
   podCollarA.position.set(0, 0.86, -1.95)
-  group.add(podCollarA)
+  thirdEngine.add(podCollarA)
   const podCollarB = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.22, 20), podBand)
   podCollarB.rotation.x = Math.PI / 2
   podCollarB.position.set(0, 0.86, -2.9)
-  group.add(podCollarB)
+  thirdEngine.add(podCollarB)
 
   // dorsal engine: dark bell at rest, ring and core light up on boost
   const podBell = new THREE.Mesh(new THREE.CircleGeometry(0.34, 18), bellMaterial)
   podBell.rotation.y = Math.PI
   podBell.position.set(0, 0.86, -3.26)
-  group.add(podBell)
+  thirdEngine.add(podBell)
   const podFlare = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.1, 20), podFlareMaterial)
   podFlare.rotation.x = Math.PI / 2
   podFlare.position.set(0, 0.86, -3.16)
   podFlare.visible = false
-  group.add(podFlare)
+  thirdEngine.add(podFlare)
   const podMouth = new THREE.Mesh(new THREE.CircleGeometry(0.28, 16), mouthMaterial)
   podMouth.rotation.y = Math.PI
   podMouth.position.set(0, 0.86, -3.27)
   podMouth.visible = false
-  group.add(podMouth)
+  thirdEngine.add(podMouth)
 
   const exhaust = { flames, podFlare, podMouth }
 
@@ -567,5 +579,5 @@ export function buildShip(): ShipModel {
 
   setThrust(0, false)
 
-  return { group, heroLight, setThrust }
+  return { group, heroLight, thirdEngine, setThrust }
 }

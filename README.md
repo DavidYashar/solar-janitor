@@ -54,10 +54,19 @@ credits on gear. Clean all three worlds to restore the system.
   Eye in the Sky (Earth — the radar tracks every junk piece), Surefoot Stride
   (Moon — +20 % speed, softer landings) and Storm Sense (Mars — hazards telegraph
   3 s earlier). Relics are never sold.
-- **Full 14-item ISS catalogue** with working effects: O₂ tanks I & II, recycler
+- **Full 15-item ISS catalogue** with working effects: O₂ tanks I & II, recycler
   mask, magboots, grav harness, hazard weave, wide scoop, cargo gloves, junk
-  scanner, emergency beacon, thruster kit, nav computer, cargo racks and docking
-  assist.
+  scanner, emergency beacon, thruster kit, nav computer, cargo racks, docking
+  assist and the third engine below.
+- **The Third Engine is a visible purchase** (plan §5.5). The tug's
+  dorsal engine pod is not part of the hull any more: the model builds it as its own
+  group, hidden until you buy it, and buying it bolts the pod — pylon, barrel, collars
+  and bell — onto the hull exactly where the reference art has it, on the flown tug
+  and on the parked one. It doubles every commanded speed: cruise, boost, **reverse
+  and strafe**, because twice the ship has to mean twice the ship rather than twice
+  the top speed with the same brakes. Thrust *authority* is deliberately untouched, so
+  a fast tug is a committed tug — twice as quick through a gravity well means twice
+  the runway to slow down, and the landing limit is measured relative to the world.
 - **Save & continue:** the run autosaves at checkpoints (docking, delivery,
   landing, purchases) and the title screen offers CONTINUE. Versioned, validated
   `localStorage` save — a corrupt or stale save silently falls back to a new shift.

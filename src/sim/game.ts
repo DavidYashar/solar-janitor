@@ -11,7 +11,7 @@ import {
   SHIP_LEVEL_K, SHIP_PITCH_RATE, SHIP_REVERSE_SPEED, SHIP_ROLL_RATE, SHIP_SPEED, SHIP_YAW_RATE,
   SPRINT_MULTIPLIER, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
   STORM_WARN_LEAD_BONUS, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
-  THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS,
+  THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS, THIRD_ENGINE_BONUS,
   FINAL_SWEEP_FRACTION, FINAL_SWEEP_MULT, STARTING_DELIVERED, SWEEP_STEP,
   SHIP_STRAFE_SPEED, SURFACE_TURN_RATE, SURFACE_PITCH_RATE, BODY_BOUNCE, BODY_REST_SPEED,
   GRAVITY_SOI, GRAVITY_SOI_FADE, PLANET_MU, SHIP_WELL_ACCEL, SHIP_WELL_SOFT,
@@ -103,8 +103,18 @@ export const maxOxygen = (game: Game) =>
 export const carrySlots = (game: Game) => CARRY_SLOTS + (hasUpgrade(game, 'cargogloves') ? CARGO_GLOVES_BONUS : 0)
 export const holdSlots = (game: Game) => HOLD_SLOTS + (hasUpgrade(game, 'cargoracks') ? CARGO_RACKS_BONUS : 0)
 export const scoopRadius = (game: Game) => SCOOP_RADIUS + (hasUpgrade(game, 'widescoop') ? WIDE_SCOOP_BONUS : 0)
-export const shipSpeed = (game: Game) => SHIP_SPEED * (hasUpgrade(game, 'thrusterkit') ? 1 + THRUSTER_BONUS : 1)
-export const boostSpeed = (game: Game) => SHIP_BOOST_SPEED * (hasUpgrade(game, 'thrusterkit') ? 1 + THRUSTER_BONUS : 1)
+/**
+ * The tug's commanded speeds. The Thruster Kit adds a quarter; the dorsal third
+ * engine (plan §5.5) doubles whatever they were, and it doubles all four of them -
+ * cruise, boost, reverse and strafe - so a fast tug is fast in every direction and
+ * still has to be flown. Thrust *authority* is untouched (see THIRD_ENGINE_BONUS).
+ */
+const engineMultiplier = (game: Game) => (hasUpgrade(game, 'thirdengine') ? THIRD_ENGINE_BONUS : 1)
+const thrusterMultiplier = (game: Game) => (hasUpgrade(game, 'thrusterkit') ? 1 + THRUSTER_BONUS : 1)
+export const shipSpeed = (game: Game) => SHIP_SPEED * thrusterMultiplier(game) * engineMultiplier(game)
+export const boostSpeed = (game: Game) => SHIP_BOOST_SPEED * thrusterMultiplier(game) * engineMultiplier(game)
+export const reverseSpeed = (game: Game) => SHIP_REVERSE_SPEED * engineMultiplier(game)
+export const strafeSpeed = (game: Game) => SHIP_STRAFE_SPEED * engineMultiplier(game)
 
 /** Magboots, Surefoot Stride and sprinting all stack on the base walk speed. */
 export function walkSpeed(game: Game, sprinting: boolean): number {
@@ -1534,7 +1544,7 @@ function updateShip(game: Game, dt: number, input: Input) {
     let az = well.z
     if (Math.abs(thrust) > 0.12) {
       const along = relative.x * forward.x + relative.y * forward.y + relative.z * forward.z
-      const cap = thrust > 0 ? (boosting ? boostSpeed(game) : shipSpeed(game)) * thrust : SHIP_REVERSE_SPEED * -thrust
+      const cap = thrust > 0 ? (boosting ? boostSpeed(game) : shipSpeed(game)) * thrust : reverseSpeed(game) * -thrust
       const ease = clamp((cap - (thrust > 0 ? along : -along)) / (cap * SHIP_WELL_SOFT), 0, 1)
       ax += forward.x * SHIP_WELL_ACCEL * thrust * ease
       ay += forward.y * SHIP_WELL_ACCEL * thrust * ease
@@ -1542,7 +1552,7 @@ function updateShip(game: Game, dt: number, input: Input) {
     }
     if (Math.abs(strafeInput) > 0.12) {
       const rightward = -(relative.x * side.x + relative.y * side.y + relative.z * side.z) * Math.sign(strafeInput)
-      const ease = clamp((SHIP_STRAFE_SPEED - rightward) / (SHIP_STRAFE_SPEED * SHIP_WELL_SOFT), 0, 1)
+      const ease = clamp((strafeSpeed(game) - rightward) / (strafeSpeed(game) * SHIP_WELL_SOFT), 0, 1)
       ax -= side.x * SHIP_WELL_ACCEL * Math.sign(strafeInput) * ease
       ay -= side.y * SHIP_WELL_ACCEL * Math.sign(strafeInput) * ease
       az -= side.z * SHIP_WELL_ACCEL * Math.sign(strafeInput) * ease
@@ -1576,8 +1586,8 @@ function updateShip(game: Game, dt: number, input: Input) {
     // outside a sphere of influence, so leaving a well is a drift, not a slam.
     let targetSpeed = 0
     if (thrust > 0.12) targetSpeed = (boosting ? boostSpeed(game) : shipSpeed(game)) * thrust
-    else if (thrust < -0.12) targetSpeed = SHIP_REVERSE_SPEED * thrust
-    const strafe = strafeInput * SHIP_STRAFE_SPEED
+    else if (thrust < -0.12) targetSpeed = reverseSpeed(game) * thrust
+    const strafe = strafeInput * strafeSpeed(game)
     const k = (1 - Math.exp(-SHIP_ACCEL_K * dt)) * clamp(distanceBeyondWells(game, ship) / DEEP_SPACE_ASSIST_FADE, 0, 1)
     ship.vx += (forward.x * targetSpeed - side.x * strafe - ship.vx) * k
     ship.vy += (forward.y * targetSpeed - side.y * strafe - ship.vy) * k

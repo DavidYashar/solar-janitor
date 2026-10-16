@@ -109,6 +109,18 @@ export const WIDE_SCOOP_BONUS = 1.6
 export const CARGO_GLOVES_BONUS = 3
 export const CARGO_RACKS_BONUS = 24
 export const THRUSTER_BONUS = 0.25
+/**
+ * The dorsal third engine (plan §5.5): it doubles every commanded speed - cruise,
+ * boost, reverse and strafe - because "twice the ship" has to mean twice the ship,
+ * not twice the top speed and the same brakes.
+ *
+ * It does **not** touch `SHIP_WELL_ACCEL`. Thrust authority stays what it was, so a
+ * fast tug is a committed tug: going twice as quickly through a gravity well means
+ * needing twice the runway to slow down, and the landing limit is measured relative
+ * to the world. The power comes with the same price every upgrade in this game
+ * charges - you have to fly it.
+ */
+export const THIRD_ENGINE_BONUS = 2
 export const SCANNER_RANGE = 30
 
 // ------------------------------------------------------------------ oxygen
