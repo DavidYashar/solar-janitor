@@ -24,7 +24,7 @@
  * crests run well clear of that and no bearing has a hole in it.
  */
 
-import { SURFACE_RADIUS, SURFACE_SCALE } from './config.ts'
+import { PAD_APRON, SURFACE_RADIUS, SURFACE_SCALE } from './config.ts'
 import { fbm, ridged, valueNoise } from './noise.ts'
 
 function clamp(value: number, min: number, max: number): number {
@@ -340,8 +340,8 @@ export function marsFieldHeight(anchorLat: number, anchorLon: number, lat: numbe
   return height
 }
 
-/** The half-width of the flat apron the lander sits on, and where its blend ends. */
-const PAD = { flat: 6, blend: 11 }
+/** The apron the concrete pad of `PAD_RADIUS` is laid on: level, then blended out. */
+const PAD = PAD_APRON
 
 /**
  * The pad itself stays flat: the lander, the ring and the cargo pile were all

@@ -80,6 +80,22 @@ export const CARRY_SLOTS = 8
 export const HOLD_SLOTS = 30
 export const LANDER_RING_RADIUS = 6.5
 
+/**
+ * The concrete apron the lander stands on: its radius in metres, the same on
+ * every world. The three terrain fields in `sim/` level the ground toward the
+ * pad's own height across this and out past it, so the disc never has to bend
+ * and the rim is never left hanging over a slope.
+ */
+export const PAD_RADIUS = 12
+
+/**
+ * The apron as the terrain fields apply it: level within `flat`, blended back
+ * into the landscape by `blend`. It has to clear `PAD_RADIUS` with room to
+ * spare, because what the mesh draws is a triangle between vertices up to six
+ * metres apart and the last of those can straddle the edge.
+ */
+export const PAD_APRON = { flat: 15, blend: 25 }
+
 // -------------------------------------------------------------- suit & tools
 export const MAGBOOTS_BONUS = 0.15
 export const STRIDE_BONUS = 0.2

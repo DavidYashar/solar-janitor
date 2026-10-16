@@ -29,6 +29,7 @@
  * less a depth you can wade - so the river always sits in its banks.
  */
 
+import { PAD_APRON } from './config.ts'
 import { fbm, ridged, valueNoise } from './noise.ts'
 
 function clamp(value: number, min: number, max: number): number {
@@ -463,11 +464,12 @@ export const PAD_ORIGIN = { x: 80, z: -40 }
 const scratch: PadOffset = { arc: 0, bearing: 0, north: 0, east: 0 }
 
 /**
- * Mars keeps its pad flat with a short blend, and so does this - but the valley
- * floor here rolls only a few metres, so the apron is wide enough to put the
- * lander, the ring and the cargo down without cutting into a paddy bank.
+ * Mars keeps its pad flat, and so does every world now: a launch apron is level
+ * ground by definition, and this is the one place in the landscape where that is
+ * true rather than a compromise. The old blend was short enough to cut into
+ * craters; this one flattens them instead.
  */
-const PAD = { flat: 9, blend: 16 }
+const PAD = PAD_APRON
 
 /**
  * The landscape at a surface point, in metres of radial offset, before the pad

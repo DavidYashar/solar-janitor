@@ -13,6 +13,7 @@
  * placed against and what the horizon was shaped with, and swapping in the
  * engine's noise would quietly re-roll a landscape somebody already approved.
  */
+import { PAD_APRON } from './config.ts'
 import { fromPad, padOffset, type PadOffset } from './earthfield.ts'
 import { mulberry32 } from './noise.ts'
 
@@ -410,10 +411,10 @@ export const MOON_PAD_ORIGIN = { x: -134, z: -62 }
 
 /**
  * A wide apron, because this ground is cratered and the pad has to be flat
- * enough to set a lander on without one leg in a bowl. Sixteen metres of blend
- * flattens most of a small crater rather than trying to sit inside one.
+ * enough to set a lander on without one leg in a bowl. The blend reaches far
+ * enough to flatten most of a small crater rather than trying to sit inside one.
  */
-const MOON_PAD = { flat: 11, blend: 22 }
+const MOON_PAD = PAD_APRON
 
 const scratch: PadOffset = { arc: 0, bearing: 0, north: 0, east: 0 }
 

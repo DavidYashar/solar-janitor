@@ -1,15 +1,17 @@
 import * as THREE from 'three'
 import {
-  LANDER_RING_RADIUS, LOD_COST_SURFACE, LOD_PROP_SLICE, LOD_TERRAIN_SLICE, SURFACE_SCALE, TAU,
+  LANDER_RING_RADIUS, LOD_COST_SURFACE, LOD_PROP_SLICE, LOD_TERRAIN_SLICE, PAD_RADIUS,
+  SURFACE_SCALE, TAU,
 } from '../sim/config.ts'
 import { landerSite, planetById, terrainHeight } from '../sim/planets.ts'
 import {
   moonBoulderValley, moonCraterFieldAt, moonDesignPoint, moonFieldHeight, moonFieldNoise,
-  moonSpherePoint, moonTrenchDistance,
+  MOON_PAD_ORIGIN, moonSpherePoint, moonTrenchDistance,
 } from '../sim/moonfield.ts'
 import { mulberry32 } from '../sim/noise.ts'
 import { lunarEarthTexture, regolithTexture, roverTrackTexture } from './lunartex.ts'
 export { lunarEarthTexture }
+import { buildLaunchPad } from './launchpad.ts'
 import { fromPad, PAD_ORIGIN, riverDistance, riverHalfWidth, riverSamples } from '../sim/earthfield.ts'
 import { valueNoise } from '../sim/noise.ts'
 import type { PlanetDef } from '../sim/planets.ts'
@@ -1560,6 +1562,10 @@ function* moonPropStage(
       if (moonTrenchDistance(x, z) < 12) continue
       if (designDistance(x, z, track) < 3.5) continue
       if (designDistance(x, z, path) < 3.0) continue
+      // and off the concrete: rubble that ends up on the pad reads as debris
+      // from the pad rather than as ground, and the apron is the one place the
+      // last crew clearly swept
+      if (Math.hypot(x - MOON_PAD_ORIGIN.x, z - MOON_PAD_ORIGIN.z) < PAD_RADIUS + 3) continue
       const height = moonFieldHeight(x, z)
       if (height > 48) continue
       const size = sizeMin + rnd() * (sizeMax - sizeMin)
@@ -1922,9 +1928,16 @@ function* marsPropStage(
     new THREE.MeshStandardMaterial({ color: planet.rock, flatShading: true, roughness: 1 }),
     130,
   )
+  // keep the scatter off the concrete, and off the craters the pad is cut into
+  const padClear = (PAD_RADIUS + 4) / planet.surfaceRadius
   for (let i = 0; i < 130; i++) {
-    const lat = (rnd() * 2 - 1) * 1.0
-    const lon = rnd() * TAU
+    let lat = 0
+    let lon = 0
+    for (let attempt = 0; attempt < 12; attempt++) {
+      lat = (rnd() * 2 - 1) * 1.0
+      lon = rnd() * TAU
+      if (padDistance(lat, lon, site) > padClear) break
+    }
     placeProp(dummy, radiusOf, lat, lon, 0.2, 0.5 + rnd() * 1.9, rnd)
     rockMesh.setMatrixAt(i, dummy.matrix)
     if ((i + 1) % LOD_PROP_SLICE === 0) yield
@@ -2033,6 +2046,10 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {  
   } else {
     stages.push(() => marsPropStage(planet, seed, terrainRadius, detail))
   }
+  stages.push(function* launchPadStage() {
+    detail.add(buildLaunchPad(planet, terrainRadius, landerSite(planet.id)))
+    yield
+  })
   stages.push(function* padStage() {
     lander = buildLander(planet, terrainRadius, detail)
   })

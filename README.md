@@ -26,10 +26,11 @@ credits on gear. Clean all three worlds to restore the system.
   - `window.__solar.lodStats()` (dev builds) prints the built/shown tier per
     world, the queue depth and the ms spent last frame.
 
-- **Three landable worlds**, each ~20–24 junk pieces plus one hidden relic:
-  Earth (green hills, trees, shores), the Moon (a surveyed crater field, a cut
-  trench, a rover's route, 0.35 g floaty hops) and Mars (a crater field inside a
-  ring of peaks, half-buried probes, 0.45 g).
+- **Three landable worlds**, each ~20–24 junk pieces plus one hidden relic and the
+  same concrete launch apron to come down on: Earth (green hills, trees, shores),
+  the Moon (a surveyed crater field, a cut trench, a rover's route, 0.35 g floaty
+  hops) and Mars (a crater field inside a ring of peaks, half-buried probes,
+  0.45 g).
 - **Hazards, all telegraphed:** Moon meteor showers (a shadow circle tightens for
   2.5 s, then the rock lands — being mid-hop clears you) and Mars dust storms
   (every ~45 s: 35 % faster O₂ drain, thick haze, a sideways shove). Earth's ground
@@ -118,7 +119,7 @@ real browser is still outstanding** — see the box below for the exact steps.
 quaternion flight maths, upgrade effects, ranks, determinism, a headless full
 three-world run, and the LOD scheduler — hysteresis, warm-ahead ordering, the
 frame budget, plus the renderer's budget loop driven with a fake scene graph),
-`tsc --noEmit` clean and the production build clean (~674 kB JS / 187 kB
+`tsc --noEmit` clean and the production build clean (~681 kB JS / 189 kB
 gzipped, plus 13 kB CSS and 397 kB of Earth maps — well inside the payload
 budget, and *smaller at boot* than before: the space globes and the three
 surfaces are no longer generated during startup). Stack: Vite, strict
@@ -452,6 +453,42 @@ the surface the median frame is 17.3 ms with the terrain casting and 17.0 ms
 without, and the p99 no worse. It stays. Earth's terrain still does not cast: its
 hills are gentle, it has air, and at that light the silhouette costs more than it
 buys.
+
+**Every world lands on the same apron.** It is a helipad, because that is what a
+landing pad looks like from above, and all three worlds wear one: a touchdown deck
+at the middle, a ring of hazard chevrons warning you off its edge, and the markings
+running out through concrete and bitumen to a yellow safety ring and a last band of
+concrete outside that. The bands sit at the fractions of the radius they occupy in
+the reference photograph — the yellow at 0.77 to 0.85, the outer concrete from 0.85
+out — so the proportions are the reference's rather than invented here. It is one
+texture over one disc rather than a mesh per ring, because every one of those bands
+is paint on a flat surface and drawing them as geometry would cost a draw call each
+and z-fight with the ground between them.
+
+**It is flush, and that is the one place the game overrules the reference.** The
+janitor's height comes from the terrain function, not from the geometry he can see,
+so a raised deck would be something he walked through rather than onto — and a
+0.5 m step is not representable at all when the ground is sampled every ten metres.
+What buys the flatness instead is the apron: `PAD_APRON` is the same on all three
+worlds, it levels the ground within 15 m of the pad's own height and blends back
+into the landscape by 25, and it has to clear `PAD_RADIUS` with room to spare
+because what the mesh draws is a triangle between vertices up to six metres apart
+and the last of those can straddle the edge. Flattening that much changes each
+world by less than a metre: Earth's pad keeps 83 m of clearance from the river at
+its widest, and Mars's ring of peaks starts at 73 m and is never reached.
+
+The disc is then built onto the ground rather than onto a plane, one vertex at a
+time, by asking the terrain where the ground is. A flat disc cannot work: the apron
+is a cap on a ball, so its edge would sink `r²/2R` below the ground it is laid on —
+seven centimetres on Earth, and three quarters of a metre on Mars, where the ball is
+ninety-six metres. Its rings of railing are chords between posts rather than
+circles for the same reason. The touchdown deck is wider than the reference's,
+because what lands on it is a ship whose legs are four and a half metres apart
+rather than a helicopter on a pad built for a fleet, and the rail has a gate in it
+on the one bearing with nothing parked on it — there is no collision in this game,
+and a fence the janitor crosses every time he leaves is worse than a fence with a
+way through. Rubble and rock now keep off the concrete too, on every world: the
+apron is the one place the last crew clearly swept.
 
 ### How to check the streaming in a browser (M3)
 
