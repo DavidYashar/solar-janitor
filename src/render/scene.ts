@@ -15,8 +15,8 @@ import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
 import { buildShip } from './ship.ts'
 import {
-  canvasTexture, clampValue, createSurfaceJob, dir, discTexture, flareTexture, glowTexture, makeRnd,
-  raysTexture, riverFlow, sunGlowTexture, surfacePoint, windRotors,
+  canvasTexture, clampValue, createSurfaceJob, dir, discTexture, flareTexture, glowTexture, lunarEarthTexture,
+  makeRnd, raysTexture, riverFlow, sunGlowTexture, surfacePoint, windRotors,
 } from './surfaces.ts'
 import type { SurfaceBuild, SurfaceJob } from './surfaces.ts'
 
@@ -530,7 +530,7 @@ export function createWorld(container: HTMLElement): World {
       hemiIntensity: 1.35, fill: 0xa8c8ff, fillIntensity: 0.4, sunTint: 0xfff0a8, sunScale: 130,
     },
     moon: {
-      keyLight: 0xffffff, keyIntensity: 2.7, skyLight: 0x2c3a58, groundLight: 0x14161c,
+      keyLight: 0xffffff, keyIntensity: 3.5, skyLight: 0x2c3a58, groundLight: 0x14161c,
       hemiIntensity: 0.4, fill: 0x4a5f8c, fillIntensity: 0.14, sunTint: 0xffffff, sunScale: 104,
     },
     mars: {
@@ -602,6 +602,32 @@ export function createWorld(container: HTMLElement): World {
    * it cover the sky instead is the only way it can be gold.
    */
   for (const sprite of [sunSprite, sunDisc, ...rayLayers]) sprite.renderOrder = 1
+
+  /**
+   * The Earth, for the Moon's sky.
+   *
+   * It is not lit by the key light, and that is on purpose: it is a world two
+   * hundred and forty thousand miles away being lit by the same sun that lights
+   * this one, and pointing our directional light at it would light the wrong side
+   * of it and swing its terminator about as the janitor walks. A flat unlit disc
+   * at the right size and in the right place is the honest cheat.
+   *
+   * Fixed in the sky, because the Moon is tidally locked: it hangs at about
+   * forty-seven degrees over the landing site, which is where a real one would
+   * be from a site near the sub-Earth point, and it is drawn a little larger than
+   * life for the same reason the sun is.
+   */
+  const EARTH_SKY_DISTANCE = 4200
+  const EARTH_SKY_RADIUS = 110
+  const EARTH_SKY_DIRECTION = new THREE.Vector3(0.7901, -0.5344, -0.3271).normalize()
+  const earthInSky = new THREE.Mesh(
+    new THREE.SphereGeometry(EARTH_SKY_RADIUS, 48, 32),
+    new THREE.MeshBasicMaterial({ map: lunarEarthTexture(1024), fog: false }),
+  )
+  earthInSky.position.copy(EARTH_SKY_DIRECTION).multiplyScalar(EARTH_SKY_DISTANCE)
+  earthInSky.rotation.z = 0.41
+  earthInSky.visible = false
+  surfaceScene.add(earthInSky)
 
   /**
    * Lens ghosts. They are a screen-space effect - the whole point of them is that
@@ -685,6 +711,8 @@ export function createWorld(container: HTMLElement): World {
     for (const ray of rayLayers) ray.material.color.setHex(look.sunTint)
     // only the worlds with air have anything to put in the sky
     clouds.visible = planet.theme === 'earth'
+    // and the Moon is the one place you can see home from
+    earthInSky.visible = planet.theme === 'moon'
     surfaceHemisphere.color.setHex(look.skyLight)
     surfaceHemisphere.groundColor.setHex(look.groundLight)
     surfaceKey.color.setHex(look.keyLight)

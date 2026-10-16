@@ -27,9 +27,9 @@ credits on gear. Clean all three worlds to restore the system.
     world, the queue depth and the ms spent last frame.
 
 - **Three landable worlds**, each ~20–24 junk pieces plus one hidden relic:
-  Earth (green hills, trees, shores), the Moon (grey crater fields, boulder rims,
-  dead rovers, 0.35 g floaty hops) and Mars (a crater field inside a ring of
-  peaks, half-buried probes, 0.45 g).
+  Earth (green hills, trees, shores), the Moon (a surveyed crater field, a cut
+  trench, a rover's route, 0.35 g floaty hops) and Mars (a crater field inside a
+  ring of peaks, half-buried probes, 0.45 g).
 - **Hazards, all telegraphed:** Moon meteor showers (a shadow circle tightens for
   2.5 s, then the rock lands — being mid-hop clears you) and Mars dust storms
   (every ~45 s: 35 % faster O₂ drain, thick haze, a sideways shove). Earth's ground
@@ -118,7 +118,7 @@ real browser is still outstanding** — see the box below for the exact steps.
 quaternion flight maths, upgrade effects, ranks, determinism, a headless full
 three-world run, and the LOD scheduler — hysteresis, warm-ahead ordering, the
 frame budget, plus the renderer's budget loop driven with a fake scene graph),
-`tsc --noEmit` clean and the production build clean (~642 kB JS / 175 kB
+`tsc --noEmit` clean and the production build clean (~674 kB JS / 187 kB
 gzipped, plus 13 kB CSS and 397 kB of Earth maps — well inside the payload
 budget, and *smaller at boot* than before: the space globes and the three
 surfaces are no longer generated during startup). Stack: Vite, strict
@@ -127,7 +127,8 @@ code: geometry, sounds and — except for Earth — the planet artwork. `src/sim
 is pure TypeScript with zero three.js or DOM imports, which is what keeps the
 whole game testable headlessly.
 
-Performance budget (plan §9): no shadow maps, pixel ratio capped at 1.75 (1.0 in
+Performance budget (plan §9): one 2048² shadow map, and it exists only on a
+surface — the space scene draws none; pixel ratio capped at 1.75 (1.0 in
 low-quality mode), 300 particles and 320 dust motes per scene, both starfields
 are `Points` clouds (2 200 + 700, allocation-free), and every repeated object —
 junk, beacons, relic beams, cargo, trees, boulders, rocks — is an `InstancedMesh`.
@@ -316,10 +317,10 @@ half-width, and the meander widens at every bend, so a fixed distance is either
 too small where it curves or needlessly wide everywhere else; bushes and flowers
 now stand clear of the actual edge, with three metres to spare.
 
-**Mars is designed, not photographed.** The Moon lands on its painted,
-vertex-coloured ground on purpose — Earth's lander site sits in open ocean on the
-real map, and the Moon's is a smooth plain. Mars gets a surface of its own, laid
-out in `src/sim/marsfield.ts` in metres and bearings from the landing pad:
+**Mars is designed, not photographed.** Earth lands on its painted,
+vertex-coloured ground on purpose — its lander site sits in open ocean on the
+real map — and the Moon has a designed field of its own (below). Mars gets one
+laid out in `src/sim/marsfield.ts` in metres and bearings from the landing pad:
 fourteen craters placed by hand in the reference build's own vocabulary (a complex
 bowl with a peak on its floor, a breached rim you walk in through, eroded and
 ghost craters that are barely a ring of shadow, simple bowls between them, plus a
@@ -328,8 +329,8 @@ globe in orbit still wears its photograph; what you stand on is a place. The see
 moves the grain and nothing else, so the landscape the janitor learns is the same
 one every run.
 
-**The world is sized by what you can see over the curve.** A landing site is a
-ball of radius 96, so the ground goes over the horizon 19.6 m from your boots and
+**The world is sized by what you can see over the curve.** Mars's landing site is
+a ball of radius 96, so the ground goes over the horizon 19.6 m from your boots and
 a point `d` metres out is hidden unless it stands `(d − 19.6)² / 192` above the
 pad. That relationship drives everything: the floor is a shallow saucer, because a
 flat plain on a ball this size is a disc twenty metres across with the sky behind
@@ -393,6 +394,64 @@ looks at and drawing the camera back as it goes: swinging the camera down instea
 would only drive it into the ground behind him, and without the draw-back a
 look-up becomes a first-person view of the sky with the janitor gone from his own
 game.
+
+**The Moon is a real place, and it is measured in metres.** Earth and Mars are
+drawn for the size of ball they sit on, but the Moon's landscape was authored as
+ground: a 380 m playfield of craters from one metre to forty-six, an 18 m trench
+5.5 m deep, two mounds with a boulder valley between them, a rover's route and a
+trodden path up through the saddle. Carried onto the old 96 m ball it would have
+come out as a knot, so the Moon carries a radius of its own — 800 m, one unit to
+the metre, the number the field was written in. The ground then goes over the
+horizon 52 m from your boots, which is what puts the far crater rims on your
+skyline instead of behind it.
+
+The port is verified rather than eyeballed: 40 401 sample points across the field
+agree with the reference to 0.000000 m. That check earns its keep, because the
+generator's random stream is order-critical — its draws are consumed in sequence,
+so inserting or dropping a single roll re-rolls every crater after it, and dropping
+one `fresh` roll moved a crater 22 m before the diff caught it. Two rules follow. A
+new crater population goes on the *end* of the list, so the draws already made are
+undisturbed; and anything per-crater comes from a hash of the crater's own index
+rather than from the stream.
+
+**The craters are shaped, not round.** Each is a wobbled ellipse — an independent
+semi-axis each way, plus three harmonics on the rim radius — sized from that
+separate hash, so the reference's craters keep their exact positions and depths
+while their outlines stop being circles. Three further populations were appended
+afterwards, because a real regolith plain is mostly small holes: ninety at 22–46 m,
+four hundred and thirty at 6–16 m, and fifteen hundred at 1.1–3.6 m.
+
+**Six metres a segment, and the trench is why.** The Moon samples the field twice
+as finely as Earth (838 × 419 segments, still one mesh and one draw call). The test
+of that choice is the cut: four vertices across a feature 18 m wide and 5.5 m deep
+is exactly the case a coarse grid would quietly fill in. Sampled along its
+cross-section, it does not — the floor lands within 0.25 m of the curve and the
+drawn surface never stands more than 1.9 m above it. What the grid cannot hold is
+the trench's own wall, which comes out as a 6 m step rather than a slope; from the
+rim that reads as a cut, and the near wall throws the floor into full shadow, which
+is what a fall hazard should look like.
+
+**The Moon's sun is solved for, not chosen.** The sun sprite sits 4 800 units out,
+only six Moon radii, so its apparent height and its apparent bearing are a coupled
+pair: move the landing site to raise the sun and you turn it as well. The look
+being matched is a raking 22.2° sun, because long hard shadows are most of that
+picture, so the site was found by search rather than picked by eye — 0.171 rad
+north, 0.106 rad west is the ground nearest the equator that gives that elevation.
+Two other things follow from the Moon having no air. The starfield is drawn here and
+nowhere else in the game, and its sphere had to grow with the world: at the old
+radius the stars were *inside* the ground. And the Earth hangs in the sky above it,
+a lit marble three degrees wide at the bearing the geometry gives it.
+
+**On an airless world the shadows are the landscape.** Every crater wall is a
+silhouette and the sun is twenty-two degrees up, so the floors that never see the
+sun are most of what the surface is. The catch is that the terrain is a single mesh
+whose bounds are the whole ball, so it can never be frustum-culled out of the
+shadow pass and every one of its triangles is submitted every frame — the kind of
+cost worth measuring rather than assuming in either direction. Over 380 frames at
+the surface the median frame is 17.3 ms with the terrain casting and 17.0 ms
+without, and the p99 no worse. It stays. Earth's terrain still does not cast: its
+hills are gentle, it has air, and at that light the silhouette costs more than it
+buys.
 
 ### How to check the streaming in a browser (M3)
 

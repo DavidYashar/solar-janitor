@@ -1,10 +1,11 @@
 import {
   EARTH_ORBIT, EARTH_ORBIT_RATE, EARTH_RADIUS, EARTH_SURFACE_RADIUS, MARS_ORBIT, MARS_ORBIT_RATE,
-  MARS_RADIUS, MOON_ORBIT, MOON_ORBIT_RATE, MOON_RADIUS, SURFACE_RADIUS, SURFACE_SCALE,
+  MARS_RADIUS, MOON_ORBIT, MOON_ORBIT_RATE, MOON_RADIUS, MOON_SURFACE_RADIUS, SURFACE_RADIUS,
+  SURFACE_SCALE,
 } from './config.ts'
 import { flattenPad, marsFieldHeight } from './marsfield.ts'
 import { earthFieldHeight, flattenPad as flattenEarthPad, padCentre as fieldPadCentre } from './earthfield.ts'
-import { valueNoise } from './noise.ts'
+import { flattenMoonPad, moonFieldAt, moonPadCentre } from './moonfield.ts'
 
 export type PlanetTheme = 'earth' | 'moon' | 'mars'
 export type HazardKind = 'none' | 'meteor' | 'storm'
@@ -50,6 +51,12 @@ export interface PlanetDef {
   fogColor: number
   fogNear: number
   fogFar: number
+  /**
+   * Metres between terrain vertices on this world's surface. Ten by default; a
+   * world whose landscape was authored with detail finer than its grid says so
+   * here.
+   */
+  surfaceSpacing?: number
 }
 
 export const EARTH: PlanetDef = {
@@ -102,12 +109,35 @@ export const MOON: PlanetDef = {
   orbitRate: MOON_ORBIT_RATE,
   parent: 0,
   landable: true,
-  surfaceRadius: SURFACE_RADIUS,
+  surfaceRadius: MOON_SURFACE_RADIUS,
   breathable: false,
   junkCount: 22,
-  landerLat: -0.3,
-  landerLon: 1.25,
-  spread: { lat: 0.72, lon: 1.15 },
+  /**
+   * The landing site is solved for, not chosen: the reference lit its landscape
+   * with a sun 22 degrees up, which is what makes the craters read, and the sun
+   * here is close enough that its elevation and its bearing come as a pair - you
+   * cannot have both where you want them. So this is the site nearest the equator
+   * that still puts the sun 22 degrees above the horizon and the whole 760 m
+   * playfield inside the walkable band.
+   */
+  landerLat: 0.171,
+  landerLon: -0.106,
+  /**
+   * Six metres a segment rather than ten. The reference laid this landscape out
+   * on a two-metre grid, and the small crater population - five hundred and fifty
+   * of the six hundred and seventy-four, none of them wider than twenty-eight
+   * metres - is most of what makes the surface read as old. Ten metres throws
+   * them away; six keeps the medium ones honest and leaves the smallest as
+   * mottling, which is what they look like from standing height anyway.
+   */
+  surfaceSpacing: 6,
+  /**
+   * The Moon's landscape is 760 m across and the trench runs through the middle
+   * of it, so the sweep is spread to the same reach Earth's is - about a hundred
+   * and sixty metres for the cluster and twice that for the far pieces - which
+   * on this ball is a quarter of a radian rather than a third.
+   */
+  spread: { lat: 0.28, lon: 0.28 },
   hazard: 'meteor',
   spaceColor: 0xb9bfc9,
   atmosphere: 0xd8dee8,
@@ -119,8 +149,10 @@ export const MOON: PlanetDef = {
   skyMid: '#0a1020',
   skyHorizon: '#1b2438',
   fogColor: 0x1b2438,
-  fogNear: 220 * SURFACE_SCALE,
-  fogFar: 700 * SURFACE_SCALE,
+  // real metres now that the world is a real size: far enough out that the
+  // playfield is crisp, close enough that the rim behind it softens into sky
+  fogNear: 460,
+  fogFar: 1700,
 }
 
 export const MARS: PlanetDef = {
@@ -211,72 +243,6 @@ function earthPadCentre(radius: number): number {
   return earthPadHeight
 }
 
-// ------------------------------------------------------------------ craters
-
-export interface Crater {
-  lat: number
-  lon: number
-  radius: number
-  depth: number
-}
-
-const craterCache = new Map<string, Crater[]>()
-
-/** Deterministic crater field (Moon). Also used by the renderer for rims. */
-export function cratersFor(planetId: number, seed: number): Crater[] {
-  const key = `${planetId}:${seed}`
-  const cached = craterCache.get(key)
-  if (cached) return cached
-  const craters: Crater[] = []
-  const planet = planetById(planetId)
-  if (planet.theme === 'moon') {
-    let state = (seed ^ 0x51ed270b) >>> 0
-    const rnd = () => {
-      state = (Math.imul(state, 1664525) + 1013904223) >>> 0
-      return state / 4294967296
-    }
-    for (let i = 0; i < 26; i++) {
-      // keep the landing pad itself flat enough to put a lander down on
-      const lat = (rnd() * 2 - 1) * 1.0
-      const lon = rnd() * Math.PI * 2
-      const distanceToPad = Math.hypot(
-        (lat - planet.landerLat) * 1,
-        Math.cos(lat) * (((lon - planet.landerLon + Math.PI * 3) % (Math.PI * 2)) - Math.PI),
-      )
-      if (distanceToPad < 0.28) continue
-      craters.push({
-        lat,
-        lon,
-        radius: 0.055 + rnd() * 0.125,
-        depth: (0.5 + rnd() * 1.9) * SURFACE_SCALE,
-      })
-    }
-  }
-  if (craterCache.size > 12) craterCache.clear()
-  craterCache.set(key, craters)
-  return craters
-}
-
-function craterOffset(craters: Crater[], lat: number, lon: number): number {
-  let offset = 0
-  for (const crater of craters) {
-    const dLat = lat - crater.lat
-    let dLon = lon - crater.lon
-    dLon = ((dLon + Math.PI * 3) % (Math.PI * 2)) - Math.PI
-    const distance = Math.hypot(dLat, Math.cos(lat) * dLon)
-    const t = distance / crater.radius
-    if (t > 2.2) continue
-    if (t < 1) {
-      // bowl
-      offset -= crater.depth * (1 - t * t)
-    }
-    // raised rim
-    const rim = (t - 1) / 0.26
-    offset += crater.depth * 0.42 * Math.exp(-rim * rim)
-  }
-  return offset
-}
-
 // -------------------------------------------------------------------- mars
 
 /**
@@ -309,11 +275,12 @@ function padCentreHeight(seed: number): number {
   return padCentre
 }
 
-function moonTerrain(lat: number, lon: number, seed: number): number {
-  const x = (lon * 7.2) / SURFACE_SCALE
-  const y = (lat * 7.2) / SURFACE_SCALE
-  return ((valueNoise(x, y, seed) - 0.5) * 1.5 + (valueNoise(x * 3.3, y * 3.3, seed ^ 0x9e3779b9) - 0.5) * 0.6)
-    * SURFACE_SCALE
+function moonTerrain(lat: number, lon: number, _seed: number): number {
+  const radius = MOON.surfaceRadius
+  const height = moonFieldAt(MOON.landerLat, MOON.landerLon, lat, lon, radius)
+  return flattenMoonPad(
+    MOON.landerLat, MOON.landerLon, lat, lon, radius, height, moonPadCentre(MOON.landerLat, MOON.landerLon, radius),
+  )
 }
 
 /**
@@ -323,7 +290,7 @@ function moonTerrain(lat: number, lon: number, seed: number): number {
 export function terrainHeight(lat: number, lon: number, seed: number, planetId = 0): number {
   const planet = planetById(planetId)
   if (planet.theme === 'moon') {
-    return moonTerrain(lat, lon, seed) + craterOffset(cratersFor(planetId, seed), lat, lon)
+    return moonTerrain(lat, lon, seed)
   }
   if (planet.theme === 'mars') {
     return marsTerrain(lat, lon, seed)

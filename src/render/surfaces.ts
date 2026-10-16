@@ -2,7 +2,14 @@ import * as THREE from 'three'
 import {
   LANDER_RING_RADIUS, LOD_COST_SURFACE, LOD_PROP_SLICE, LOD_TERRAIN_SLICE, SURFACE_SCALE, TAU,
 } from '../sim/config.ts'
-import { cratersFor, landerSite, planetById, terrainHeight } from '../sim/planets.ts'
+import { landerSite, planetById, terrainHeight } from '../sim/planets.ts'
+import {
+  moonBoulderValley, moonCraterFieldAt, moonDesignPoint, moonFieldHeight, moonFieldNoise,
+  moonSpherePoint, moonTrenchDistance,
+} from '../sim/moonfield.ts'
+import { mulberry32 } from '../sim/noise.ts'
+import { lunarEarthTexture, regolithTexture, roverTrackTexture } from './lunartex.ts'
+export { lunarEarthTexture }
 import { fromPad, PAD_ORIGIN, riverDistance, riverHalfWidth, riverSamples } from '../sim/earthfield.ts'
 import { valueNoise } from '../sim/noise.ts'
 import type { PlanetDef } from '../sim/planets.ts'
@@ -492,6 +499,52 @@ function earthGrass(planet: PlanetDef): SoilMaps {
  * That ratio is constant across the world because both spans are measured at the
  * same latitude.
  */
+/** how much ground one regolith tile covers, matching the reference's 1400/40 */
+const REGOLITH_SPAN = 35
+
+/**
+ * The regolith tile repeats, and a repeated tile is a pattern - so the variation
+ * that stops it reading as one is done in the shader, in world space, where it
+ * cannot repeat at all: three octaves of fbm bending the brightness, plus the
+ * sparkle of glassy beads welded into the soil, which is a real thing you find
+ * in lunar regolith and catches the sun as small hard points.
+ *
+ * World space rather than UV, because UV repeats with the tile and the whole
+ * point is to have something that does not.
+ */
+function sprinkleRegolith(material: THREE.MeshStandardMaterial): void {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vGroundPos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGroundPos = (modelMatrix * vec4(position, 1.0)).xyz;')
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vGroundPos;
+float grain(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float grainNoise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	return mix(mix(grain(i), grain(i + vec2(1.0, 0.0)), u.x),
+	           mix(grain(i + vec2(0.0, 1.0)), grain(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float grainFbm(vec2 p) {
+	float v = 0.0;
+	float amp = 0.5;
+	for (int i = 0; i < 4; i++) { v += amp * grainNoise(p); p *= 2.0; amp *= 0.5; }
+	return v;
+}`)
+      .replace('#include <map_fragment>', `#include <map_fragment>
+	float broad = grainFbm(vGroundPos.xz * 0.02);
+	float middle = grainFbm(vGroundPos.xz * 0.09 + 17.3);
+	float fine = grainFbm(vGroundPos.xz * 0.45 + 53.1);
+	diffuseColor.rgb *= 0.88 + (broad * 0.5 + middle * 0.35 + fine * 0.15) * 0.26;
+	float bead = step(0.9987, grain(floor(vGroundPos.xz * 3.7)));
+	diffuseColor.rgb += vec3(bead) * 0.12;`)
+  }
+  material.customProgramCacheKey = () => 'lunar-regolith'
+}
+
 function blendCanopy(material: THREE.MeshStandardMaterial, canopy: SoilMaps, uvScale: number): void {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.canopyMap = { value: canopy.colour }
@@ -594,12 +647,8 @@ function placeGroup(
  * channel rather than a notch; the small worlds carry crater lips, which need
  * 2.7. Either way the whole ball stays one mesh and one draw call.
  */
-function terrainGrid(radius: number): { x: number; y: number } {
+function terrainGrid(radius: number, spacing: number): { x: number; y: number } {
   if (radius <= 200) return { x: 224, y: 144 }
-  // Earth: ten metres a segment. The river is forty metres across, so a channel
-  // is four or five vertices and the water ribbon hides the rest; and at this
-  // world's size the whole ball is still one mesh and one draw call.
-  const spacing = 10
   return {
     x: Math.round((TAU * radius) / spacing),
     y: Math.round((Math.PI * radius) / spacing),
@@ -620,8 +669,8 @@ function terrainGrid(radius: number): { x: number; y: number } {
  * This walks the same lattice in the same order with the same split across each
  * quad, which is the only way to ask the question the renderer answers.
  */
-function meshGround(surfaceRadius: number, seed: number, planetId: number) {
-  const grid = terrainGrid(surfaceRadius)
+function meshGround(planet: PlanetDef, seed: number) {
+  const grid = terrainGrid(planet.surfaceRadius, planet.surfaceSpacing ?? 10)
   const across = grid.x + 1
   const heights = new Map<number, number>()
   const corner = (ix: number, iy: number): number => {
@@ -637,7 +686,7 @@ function meshGround(surfaceRadius: number, seed: number, planetId: number) {
     const height = terrainHeight(
       Math.asin(clampValue(Math.cos(theta), -1, 1)),
       Math.atan2(ring * Math.sin(phi), -ring * Math.cos(phi)),
-      seed, planetId,
+      seed, planet.id,
     )
     heights.set(key, height)
     return height
@@ -659,13 +708,13 @@ function meshGround(surfaceRadius: number, seed: number, planetId: number) {
     const height = fx + fy <= 1
       ? a + (d - a) * fx + (b - a) * fy
       : c + (b - c) * (1 - fx) + (d - c) * (1 - fy)
-    return surfaceRadius + height
+    return planet.surfaceRadius + height
   }
 }
 
 function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Generator<void, void, void> {
   const surfaceRadius = planet.surfaceRadius
-  const grid = terrainGrid(surfaceRadius)
+  const grid = terrainGrid(surfaceRadius, planet.surfaceSpacing ?? 10)
   /** one segment of the grid in metres: how far along the ground a slope is read */
   const step = (TAU * surfaceRadius) / grid.x
   const geometry = new THREE.SphereGeometry(surfaceRadius, grid.x, grid.y)
@@ -676,10 +725,10 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
   const low = new THREE.Color(planet.groundLow)
   const high = new THREE.Color(planet.groundHigh)
   const rock = new THREE.Color(planet.rock)
-  const shade = new THREE.Color(0x2a2e38)
   const forest = new THREE.Color(0x2a5a20)
   const vertex = new THREE.Vector3()
   const color = new THREE.Color()
+  const design = { x: 0, z: 0 }
 
   for (let start = 0; start < position.count; start += LOD_TERRAIN_SLICE) {
     const end = Math.min(position.count, start + LOD_TERRAIN_SLICE)
@@ -691,15 +740,35 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
       const r = surfaceRadius + height
       position.setXYZ(i, vertex.x * r, vertex.y * r, vertex.z * r)
       // read in the landscape's own units, so the bands below are the ones the
-      // design was tuned at rather than sizes that follow the world about.
-      // Earth's valley is authored in real metres and reads them directly.
+      // design was tuned at rather than sizes that follow the world about. Earth
+      // and the Moon are both authored in real metres and read them directly;
+      // Mars was composed against a ball of radius 55 and still arrives divided
+      // by the scale that carried it up
       const earth = planet.theme === 'earth'
-      const h = earth ? height : height / SURFACE_SCALE
+      const real = planet.theme !== 'mars'
+      const h = real ? height : height / SURFACE_SCALE
       const ahead = terrainHeight(lat, lon + step / (surfaceRadius * Math.cos(lat)), seed, planet.id)
-      const run = earth ? step : 1.4 * SURFACE_SCALE
+      const run = real ? step : 1.4 * SURFACE_SCALE
       const slope = clampValue(Math.abs(ahead - height) / run, 0, 1)
 
-      if (earth) {
+      if (planet.theme === 'moon') {
+        /**
+         * The reference shades its ground from the crater field rather than from
+         * height: fresh ejecta around every rim comes up bright, the floors of
+         * the older bowls go slightly darker, and the patchwork underneath is
+         * noise at two scales. Height would paint the whole plain one colour and
+         * the craters would vanish into it.
+         */
+        moonDesignPoint(planet.landerLat, planet.landerLon, lat, lon, surfaceRadius, design)
+        const craters = moonCraterFieldAt(design.x, design.z)
+        let brightness = 0.82
+          + moonFieldNoise(design.x * 0.006 + 4.1, design.z * 0.006 + 8.3) * 0.22
+          + moonFieldNoise(design.x * 0.025 + 17.7, design.z * 0.025 + 2.9) * 0.08
+        if (craters > 0.3) brightness *= 1.04 + Math.min(craters, 2.5) * 0.025
+        if (craters < -0.4) brightness *= 0.95
+        brightness *= 1 - slope * 0.055
+        color.setRGB(brightness, brightness * 0.998, brightness * 0.992)
+      } else if (earth) {
         // grass on the floor, forest on the shoulders, bare rock on the steep
         // faces - and the rock is read from steepness rather than height, which
         // is the only way a cliff and the paddy beneath it are different colour
@@ -718,23 +787,19 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
       } else {
         const t = clampValue((h + 2.5) / 10, 0, 1)
         color.copy(low).lerp(high, t)
-        if (planet.theme === 'moon') {
-          if (h < -0.4) color.lerp(shade, clampValue((-h - 0.4) / 2.6, 0, 0.45))
-        } else {
-          // Mars: sand in the floor of the field, rock up on the ring and on
-          // anything steep. Height alone would paint the ring the same bright
-          // dust as the dunes, and a sunward crest of bright dust blows out to
-          // white and stops reading as a mountain at all.
-          color.lerp(rock, slope * 0.5)
-          if (h > 7) color.lerp(rock, clampValue((h - 7) / 16, 0, 0.6))
-          // the mottling, which lives here rather than in the soil tile: the
-          // ground's tone changes over metres, and a tile small enough to be
-          // sharp under a boot is far too small to hold a patch of ground this
-          // size without printing its pattern across the field
-          const patch = (valueNoise(lon * 7, lat * 7, seed ^ 0x51ed270b) - 0.5) * 0.2
-            + (valueNoise(lon * 23, lat * 23, seed ^ 0x2f1b3c) - 0.5) * 0.1
-          color.offsetHSL(0, 0, patch)
-        }
+        // Mars: sand in the floor of the field, rock up on the ring and on
+        // anything steep. Height alone would paint the ring the same bright
+        // dust as the dunes, and a sunward crest of bright dust blows out to
+        // white and stops reading as a mountain at all.
+        color.lerp(rock, slope * 0.5)
+        if (h > 7) color.lerp(rock, clampValue((h - 7) / 16, 0, 0.6))
+        // the mottling, which lives here rather than in the soil tile: the
+        // ground's tone changes over metres, and a tile small enough to be
+        // sharp under a boot is far too small to hold a patch of ground this
+        // size without printing its pattern across the field
+        const patch = (valueNoise(lon * 7, lat * 7, seed ^ 0x51ed270b) - 0.5) * 0.2
+          + (valueNoise(lon * 23, lat * 23, seed ^ 0x2f1b3c) - 0.5) * 0.1
+        color.offsetHSL(0, 0, patch)
       }
       colors.set([color.r, color.g, color.b], i * 3)
     }
@@ -745,7 +810,29 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
   if (planet.theme === 'earth') geometry.setAttribute('forest', new THREE.BufferAttribute(forests, 1))
   geometry.computeVertexNormals()
   let painted: THREE.MeshStandardMaterial
-  if (planet.theme !== 'moon') {
+  if (planet.theme === 'moon') {
+    /**
+     * The reference's regolith tile, over the whole ball. One tile is
+     * thirty-five metres of ground - the same coverage the reference gives it -
+     * and the fine variation is left to the shader rather than baked into the
+     * tile, because a tile sharp enough to read under a boot is far too small to
+     * cover this much ground without printing itself across it.
+     */
+    const regolith = regolithTexture(1024)
+    regolith.wrapS = THREE.RepeatWrapping
+    regolith.wrapT = THREE.RepeatWrapping
+    // a tile every thirty-five metres is minified hard under any camera that can
+    // see more than a few paces of it, and at a grazing angle the trilinear
+    // filter alone bands into diagonal stripes across the whole plain. Anisotropy
+    // is what buys the ground back
+    regolith.anisotropy = 8
+    const repeats = (TAU * surfaceRadius) / REGOLITH_SPAN
+    regolith.repeat.set(repeats, repeats * 0.5)
+    painted = new THREE.MeshStandardMaterial({
+      map: regolith, vertexColors: true, roughness: 0.96, metalness: 0,
+    })
+    sprinkleRegolith(painted)
+  } else {
     // the detail map: dust and grit on Mars, blades and clumps on Earth, and a
     // normal map out of the same pass. Smooth-shaded on purpose - flat shading
     // takes its normals from the geometry's derivatives and leaves a normal map
@@ -755,8 +842,6 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
       map: soil.colour, normalMap: soil.normal, vertexColors: true, roughness: 1, metalness: 0,
     })
     if (soil.canopy) blendCanopy(painted, soil.canopy, EARTH_GRASS_SPAN / EARTH_CANOPY_SPAN)
-  } else {
-    painted = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 })
   }
   const ground = new THREE.Mesh(geometry, painted)
   ground.name = TERRAIN_NAME
@@ -764,23 +849,44 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
   yield
 }
 
-/** Sharp stars for the airless Moon sky. */
-function buildStarField(): THREE.Points {
-  const count = 700
+/**
+ * Stars for the airless sky.
+ *
+ * The radius has to clear the world it hangs over, and that is not a constant:
+ * the Moon is a ball of eight hundred metres now, and a star field at six
+ * hundred is inside the ground. So it is measured off the world instead. With no
+ * air to scatter them, they are also the only thing up there that is not the sun
+ * or the Earth, which is why there are enough of them to be worth looking up at.
+ */
+function buildStarField(surfaceRadius: number): THREE.Points {
+  const count = 1600
   const positions = new Float32Array(count * 3)
+  const colors = new Float32Array(count * 3)
   const rnd = makeRnd(8642)
+  const inner = surfaceRadius * 2.6
+  const spread = surfaceRadius * 0.9
+
   for (let i = 0; i < count; i++) {
     const star = scratchDir.set(rnd() * 2 - 1, rnd() * 2 - 1, rnd() * 2 - 1)
     if (star.lengthSq() < 1e-6) star.set(0, 1, 0)
-    star.normalize().multiplyScalar(600 + rnd() * 140)
+    star.normalize().multiplyScalar(inner + rnd() * spread)
     positions.set([star.x, star.y, star.z], i * 3)
+
+    // most are faint and a few are not, which is what a real sky looks like; the
+    // scatter of colour is the difference between a hot blue-white star and a
+    // cooler one, and without it a star field reads as noise
+    const brightness = 0.35 + Math.pow(rnd(), 2.4) * 0.65
+    const warmth = (rnd() - 0.5) * 0.16
+    colors.set([brightness * (1 + warmth), brightness, brightness * (1 - warmth)], i * 3)
   }
-  return new THREE.Points(
-    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)),
-    new THREE.PointsMaterial({
-      color: 0xe8f0ff, size: 2.3, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.95,
-    }),
-  )
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  return new THREE.Points(geometry, new THREE.PointsMaterial({
+    size: 2.6, sizeAttenuation: false, vertexColors: true,
+    fog: false, transparent: true, opacity: 0.95, depthWrite: false,
+  }))
 }
 
 /**
@@ -800,7 +906,19 @@ const TERRAIN_NAME = 'terrain'
  * box cannot even reach. And anything transparent, because a landing ring is
  * light rather than an object and has no business casting one.
  */
-function markShadows(root: THREE.Object3D) {
+function markShadows(root: THREE.Object3D, planet: PlanetDef) {
+  /**
+   * The Moon's ground casts; Earth's does not.
+   *
+   * Both are the same order of size - four hundred thousand triangles - and both
+   * are one mesh whose bounds are the whole ball, so neither can ever be culled
+   * out of the shadow pass and both cost the same. What differs is what it buys.
+   * On Earth the shadow camera covers a hundred and forty metres of a valley that
+   * rolls a few metres, so the ground has no silhouette worth having. On the Moon
+   * every crater wall is a silhouette and the sun is twenty-two degrees up, so
+   * crater floors that never see the sun are most of what the surface is.
+   */
+  const terrainCasts = planet.theme === 'moon'
   root.traverse(object => {
     const mesh = object as THREE.Mesh
     if (!mesh.isMesh) return
@@ -821,7 +939,7 @@ function markShadows(root: THREE.Object3D) {
      */
     const cutOut = entries.some(entry => entry.alphaTest > 0)
     const seeThrough = entries.some(entry => entry.transparent)
-    mesh.castShadow = object.name !== TERRAIN_NAME && !seeThrough
+    mesh.castShadow = (object.name !== TERRAIN_NAME || terrainCasts) && !seeThrough
     mesh.receiveShadow = !cutOut
   })
 }
@@ -1235,49 +1353,288 @@ function buildRoverWreck(): THREE.Group {
   return group
 }
 
+// ------------------------------------------------------------------- moon
+
+/** the rover's route: out of the western plain, east past the lip of the cut */
+const MOON_TRACK = [
+  [-470, -260], [-330, -240], [-180, -200], [-30, -160],
+  [120, -130], [260, -120], [420, -160],
+]
+/** and the trodden way up through the boulder valley */
+const MOON_PATH = [
+  [-160, 120], [-130, 185], [-100, 245], [-70, 295], [-30, 345], [15, 390],
+]
+
+/** the palette the reference used, which is brighter than the engine's rock */
+const MOON_ROCK = 0xa8a49c
+
+function catmullPoint(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t
+  const t3 = t2 * t
+  return 0.5 * (
+    (2 * p1)
+    + (-p0 + p2) * t
+    + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+    + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+  )
+}
+
+/** sample a control polyline as a smooth curve through it */
+function curveThrough(control: number[][], count: number): { x: number; z: number }[] {
+  const segments = control.length - 1
+  const points: { x: number; z: number }[] = []
+  for (let i = 0; i < count; i++) {
+    const t = (i / (count - 1)) * segments
+    const seg = Math.min(Math.floor(t), segments - 1)
+    const local = t - seg
+    const a = control[Math.max(seg - 1, 0)]
+    const b = control[seg]
+    const c = control[Math.min(seg + 1, segments)]
+    const d = control[Math.min(seg + 2, segments)]
+    points.push({
+      x: catmullPoint(a[0], b[0], c[0], d[0], local),
+      z: catmullPoint(a[1], b[1], c[1], d[1], local),
+    })
+  }
+  return points
+}
+
+/** how far a design point is from a polyline, for keeping props off it */
+function designDistance(x: number, z: number, line: { x: number; z: number }[]): number {
+  let best = Infinity
+  for (let i = 0; i < line.length - 1; i++) {
+    const a = line[i]
+    const b = line[i + 1]
+    const abx = b.x - a.x
+    const abz = b.z - a.z
+    const len2 = abx * abx + abz * abz
+    let t = len2 > 0 ? ((x - a.x) * abx + (z - a.z) * abz) / len2 : 0
+    t = clampValue(t, 0, 1)
+    const dx = x - (a.x + abx * t)
+    const dz = z - (a.z + abz * t)
+    best = Math.min(best, Math.hypot(dx, dz))
+  }
+  return best
+}
+
+/**
+ * Lay a strip of ground detail along a curve, in the design's own frame.
+ *
+ * The width is walked off in design metres on either side of the centreline and
+ * each edge is then dropped onto the sphere, so the strip measures its width
+ * along the ground rather than across the projection - which matters because a
+ * six-metre-wide track laid any other way would come out a different width
+ * depending on which way it happened to be heading.
+ */
+function moonRibbon(
+  control: number[][], count: number, halfWidth: number, lift: number, uvPerTile: number,
+  material: THREE.Material, radiusOf: (lat: number, lon: number) => number, planet: PlanetDef,
+): THREE.Mesh | null {
+  const line = curveThrough(control, count)
+  const positions: number[] = []
+  const uvs: number[] = []
+  const indices: number[] = []
+  const point = new THREE.Vector3()
+  const latLon = { lat: 0, lon: 0 }
+  let along = 0
+
+  for (let i = 0; i < line.length; i++) {
+    const here = line[i]
+    const prev = line[Math.max(0, i - 1)]
+    const next = line[Math.min(line.length - 1, i + 1)]
+    const dx = next.x - prev.x
+    const dz = next.z - prev.z
+    const length = Math.hypot(dx, dz) || 1
+    if (i > 0) along += Math.hypot(here.x - prev.x, here.z - prev.z)
+    for (const side of [-1, 1]) {
+      const x = here.x + (-dz / length) * halfWidth * side
+      const z = here.z + (dx / length) * halfWidth * side
+      moonSpherePoint(planet.landerLat, planet.landerLon, x, z, planet.surfaceRadius, latLon)
+      dir(latLon.lat, latLon.lon, point).multiplyScalar(radiusOf(latLon.lat, latLon.lon) + lift)
+      positions.push(point.x, point.y, point.z)
+      uvs.push(side < 0 ? 0 : 1, uvPerTile > 0 ? along / uvPerTile : along / 24)
+    }
+    if (i > 0) {
+      const a = (i - 1) * 2
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3)
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.receiveShadow = true
+  return mesh
+}
+
+/**
+ * The things the last crew left: a cluster of crates, and a mast with a lamp on
+ * top of it. Nothing here is big, but on a plain this empty anything man-made is
+ * a landmark, and the mast is what you steer by.
+ */
+function moonSurveyGear(): THREE.Group {
+  const group = new THREE.Group()
+  const items = [
+    { dx: 0, dz: 0, w: 1.0, h: 0.62, d: 0.72, c: 0xb9b9b4, rot: 0.4, metal: 0 },
+    { dx: 1.4, dz: -1.4, w: 0.72, h: 0.5, d: 0.55, c: 0xc8a646, rot: -0.3, metal: 0.55 },
+    { dx: -2.0, dz: 1.4, w: 0.55, h: 0.42, d: 0.5, c: 0xa8a8a2, rot: 1.1, metal: 0 },
+  ]
+  for (const item of items) {
+    const crate = new THREE.Mesh(
+      new THREE.BoxGeometry(item.w, item.h, item.d),
+      new THREE.MeshStandardMaterial({ color: item.c, roughness: 0.55, metalness: item.metal }),
+    )
+    crate.position.set(item.dx, item.h / 2, item.dz)
+    crate.rotation.y = item.rot
+    group.add(crate)
+  }
+  const mast = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.025, 0.035, 3.8, 6),
+    new THREE.MeshStandardMaterial({ color: 0xd8d8d4, roughness: 0.5, metalness: 0.3 }),
+  )
+  mast.position.set(0.5, 1.9, -4.5)
+  group.add(mast)
+  const lamp = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 8, 8),
+    new THREE.MeshStandardMaterial({ color: 0xe8c860, roughness: 0.4, metalness: 0.4 }),
+  )
+  lamp.position.set(0.5, 3.85, -4.5)
+  group.add(lamp)
+  return group
+}
+
 function* moonPropStage(
   planet: PlanetDef, seed: number, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
 ): Generator<void, void, void> {
-  const rnd = makeRnd(seed ^ 0x2f9a11)
-  const site = landerSite(planet.id)
-  const dummy = new THREE.Object3D()
-  const craters = cratersFor(planet.id, seed)
-  const rimRocks = craters.length * 14
-  const boulderMesh = new THREE.InstancedMesh(
-    new THREE.IcosahedronGeometry(0.85, 0),
-    new THREE.MeshStandardMaterial({ color: planet.rock, flatShading: true, roughness: 1 }),
-    Math.max(1, rimRocks + 90),
-  )
-  let boulders = 0
-  for (const crater of craters) {
-    for (let i = 0; i < 14; i++) {
-      const angle = (i / 14) * TAU + rnd() * 0.45
-      const lat = clampValue(crater.lat + Math.sin(angle) * crater.radius * 1.04, -1.15, 1.15)
-      const lon = crater.lon + (Math.cos(angle) * crater.radius) / Math.max(0.3, Math.cos(lat))
-      placeProp(dummy, radiusOf, lat, lon, 0.16, 0.5 + rnd() * 0.8, rnd)
-      boulderMesh.setMatrixAt(boulders++, dummy.matrix)
-      if (boulders >= boulderMesh.count) break
-      if (boulders % LOD_PROP_SLICE === 0) yield
+  const rnd = mulberry32(seed ^ 0x555777)
+  const radius = planet.surfaceRadius
+  const latLon = { lat: 0, lon: 0 }
+  const valley = moonBoulderValley()
+  const track = curveThrough(MOON_TRACK, 90)
+  const path = curveThrough(MOON_PATH, 70)
+
+  /**
+   * Rubble: abundant and small everywhere, boulders gathering in the valley
+   * between the two mounds, because that is where scree ends up. It keeps off
+   * the cut, off the rover's route and off the trodden path, and it does not go
+   * up the hills - boulders on a slope read as a rockfall, and there is no
+   * rockfall on a world with no weather.
+   */
+  const rockMaterial = new THREE.MeshStandardMaterial({
+    color: MOON_ROCK, roughness: 0.92, metalness: 0, flatShading: true,
+  })
+  const rounded = new THREE.IcosahedronGeometry(0.5, 1)
+  const angular = new THREE.IcosahedronGeometry(0.5, 0)
+  for (const geometry of [rounded, angular]) {
+    const position = geometry.attributes.position
+    for (let i = 0; i < position.count; i++) {
+      const scale = geometry === rounded ? 0.75 + rnd() * 0.5 : 0.6 + rnd() * 0.8
+      position.setXYZ(i, position.getX(i) * scale, position.getY(i) * scale, position.getZ(i) * scale)
     }
+    geometry.computeVertexNormals()
   }
-  for (let i = 0; i < 90; i++) {
-    const lat = (rnd() * 2 - 1) * 1.0
-    const lon = rnd() * TAU
-    if (padDistance(lat, lon, site) < 0.24) continue
-    placeProp(dummy, radiusOf, lat, lon, 0.2, 0.6 + rnd() * 1.7, rnd)
-    boulderMesh.setMatrixAt(boulders++, dummy.matrix)
-    if (boulders % LOD_PROP_SLICE === 0) yield
+
+  const scatter = (
+    count: number, sizeMin: number, sizeMax: number, valleyBias: number,
+  ): { x: number; z: number; size: number; height: number; rot: number; tiltX: number; tiltZ: number }[] => {
+    const spots: { x: number; z: number; size: number; height: number; rot: number; tiltX: number; tiltZ: number }[] = []
+    let guard = 0
+    while (spots.length < count && guard < count * 30) {
+      guard++
+      let x: number
+      let z: number
+      if (valleyBias > 0 && rnd() < valleyBias) {
+        const a = rnd() * TAU
+        const r = Math.sqrt(rnd()) * valley.r * 1.3
+        x = valley.x + Math.cos(a) * r
+        z = valley.z + Math.sin(a) * r
+      } else {
+        const a = rnd() * TAU
+        const r = Math.sqrt(rnd()) * 500
+        x = Math.cos(a) * r
+        z = Math.sin(a) * r
+      }
+      if (moonTrenchDistance(x, z) < 12) continue
+      if (designDistance(x, z, track) < 3.5) continue
+      if (designDistance(x, z, path) < 3.0) continue
+      const height = moonFieldHeight(x, z)
+      if (height > 48) continue
+      const size = sizeMin + rnd() * (sizeMax - sizeMin)
+      spots.push({
+        x, z, size, height,
+        rot: rnd() * TAU,
+        tiltX: (rnd() - 0.5) * 0.5,
+        tiltZ: (rnd() - 0.5) * 0.5,
+      })
+    }
+    return spots
   }
-  boulderMesh.count = boulders
-  boulderMesh.instanceMatrix.needsUpdate = true
-  group.add(boulderMesh)
+
+  const place = (geometry: THREE.BufferGeometry, spots: ReturnType<typeof scatter>) => {
+    if (!spots.length) return
+    const mesh = new THREE.InstancedMesh(geometry, rockMaterial, spots.length)
+    const dummy = new THREE.Object3D()
+    const point = new THREE.Vector3()
+    for (let i = 0; i < spots.length; i++) {
+      const spot = spots[i]
+      moonSpherePoint(planet.landerLat, planet.landerLon, spot.x, spot.z, radius, latLon)
+      // sunk a fifth of its own size, so a boulder sits in the ground rather
+      // than on it - the difference between rubble and litter
+      dir(latLon.lat, latLon.lon, point).multiplyScalar(radiusOf(latLon.lat, latLon.lon) - spot.size * 0.22)
+      dummy.position.copy(point)
+      dummy.quaternion.setFromUnitVectors(UP, point.clone().normalize())
+      dummy.rotateY(spot.rot)
+      dummy.rotateX(spot.tiltX)
+      dummy.rotateZ(spot.tiltZ)
+      dummy.scale.setScalar(spot.size)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(i, dummy.matrix)
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    group.add(mesh)
+  }
+
+  place(rounded, scatter(850, 0.22, 0.8, 0))
+  yield
+  place(rounded, scatter(380, 0.9, 2.2, 0.35))
+  yield
+  place(angular, scatter(120, 2.4, 5.2, 0.55))
   yield
 
+  const trackTexture = roverTrackTexture(128)
+  trackTexture.wrapS = THREE.ClampToEdgeWrapping
+  trackTexture.wrapT = THREE.RepeatWrapping
+  const trackMesh = moonRibbon(MOON_TRACK, 90, 1.6, 0.07, 0.6, new THREE.MeshStandardMaterial({
+    map: trackTexture, transparent: true, roughness: 0.95, metalness: 0, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, side: THREE.DoubleSide,
+  }), radiusOf, planet)
+  if (trackMesh) group.add(trackMesh)
+  yield
+
+  const pathMesh = moonRibbon(MOON_PATH, 70, 1.3, 0.1, 0, new THREE.MeshStandardMaterial({
+    color: 0xd9d6cd, roughness: 1, metalness: 0, side: THREE.DoubleSide,
+    polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+  }), radiusOf, planet)
+  if (pathMesh) group.add(pathMesh)
+  yield
+
+  const gear = moonSurveyGear()
+  moonSpherePoint(planet.landerLat, planet.landerLon, -224, -2, radius, latLon)
+  placeGroup(gear, radiusOf, latLon.lat, latLon.lon, 0, 0.62)
+  group.add(gear)
+  yield
+
+  // the janitor's own kind of rubbish: two rovers that stopped where they were
+  // and a scatter of panels off something that came apart in the air
   for (let i = 0; i < 2; i++) {
     const wreck = buildRoverWreck()
-    const lat = site.lat + (i === 0 ? 0.27 : -0.33)
-    const lon = site.lon + (i === 0 ? 0.23 : -0.19)
-    placeGroup(wreck, radiusOf, lat, lon, 0.1, rnd() * TAU)
+    const designX = i === 0 ? -300 : 60
+    const designZ = i === 0 ? 70 : -190
+    moonSpherePoint(planet.landerLat, planet.landerLon, designX, designZ, radius, latLon)
+    placeGroup(wreck, radiusOf, latLon.lat, latLon.lon, 0.1, rnd() * TAU)
     group.add(wreck)
     yield
   }
@@ -1287,10 +1644,20 @@ function* moonPropStage(
     new THREE.MeshStandardMaterial({ color: 0x33507f, roughness: 0.5, metalness: 0.4, flatShading: true }),
     16,
   )
+  const dummy = new THREE.Object3D()
+  const point = new THREE.Vector3()
+  const centre = { x: -120, z: -120 }
   for (let i = 0; i < 16; i++) {
-    const lat = site.lat + (rnd() * 2 - 1) * 0.42
-    const lon = site.lon + (rnd() * 2 - 1) * 0.42
-    placeProp(dummy, radiusOf, lat, lon, 0.12, 0.5 + rnd() * 0.8, rnd)
+    const x = centre.x + (rnd() * 2 - 1) * 240
+    const z = centre.z + (rnd() * 2 - 1) * 240
+    moonSpherePoint(planet.landerLat, planet.landerLon, x, z, radius, latLon)
+    dir(latLon.lat, latLon.lon, point).multiplyScalar(radiusOf(latLon.lat, latLon.lon) + 0.12)
+    dummy.position.copy(point)
+    dummy.quaternion.setFromUnitVectors(UP, point.clone().normalize())
+    dummy.rotateY(rnd() * TAU)
+    dummy.rotateX((rnd() - 0.5) * 0.5)
+    dummy.scale.set(0.5 + rnd() * 0.8, 1, 0.5 + rnd() * 0.8)
+    dummy.updateMatrix()
     fragmentMesh.setMatrixAt(i, dummy.matrix)
   }
   fragmentMesh.instanceMatrix.needsUpdate = true
@@ -1643,7 +2010,7 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {  
   )
   // everything that stands on this world is placed on the surface the mesh
   // draws, not the one the height function describes (see meshGround)
-  const terrainRadius = meshGround(planet.surfaceRadius, seed, planetId)
+  const terrainRadius = meshGround(planet, seed)
   let lander: LanderParts | null = null
 
   const stages: (() => Generator<void, void, void>)[] = [
@@ -1651,7 +2018,7 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {  
   ]
   if (planet.theme === 'moon') {
     stages.push(function* moonSky() {
-      detail.add(buildStarField())
+      detail.add(buildStarField(planet.surfaceRadius))
     })
   }
   if (planet.theme === 'earth') {
@@ -1687,7 +2054,7 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {  
         index++
       }
       if (!job.build && lander) {
-        markShadows(detail)
+        markShadows(detail, planet)
         job.build = {
           planetId,
           group: detail,

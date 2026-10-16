@@ -39,6 +39,20 @@ export const SURFACE_RADIUS = 96
 export const EARTH_SURFACE_RADIUS = 1000
 
 /**
+ * The Moon's landscape is composed as real ground as well - a metre to the unit,
+ * a 760 m playfield, an 18 m trench that is five and a half metres deep - and a
+ * trench is only a hazard while it is still that deep. Onto the 96 m ball the
+ * small worlds share, the whole field would have to shrink eightfold, which
+ * turns the cut into a curb and the craters into speckle. So the Moon gets its
+ * own radius, big enough to lay the field on at 1:1.
+ *
+ * Eight hundred rather than Earth's thousand: the playfield only reaches 380 m
+ * from the landing site, so a smaller ball keeps more of the surface within
+ * walking distance of the interesting ground.
+ */
+export const MOON_SURFACE_RADIUS = 800
+
+/**
  * The landscape of the two small worlds was composed against a ball of radius
  * 55, and this is what carries that design up: a crater stays in proportion to
  * the ground it sits in, the bowl keeps a walkable slope, and the ring keeps its
