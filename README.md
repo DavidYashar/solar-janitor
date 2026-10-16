@@ -342,9 +342,10 @@ cannot carry it at eye height, and all a painted shadow can do two metres off th
 ground is look painted.
 
 **The sky has something in it now.** The sun is a disc rather than a smudge. The
-real one is 0.53° across and it is drawn at twice that, because at the sizes this
-camera runs at anything smaller stops reading as a disc and starts reading as a
-speck. Around it: a wide aureole, a crown of spikes turning against itself, and a
+real one is 0.53° across and it is drawn at three times that, because at the sizes
+this camera runs at anything smaller stops reading as a disc and starts reading as
+a speck — and inside a wide aureole it has to hold its own against its own light.
+Around it: a wide aureole, a crown of spikes turning against itself, and a
 line of lens ghosts hung on the frame's own centre line.
 
 The aureole is blended, not added, and that is the whole reason it has a colour.

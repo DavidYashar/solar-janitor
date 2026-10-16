@@ -454,11 +454,12 @@ export function createWorld(container: HTMLElement): World {
   const SURFACE_CLOUD_RADIUS = 3400
   /**
    * The sun is 0.53 degrees across, and a disc is the whole point: a soft blob is
-   * a light source, but it takes a hard edge to read as the sun. Twice life size
-   * is the smallest that still looks like a disc rather than a speck at the sizes
-   * this camera runs at, and the glare is what carries the brightness anyway.
+   * a light source, but it takes a hard edge to read as the sun. Three times life
+   * size is what it takes for the disc to hold its own against the aureole around
+   * it at the sizes this camera runs at; smaller and it starts reading as a speck
+   * inside its own glare.
    */
-  const SUN_DISC_SCALE = 2 * SURFACE_SUN_DISTANCE * Math.tan(0.00925)
+  const SUN_DISC_SCALE = 2 * SURFACE_SUN_DISTANCE * Math.tan(0.00925 * 1.5)
   /** how far the sun's spikes reach: far enough to read as a crown, not a sticker */
   const SUN_RAY_SCALE = 1400
   /** where the lens ghosts are hung, in metres in front of the camera */
@@ -480,7 +481,7 @@ export function createWorld(container: HTMLElement): World {
       // bright overcast daylight, the way the reference photographs are lit:
       // a strong cool-white key, a blue sky fill and very little else
       keyLight: 0xfff6e2, keyIntensity: 2.6, skyLight: 0xcfe4ff, groundLight: 0x4a7a3a,
-      hemiIntensity: 1.35, fill: 0xa8c8ff, fillIntensity: 0.4, sunTint: 0xffeb96, sunScale: 130,
+      hemiIntensity: 1.35, fill: 0xa8c8ff, fillIntensity: 0.4, sunTint: 0xfff0a8, sunScale: 130,
     },
     moon: {
       keyLight: 0xffffff, keyIntensity: 2.7, skyLight: 0x2c3a58, groundLight: 0x14161c,
