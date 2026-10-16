@@ -9,7 +9,7 @@ import { quatForward, quatUp } from '../sim/orient.ts'
 import { PLANETS, planetById } from '../sim/planets.ts'
 import type { PlanetTheme } from '../sim/planets.ts'
 import type { Game, GameEvent, JunkClass, Vec3 } from '../sim/types.ts'
-import { createSpaceBody, loadMap, makeLabel, whenReady } from './bodies.ts'
+import { createSpaceBody, loadMap, makeLabel, warmBodyMaps, whenReady } from './bodies.ts'
 import type { SpaceBody } from './bodies.ts'
 import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
@@ -368,6 +368,9 @@ export function createWorld(container: HTMLElement): World {
   spaceScene.add(earthSystem)
   const earthBody = createSpaceBody(0, earthSystem)
   earthSystem.add(earthBody.glow)
+  // fetch every world's globe map up front: a world that has to wait for its own
+  // photograph is a world that shows as a bare colour until it arrives
+  warmBodyMaps()
 
   function orbitRing(radius: number, color: number, opacity: number): THREE.Line {
     const points: THREE.Vector3[] = []

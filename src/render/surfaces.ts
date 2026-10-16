@@ -13,7 +13,7 @@ import {
   MOON_PAD_ORIGIN, moonSpherePoint, moonTrenchDistance,
 } from '../sim/moonfield.ts'
 import { mulberry32 } from '../sim/noise.ts'
-import { lunarEarthTexture, regolithTexture, roverTrackTexture } from './lunartex.ts'
+import { lunarEarthTexture, roverTrackTexture } from './lunartex.ts'
 export { lunarEarthTexture }
 import { buildLaunchPad } from './launchpad.ts'
 import { fromPad, PAD_ORIGIN, riverDistance, riverHalfWidth, riverSamples } from '../sim/earthfield.ts'
@@ -235,6 +235,22 @@ const MARS_GROUND_SPAN = 5
 const MARS_GROUND_COLOUR = '/textures/mars_ground.webp'
 const MARS_GROUND_RELIEF = '/textures/mars_ground_normal.webp'
 /**
+ * The Moon's floor, from the owner's photograph, turned into a tile by
+ * `.tools/make-moon-tile.py`.
+ *
+ * Eight metres. Its neighbours are five, and the difference is the source rather than
+ * the world: Mars's reference is a close-up where a stone is a few centimetres, and
+ * this one is a crater field where the features are already the size of a fist by the
+ * time it has been cut to a square. Spreading it a little further stops the smallest
+ * craters in it reading as gravel. It replaces a canvas of flat `#b4b0a7` with two
+ * passes of soft mottling over it - seamless by construction, and carrying no crater at
+ * all - which is why the script targets that tile's measured mean rather than a guess:
+ * the palette was calibrated against it, so the Moon's brightness does not move.
+ */
+const MOON_GROUND_SPAN = 8
+const MOON_GROUND_COLOUR = '/textures/moon_ground.webp'
+const MOON_GROUND_RELIEF = '/textures/moon_ground_normal.webp'
+/**
  * How many times the tile wraps its world - measured at the landing site, so a
  * tile of the sphere's own UVs comes out square on the ground you actually walk
  * on. It is a property of the world, because Earth's site is a valley five and
@@ -327,6 +343,15 @@ function marsGround(planet: PlanetDef): SoilMaps {
 }
 
 /**
+ * The Moon's floor, from the owner's own photograph of a crater field. The same
+ * arrangement again, and it is the third world to wear one: the tile was the last
+ * surface in the game still painted in code.
+ */
+function moonGround(planet: PlanetDef): SoilMaps {
+  return photoSoil(planet, MOON_GROUND_COLOUR, MOON_GROUND_RELIEF, MOON_GROUND_SPAN)
+}
+
+/**
  * Two ground textures on one mesh. The terrain is a single sphere under a single
  * material, so a second surface can only arrive through the shader: `forest` is a
  * per-vertex mask baked in the same pass that painted the colours, and the
@@ -337,18 +362,18 @@ function marsGround(planet: PlanetDef): SoilMaps {
  * That ratio is constant across the world because both spans are measured at the
  * same latitude.
  */
-/** how much ground one regolith tile covers, matching the reference's 1400/40 */
-const REGOLITH_SPAN = 35
-
 /**
- * The regolith tile repeats, and a repeated tile is a pattern - so the variation
- * that stops it reading as one is done in the shader, in world space, where it
- * cannot repeat at all: three octaves of fbm bending the brightness, plus the
- * sparkle of glassy beads welded into the soil, which is a real thing you find
- * in lunar regolith and catches the sun as small hard points.
+ * The Moon's ground is a photograph of a crater field now, and it repeats every eight
+ * metres - which is a pattern, however good the photograph is. So the variation that
+ * stops it reading as one is done in the shader, in world space, where it cannot repeat
+ * at all: three octaves of fbm bending the brightness, plus the sparkle of glassy beads
+ * welded into the soil, which is a real thing you find in lunar regolith and catches the
+ * sun as small hard points.
  *
- * World space rather than UV, because UV repeats with the tile and the whole
- * point is to have something that does not.
+ * World space rather than UV, because UV repeats with the tile and the whole point is to
+ * have something that does not. It was written when this world's floor was painted in
+ * code and the tile was the thing that repeated; the tile is a photograph now and this
+ * is unchanged, because a tile of any span needs something over the top of it.
  */
 function sprinkleRegolith(material: THREE.MeshStandardMaterial): void {
   material.onBeforeCompile = (shader) => {
@@ -423,9 +448,10 @@ varying float vForest;`)
 function soilTextures(planet: PlanetDef): SoilMaps {
   const cached = soilMaps.get(planet.id)
   if (cached) return cached
-  // both landable worlds with soil wear a photograph now. The Moon does not come
-  // through here at all - it has its own regolith tile.
-  const maps = planet.theme === 'earth' ? earthGrass(planet) : marsGround(planet)
+  // every landable world wears a photograph of its own ground now
+  const maps = planet.theme === 'earth'
+    ? earthGrass(planet)
+    : planet.theme === 'moon' ? moonGround(planet) : marsGround(planet)
   soilMaps.set(planet.id, maps)
   return maps
 }
@@ -688,38 +714,24 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
   if (planet.theme === 'earth') geometry.setAttribute('forest', new THREE.BufferAttribute(forests, 1))
   geometry.computeVertexNormals()
   let painted: THREE.MeshStandardMaterial
-  if (planet.theme === 'moon') {
+  {
     /**
-     * The reference's regolith tile, over the whole ball. One tile is
-     * thirty-five metres of ground - the same coverage the reference gives it -
-     * and the fine variation is left to the shader rather than baked into the
-     * tile, because a tile sharp enough to read under a boot is far too small to
-     * cover this much ground without printing itself across it.
+     * The detail map: a crater field on the Moon, dust and grit on Mars, blades and
+     * clumps on Earth, each with a normal map out of the same pass. Smooth-shaded on
+     * purpose - flat shading takes its normals from the geometry's derivatives and
+     * leaves a normal map nowhere to sit, and the normal map is where the close-up
+     * detail lives.
+     *
+     * The Moon used to be the exception, wearing a procedural regolith canvas under a
+     * world-space fbm. The canvas is gone; the fbm stays, because it varies the ground
+     * over fifty metres and a tile that repeats every eight cannot do that.
      */
-    const regolith = regolithTexture(1024)
-    regolith.wrapS = THREE.RepeatWrapping
-    regolith.wrapT = THREE.RepeatWrapping
-    // a tile every thirty-five metres is minified hard under any camera that can
-    // see more than a few paces of it, and at a grazing angle the trilinear
-    // filter alone bands into diagonal stripes across the whole plain. Anisotropy
-    // is what buys the ground back
-    regolith.anisotropy = 8
-    const repeats = (TAU * surfaceRadius) / REGOLITH_SPAN
-    regolith.repeat.set(repeats, repeats * 0.5)
-    painted = new THREE.MeshStandardMaterial({
-      map: regolith, vertexColors: true, roughness: 0.96, metalness: 0,
-    })
-    sprinkleRegolith(painted)
-  } else {
-    // the detail map: dust and grit on Mars, blades and clumps on Earth, and a
-    // normal map out of the same pass. Smooth-shaded on purpose - flat shading
-    // takes its normals from the geometry's derivatives and leaves a normal map
-    // nowhere to sit, and the normal map is where the close-up detail lives.
     const soil = soilTextures(planet)
     painted = new THREE.MeshStandardMaterial({
       map: soil.colour, normalMap: soil.normal, vertexColors: true, roughness: 1, metalness: 0,
     })
     if (soil.canopy) blendCanopy(painted, soil.canopy, EARTH_GRASS_SPAN / EARTH_CANOPY_SPAN)
+    if (planet.theme === 'moon') sprinkleRegolith(painted)
   }
   const ground = new THREE.Mesh(geometry, painted)
   ground.name = TERRAIN_NAME

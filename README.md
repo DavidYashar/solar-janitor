@@ -43,7 +43,12 @@ credits on gear. Clean all three worlds to restore the system.
   one with, and his legs stride as he walks. **The Moon has the real sky** — the
   same NASA star map the space scene wears, on a dome of its own, so the Milky Way
   is where it actually is and holds still overhead, as a tidally locked body's
-  should.
+  should. And **all three floors are photographs now**: grass, crater field and
+  Martian dust, each with its own relief map.
+- **A world looks like itself at every distance.** Planets refine through a glow
+  impostor, a coarse globe and a detailed one, and the coarse one wears the same
+  photograph the detailed one does — so there is no moment where a world is a bare
+  shape and then suddenly its surface.
 - **Landing is one press, not five.** Fly into a world's zone too fast and `F` used to
   be refused with `NOTHING IN RANGE`, which was untrue and left you stabbing at the key.
   It now starts a **landing assist**: the tug is held on that world's track, its speed
@@ -451,8 +456,8 @@ closest approach, so the extra resolution would never be visible. The Sun's map
 drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
 thins as the ship gets close so the photosphere is what you see up close.
 Everything else in the game — every mesh, every other texture, every sound — is
-generated in code, with four exceptions: **Earth's ground, Mars's ground, Mars's
-stones, and Earth's plants**. 
+generated in code, with five exceptions: **Earth's ground, the Moon's ground, Mars's
+ground, Mars's stones, and Earth's plants**. 
 
 Earth's ground is two photographs, and both are graded before they ship. Each
 repeats hundreds of times across a valley fifteen hundred metres wide, so their
@@ -483,6 +488,22 @@ half-melted surface.
 | `mars_ground.webp` | Mars's floor, one tile per 5 m | WebP q90, 1024×1024, 78 kB |
 | `mars_ground_normal.webp` | its relief, derived from the same frame | WebP q90, 512×512, 74 kB |
 | `mars_stone.webp` | the boulders, two tiles across each stone | WebP q90, 512×512, 31 kB |
+| `moon_ground.webp` | the Moon's floor, one tile per 8 m | WebP q88, 1024×1024, 107 kB |
+| `moon_ground_normal.webp` | its relief, derived from the same frame | WebP q88, 512×512, 99 kB |
+
+The Moon's floor joined them last, and it was the final surface in the game still
+painted in code — a flat `#b4b0a7` under two passes of soft mottling, seamless by
+construction and carrying no crater at all. `.tools/make-moon-tile.py` grades the
+owner's photograph of a crater field into a tile. Two things about it are not
+mechanically derived. Its **mean is measured off the tile it replaces** rather than
+chosen, because the Moon's palette was calibrated against that grey and the world's
+brightness should not move when its floor does — it does not: open ground renders at
+145.4 before and 145.1 after, with the contrast nearly doubling underneath. And its
+chroma is pulled most of the way to neutral, because the photograph is a faintly blue
+grey and the palette is *also* a faintly blue grey. The Mars recipe could not be
+reused whole: that one throws the photograph away and keeps only relative darkness,
+which is right when the source is scattered stones and wrong when the source is already
+a texture.
 
 Mars's stones use a single close-up of one boulder, also the owner's, through the
 same `.tools/make-boulder-tile.py`. Two choices there are not mechanical. The

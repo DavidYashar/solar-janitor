@@ -76,13 +76,47 @@ function buildGlow(id: number): THREE.Sprite {
   return glow
 }
 
-/** The flat stand-in: enough silhouette to read as a world from a distance. */
+/** The 2:1 photograph a world wears in orbit. */
+function bodyMap(id: number): MapSlot {
+  if (id === 0) return earthMapSet().day
+  if (id === 1) return moonMapSet()
+  return marsMapSet()
+}
+
+/**
+ * Start every world's globe map loading now, rather than when something first flies at
+ * it. The set is 735 kB in total and all of it has to be fetched eventually, so the only
+ * thing this changes is when - and what it buys is that a world is wearing its own
+ * photograph by the time you are close enough to see it. `createWorld` calls this once.
+ */
+export function warmBodyMaps() {
+  earthMapSet()
+  moonMapSet()
+  marsMapSet()
+}
+
+/**
+ * The stand-in for a world that is still far away: the same photograph the full globe
+ * wears, on a coarser sphere.
+ *
+ * It used to be a flat colour under flat shading - a faceted ball - which is exactly
+ * what "the planet is only its raw shape until you get close" looked like. The map is a
+ * couple of hundred kilobytes, so the stand-in wears it too; the only thing left to give
+ * it away is the coarseness of the sphere it sits on.
+ */
 function buildLowTier(id: number): THREE.Mesh {
   const planet = planetById(id)
-  return new THREE.Mesh(
-    new THREE.SphereGeometry(planet.spaceRadius, 20, 14),
-    new THREE.MeshStandardMaterial({ color: planet.spaceColor, flatShading: true, roughness: 1, metalness: 0 }),
-  )
+  const map = bodyMap(id)
+  const material = new THREE.MeshStandardMaterial({
+    color: planet.spaceColor, roughness: 0.92, metalness: 0,
+  })
+  whenReady(map, () => {
+    material.map = map.texture
+    material.color.setHex(0xffffff)
+    material.roughness = 0.82
+    material.needsUpdate = true
+  })
+  return new THREE.Mesh(new THREE.SphereGeometry(planet.spaceRadius, 32, 24), material)
 }
 
 /**
@@ -93,13 +127,13 @@ function buildLowTier(id: number): THREE.Mesh {
  * ring with a hard outer edge at the shell's silhouette — the "sticker" look. Two
  * things were wrong with it, and this fixes both.
  *
- * **The falloff.** What you actually look through, for a ray passing the globe at
- * impact parameter `b`, is a chord of length `sqrt(shell² - b²)`: longest right at the
- * planet's limb, zero at the shell's edge. So the fragment shader measures `b` for its
- * own ray — `vWorld` minus the camera, minus the component along the view — and takes
- * the glow from that, which fades to nothing at the shell instead of stopping. It is
- * the one measurement a shell cannot fake, because a fragment's own normal is the same
- * all the way round the limb.
+ * **The falloff.** What you actually look through, for a ray passing a globe at impact
+ * parameter `b`, is a chord of length `sqrt(shell² - b²)`: longest right at the planet's
+ * limb, zero at the shell's edge. So the fragment shader measures `b` — the distance
+ * from the globe's centre to the ray the camera is looking along — and takes the glow
+ * from that, which fades to nothing at the shell instead of stopping. It is the one
+ * measurement a shell cannot fake from its own normals, because a fragment's normal is
+ * the same all the way round the limb.
  *
  * **The terminator.** Air glows because sunlight scatters in it, and that only happens
  * on the day side; a flat ring is the same brightness at midnight, which is what made

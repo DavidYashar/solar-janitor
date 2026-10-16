@@ -2,9 +2,13 @@ import * as THREE from 'three'
 import { mulberry32 } from '../sim/noise.ts'
 
 /**
- * The moon's painted surfaces: regolith, rover tracks, and the Earth overhead.
+ * The moon's painted surfaces: rover tracks, and the Earth overhead.
  * The recipe is a straight lift from the reference moon project - every count,
  * colour and RNG draw there was settled by eye, so resist re-tuning it.
+ *
+ * The regolith tile used to live here too. It has been replaced by a photograph of
+ * a crater field, graded by `.tools/make-moon-tile.py`, so the Moon's floor is now
+ * the same kind of thing as Earth's and Mars's.
  */
 
 interface LunarCanvas {
@@ -25,93 +29,6 @@ function finish(canvas: HTMLCanvasElement): THREE.CanvasTexture {
   texture.colorSpace = THREE.SRGBColorSpace
   texture.anisotropy = 2
   return texture
-}
-
-/** Bright speckled grey with micro-craters (ref: moon 6). */
-export function regolithTexture(size = 1024): THREE.CanvasTexture {
-  const { canvas, ctx } = lunarCanvas(size, size)
-  if (!ctx) return finish(canvas)
-  const rand = mulberry32(777001)
-
-  ctx.fillStyle = '#b4b0a7'
-  ctx.fillRect(0, 0, size, size)
-
-  // Mottling in two passes: broad low-contrast blotches first so the ground does
-  // not read as a flat fill, then tighter patches the eye can find nearby.
-  for (let i = 0; i < 320; i++) {
-    const x = rand() * size
-    const y = rand() * size
-    const r = 40 + rand() * 130
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r)
-    const dark = rand() < 0.5
-    g.addColorStop(0, dark ? 'rgba(96,94,90,0.06)' : 'rgba(238,236,230,0.06)')
-    g.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = g
-    ctx.fillRect(x - r, y - r, r * 2, r * 2)
-  }
-
-  for (let i = 0; i < 900; i++) {
-    const x = rand() * size
-    const y = rand() * size
-    const r = 8 + rand() * 36
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r)
-    g.addColorStop(0, rand() < 0.5 ? 'rgba(126,124,118,0.07)' : 'rgba(220,218,212,0.07)')
-    g.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = g
-    ctx.fillRect(x - r, y - r, r * 2, r * 2)
-  }
-
-  // Grain: tens of thousands of single pixels, because regolith is dust and the
-  // density of the speckle is what sells the scale of the tile.
-  for (let i = 0; i < 26000; i++) {
-    const a = 0.18 + rand() * 0.4
-    ctx.fillStyle = `rgba(58,56,52,${a.toFixed(2)})`
-    const s = rand() < 0.85 ? 1 : 2
-    ctx.fillRect(rand() * size, rand() * size, s, s)
-  }
-
-  for (let i = 0; i < 16000; i++) {
-    const a = 0.15 + rand() * 0.35
-    ctx.fillStyle = `rgba(246,242,232,${a.toFixed(2)})`
-    ctx.fillRect(rand() * size, rand() * size, 1, 1)
-  }
-
-  // Stones: a dark dot with a bright catch-light. Without the highlight they are
-  // indistinguishable from the grain above.
-  for (let i = 0; i < 750; i++) {
-    const x = rand() * size
-    const y = rand() * size
-    const r = 0.8 + rand() * 2.0
-    ctx.fillStyle = `rgba(70,68,62,${(0.3 + rand() * 0.4).toFixed(2)})`
-    ctx.beginPath()
-    ctx.arc(x, y, r, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = 'rgba(255,252,244,0.5)'
-    ctx.fillRect(x - r * 0.4, y - r * 0.9, r * 0.8, r * 0.6)
-  }
-
-  // Craters: dark pit, bright rim. The rim is the ejecta blanket, and it is what
-  // reads as a depression rather than a smudge.
-  for (let i = 0; i < 420; i++) {
-    const x = rand() * size
-    const y = rand() * size
-    const r = 1.6 + rand() * 3.4
-    const g = ctx.createRadialGradient(x, y, r * 0.15, x, y, r)
-    g.addColorStop(0, 'rgba(52,50,46,0.55)')
-    g.addColorStop(0.75, 'rgba(70,68,62,0.25)')
-    g.addColorStop(1, 'rgba(0,0,0,0)')
-    ctx.fillStyle = g
-    ctx.beginPath()
-    ctx.arc(x, y, r, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = 'rgba(244,240,232,0.35)'
-    ctx.lineWidth = 0.8
-    ctx.beginPath()
-    ctx.arc(x, y, r + 0.7, 0, Math.PI * 2)
-    ctx.stroke()
-  }
-
-  return finish(canvas)
 }
 
 /**
