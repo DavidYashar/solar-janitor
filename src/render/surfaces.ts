@@ -1793,15 +1793,53 @@ function buildProbeWreck(): THREE.Group {
 }
 
 /**
- * The reference's stones, measured off `mars stones 2`: a warm dusty grey-brown at
- * 17-19% saturation, a genuinely cool blue-grey at hue 216-219 which is the strongest
- * contrast in the photograph, and the dark ones that sit at the bottom of a pile.
- * The old single `planet.rock` was one saturated brown - hue 15 at 71% - which is
- * four times the saturation the photograph shows and warmer than any stone in it.
+ * Mars's stones, from a close-up of one boulder sent by the owner.
+ *
+ * The crop is taken from the **inside** of the rock, and that is the one decision in
+ * `.tools/make-boulder-tile.py` that is not mechanical: tiled whole, every stone in
+ * the world would wear the photograph's own silhouette - a rim of sand and a sliver of
+ * the ground behind it, wrapped round the boulder once per tile, in the same place
+ * every time.
+ *
+ * Two repeats across a stone. The material stays **flat-shaded**: that is what keeps
+ * the stones reading as low-poly beside everything else on this world, and flat shading
+ * takes its normals from the geometry's own derivatives, which leaves a normal map
+ * nowhere to sit. The photograph's pitting is carried in its colour.
  */
-const STONE_WARM = new THREE.Color(0x7e6d68)
-const STONE_COOL = new THREE.Color(0x62738c)
-const STONE_DARK = new THREE.Color(0x4a5261)
+const MARS_STONE_COLOUR = '/textures/mars_stone.webp'
+const MARS_STONE_REPEAT = 2
+
+let marsStoneMap: THREE.Texture | null = null
+
+/** One texture for the whole field, loaded once. */
+function marsStoneTexture(): THREE.Texture {
+  if (!marsStoneMap) {
+    marsStoneMap = new THREE.TextureLoader().load(MARS_STONE_COLOUR)
+    marsStoneMap.colorSpace = THREE.SRGBColorSpace
+    marsStoneMap.wrapS = THREE.RepeatWrapping
+    marsStoneMap.wrapT = THREE.RepeatWrapping
+    marsStoneMap.anisotropy = 4
+    marsStoneMap.repeat.set(MARS_STONE_REPEAT, MARS_STONE_REPEAT)
+  }
+  return marsStoneMap
+}
+
+/**
+ * The per-instance variation, and it is a variation *around white* now rather than a
+ * colour of its own - the tile is the stone's colour, and two coloured layers
+ * multiplied is a black rock.
+ *
+ * The families the reference shows are still here, as tints: most stones take the
+ * photograph as it is, a third go cooler, a tenth sit dark at the bottom of a pile,
+ * and a few are dustier than the rest. What was `STONE_WARM` and `STONE_COOL` before
+ * the tile existed are the first two of these.
+ */
+const STONE_TINTS = [
+  new THREE.Color(0xffffff),
+  new THREE.Color(0xdfe3ec),
+  new THREE.Color(0xc0b6a8),
+  new THREE.Color(0x8d929c),
+]
 const stoneTint = new THREE.Color()
 
 /**
@@ -1864,10 +1902,10 @@ function* marsPropStage(
   const point = { lat: 0, lon: 0 }
   const offset: PadOffset = { arc: 0, bearing: 0, north: 0, east: 0 }
 
-  // one material, because the colour is carried per instance: the reference's warm
-  // dusty grey-brown for most of the field, its cool blue-grey for the rest, and a
-  // scatter of darker ones that sit at the bottom of the pile in every photograph
-  const material = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 1 })
+  // one material, and the colour is carried per instance as a tint - see STONE_TINTS
+  const material = new THREE.MeshStandardMaterial({
+    map: marsStoneTexture(), color: 0xffffff, flatShading: true, roughness: 1,
+  })
   const shapes = [
     // a low wedge, a plate, and a slab with one steeper face
     marsRockGeometry(rnd, 0.55, 0.52),
@@ -1921,13 +1959,14 @@ function* marsPropStage(
       placeProp(dummy, radiusOf, lat, lon, size * (0.05 + rnd() * population.bury), size, rnd)
       mesh.setMatrixAt(mesh.count, dummy.matrix)
 
-      // the reference's split, with a little variation either side of each colour so
-      // the families do not read as two flat fills
+      // the families the reference shows, as tints over the photograph, with a little
+      // brightness either side of each so no two stones are the same
       const roll = rnd()
       const shade = 0.86 + rnd() * 0.3
-      if (roll < 0.34) stoneTint.copy(STONE_COOL)
-      else if (roll < 0.46) stoneTint.copy(STONE_DARK)
-      else stoneTint.copy(STONE_WARM)
+      if (roll < 0.34) stoneTint.copy(STONE_TINTS[1])
+      else if (roll < 0.44) stoneTint.copy(STONE_TINTS[3])
+      else if (roll < 0.6) stoneTint.copy(STONE_TINTS[2])
+      else stoneTint.copy(STONE_TINTS[0])
       mesh.setColorAt(mesh.count, stoneTint.multiplyScalar(shade))
       mesh.count++
 

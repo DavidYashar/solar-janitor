@@ -79,7 +79,10 @@ credits on gear. Clean all three worlds to restore the system.
   stones are **dark angular wedges, a third of them cool blue-grey**, drawn in the
   field's own frame at one per thirty square metres; before, 130 copies of a single
   icosahedron were spread over the whole planet, which worked out at **about 1.7 rocks
-  in the entire bowl you play in**. And the ring is **banded**, four strata painted
+  in the entire bowl you play in**. Both the floor and the stones wear **the owner's
+  own photographs as tiles** now, the same pattern Earth's ground has always used —
+  Mars's floor first, then the boulders, on a single close-up of one rock with the crop
+  taken from its inside so no stone wears the photograph's silhouette. And the ring is **banded**, four strata painted
   from the reference's own measured values — the shelves were tried as geometry first
   and measured out (`.tools/mars-strata.mjs`: at 2.6 m per vertex a shelf is two
   vertices wide, and the skyline comes back as a picket fence).
@@ -433,8 +436,8 @@ closest approach, so the extra resolution would never be visible. The Sun's map
 drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
 thins as the ship gets close so the photosphere is what you see up close.
 Everything else in the game — every mesh, every other texture, every sound — is
-generated in code, with three exceptions: **Earth's ground, Mars's ground, and
-Earth's plants**. 
+generated in code, with four exceptions: **Earth's ground, Mars's ground, Mars's
+stones, and Earth's plants**. 
 
 Earth's ground is two photographs, and both are graded before they ship. Each
 repeats hundreds of times across a valley fifteen hundred metres wide, so their
@@ -464,6 +467,22 @@ half-melted surface.
 |---|---|---|
 | `mars_ground.webp` | Mars's floor, one tile per 5 m | WebP q90, 1024×1024, 78 kB |
 | `mars_ground_normal.webp` | its relief, derived from the same frame | WebP q90, 512×512, 74 kB |
+| `mars_stone.webp` | the boulders, two tiles across each stone | WebP q90, 512×512, 31 kB |
+
+Mars's stones use a single close-up of one boulder, also the owner's, through the
+same `.tools/make-boulder-tile.py`. Two choices there are not mechanical. The
+crop is taken from **inside** the rock: tiled whole, every stone in the world
+would wear the photograph's own silhouette — a rim of sand and a sliver of the
+ground behind it — wrapped round the boulder once per tile, in the same place
+every time. And that crop is picked by eye from a contact sheet rather than by an
+automatic sand-against-stone mask, because the mask reported most of the *inside*
+of the rock as sand — its lit facets and its dust are brighter and warmer than
+the stone — and so produced a mush tile. The stones stay **flat-shaded**, which
+keeps them low-poly beside everything else and leaves a normal map nowhere to sit
+(flat shading takes its normals from the geometry's own derivatives), so the
+pitting is carried in the colour; and the per-instance tints are variations
+around white rather than colours of their own, because the tile *is* the stone's
+colour and two coloured layers multiply in linear space to a black rock.
 
 Both Mars tiles are built from **a photograph supplied by the project's owner**, and
 its provenance is the owner's to state; nothing is fetched from a third party for
