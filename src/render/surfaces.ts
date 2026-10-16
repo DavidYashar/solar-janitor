@@ -201,42 +201,8 @@ export function glowTexture(inner: string, outer: string): THREE.CanvasTexture {
   })
 }
 
-/** A one-pixel texture of one colour: a placeholder that keeps a shader's shape. */
-function flatTexture(r: number, g: number, b: number): THREE.CanvasTexture {
-  const build = canvasBuild(1, 1)
-  if (build.ctx) {
-    build.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`
-    build.ctx.fillRect(0, 0, 1, 1)
-  }
-  return finishTexture(build.canvas)
-}
-
 // --------------------------------------------------------------------- soil
 
-/**
- * The ground underfoot: the reference build's own soil - grit and stones set in
- * it - painted on a canvas and tiled.
- *
- * A small tile on purpose. The eye is two metres off the ground and magnifies
- * whatever is under it by tens of times, so the only thing worth putting in a
- * texture is what is smaller than a boot; anything larger repeats often enough
- * to read as a pattern, and belongs in the vertex colours instead. At six metres
- * the tile holds gravel at 170 texels to the metre and repeats far too often at
- * ground level for the eye to catch it doing so.
- *
- * It also has to tile, and the reference build's did not: their stones were
- * drawn once at random positions and simply clipped wherever they met the canvas
- * edge, so repeating that texture printed a line of half-stones across the
- * ground at every tile. Every element here is stamped again on the far side
- * wherever it crosses an edge, so the copies meet.
- *
- * The same pass draws the stones a second time as flat domes, which is what
- * becomes the normal map. Relief has to come from somewhere, and all a painted
- * shadow can do two metres off the ground is look painted.
- */
-const SOIL_TEXELS = 1024
-/** metres of ground one tile covers at the landing site; sets the repeat below */
-const SOIL_SPAN = 6
 /**
  * Earth's floor is a photograph of mown grass rather than a brush stroke, and
  * its tile is five metres instead of six: the source was shot close enough that
@@ -256,12 +222,25 @@ const EARTH_CANOPY_SPAN = 16
 const EARTH_CANOPY_COLOUR = '/textures/earth_canopy.webp'
 const EARTH_CANOPY_RELIEF = '/textures/earth_canopy_normal.webp'
 /**
+ * Mars's floor is a photograph of its own: a red plain stippled with dark stones, sent
+ * by the owner, turned into a tile by `.tools/make-mars-tile.py`.
+ *
+ * Five metres, matching Earth's grass tile: the span is what decides whether a stone
+ * reads at the size a boot expects, and the source's own stones are small. The script records everything else - the crop, the
+ * cross-fade that makes it join to itself, the flattening of the haze band, and the
+ * two calibrations (the tile's mean against the palette, its relief against Earth's own
+ * normal map) - and it is the thing to re-run if the tile ever looks wrong.
+ */
+const MARS_GROUND_SPAN = 5
+const MARS_GROUND_COLOUR = '/textures/mars_ground.webp'
+const MARS_GROUND_RELIEF = '/textures/mars_ground_normal.webp'
+/**
  * How many times the tile wraps its world - measured at the landing site, so a
  * tile of the sphere's own UVs comes out square on the ground you actually walk
  * on. It is a property of the world, because Earth's site is a valley five and
  * a half times the size of a crater field.
  */
-function soilRepeat(radius: number, lat: number, span = SOIL_SPAN): { x: number; y: number } {
+function soilRepeat(radius: number, lat: number, span: number): { x: number; y: number } {
   return {
     x: Math.max(1, Math.round((TAU * radius * Math.cos(lat)) / span)),
     y: Math.max(1, Math.round((Math.PI * radius) / span)),
@@ -275,201 +254,9 @@ export interface SoilMaps {
   canopy?: { colour: THREE.Texture; normal: THREE.Texture }
 }
 
-/**
- * Draw an element, and again on the far side wherever it would cross an edge:
- * nine draws at worst, one in the middle of the tile. Callers must not consume
- * random numbers inside `draw`, or the tile stops being reproducible.
- */
-function stampWrapped(
-  size: number, x: number, y: number, reach: number, draw: (x: number, y: number) => void,
-): void {
-  const xs = [x]
-  const ys = [y]
-  if (x - reach < 0) xs.push(x + size)
-  if (x + reach > size) xs.push(x - size)
-  if (y - reach < 0) ys.push(y + size)
-  if (y + reach > size) ys.push(y - size)
-  for (const px of xs) {
-    for (const py of ys) draw(px, py)
-  }
-}
 
-/**
- * One stone in the soil, in colour and in relief.
- *
- * The outline is irregular on purpose. It used to be an ellipse, and the same
- * ellipse a hundred times over is what made the ground read as a printed scatter of
- * coins - the reference's grit is broken-edged and varies from a speck to a fist.
- * Three harmonics per stone do most of that on their own, and because the colour,
- * the highlight and the hollow all use the same broken path, the facets belong to
- * the stone instead of sliding about inside it.
- */
-function paintStone(
-  ctx: CanvasRenderingContext2D, depth: CanvasRenderingContext2D, size: number, rnd: () => number,
-): void {
-  const x = rnd() * size
-  const y = rnd() * size
-  const r = 2.9 + Math.pow(rnd(), 2.2) * 26
-  const spin = rnd() * Math.PI
-  const wide = 0.62 + rnd() * 0.5
-  const flat = 0.45 + rnd() * 0.5
-  // deliberately a light stone on a lighter ground: at fifty texels to the metre
-  // a three-centimetre pebble is barely two texels across, and a dark one at that
-  // size is a speck of noise rather than a stone. The relief is in the dome below
-  // and the normal map that comes out of it - the colour only has to say "not
-  // sand here".
-  const grey = 84 + rnd() * 66
-  const shadow = 0.13
-  const lift = 0.09 + rnd() * 0.13
-  const dome = 138 + Math.round(rnd() * 72)
-  const reach = r * 1.8
 
-  const harmonics = [
-    { amp: 0.1 + rnd() * 0.26, freq: 2, phase: rnd() * Math.PI * 2 },
-    { amp: 0.08 + rnd() * 0.22, freq: 3, phase: rnd() * Math.PI * 2 },
-    { amp: 0.05 + rnd() * 0.16, freq: 5, phase: rnd() * Math.PI * 2 },
-  ]
-  const outline = (px: number, py: number, k: number) => {
-    const steps = 9
-    for (let i = 0; i <= steps; i++) {
-      const a = (i / steps) * TAU + spin
-      let bulge = 1
-      for (const h of harmonics) bulge += h.amp * Math.sin(a * h.freq + h.phase)
-      const ax = px + Math.cos(a) * r * wide * bulge * k
-      const ay = py + Math.sin(a) * r * flat * bulge * k
-      if (i === 0) ctx.moveTo(ax, ay)
-      else ctx.lineTo(ax, ay)
-    }
-    ctx.closePath()
-    ctx.fill()
-  }
 
-  // the hollow it sits in, so it reads as set into the ground rather than on it
-  ctx.fillStyle = `rgba(48, 24, 12, ${shadow})`
-  stampWrapped(size, x, y, reach, (px, py) => outline(px + r * 0.34, py + r * 0.4, 1))
-  // the stone itself, cooler than the sand around it
-  ctx.fillStyle = `rgb(${(grey + 26) | 0}, ${(grey * 0.95 + 16) | 0}, ${(grey * 0.92 + 12) | 0})`
-  stampWrapped(size, x, y, reach, (px, py) => outline(px, py, 1))
-  // the facet that catches a low sun
-  ctx.fillStyle = `rgba(255, 236, 206, ${lift})`
-  stampWrapped(size, x, y, reach, (px, py) => outline(px - r * 0.2, py - r * 0.24, 0.5))
-  depth.fillStyle = `rgb(${dome}, ${dome}, ${dome})`
-  stampWrapped(size, x, y, reach, (px, py) => {
-    depth.beginPath()
-    depth.ellipse(px, py, r * wide * 0.95, r * flat * 0.95, spin, 0, TAU)
-    depth.fill()
-  })
-}
-
-/**
- * The relief canvas as a normal map. Sobel over the domes, sampled with wrap so
- * the tile's own edges do not raise a ridge down the middle of the ground.
- */
-function* soilNormal(
-  source: HTMLCanvasElement, size: number, repeat: { x: number; y: number },
-): Generator<void, THREE.CanvasTexture, void> {
-  const src = source.getContext('2d')
-  const out = document.createElement('canvas')
-  out.width = size
-  out.height = size
-  const dst = out.getContext('2d')
-  if (!src || !dst) return flatTexture(128, 128, 255)
-  const input = src.getImageData(0, 0, size, size).data
-  const image = dst.createImageData(size, size)
-  const at = (x: number, y: number) => input[((((y % size) + size) % size) * size + (((x % size) + size) % size)) * 4] / 255
-  const strength = 3.2
-  for (let yStart = 0; yStart < size; yStart += 64) {
-    const yEnd = Math.min(size, yStart + 64)
-    for (let y = yStart; y < yEnd; y++) {
-      for (let x = 0; x < size; x++) {
-        const dx = (at(x + 1, y) - at(x - 1, y)) * strength
-        // the image's y runs against v, and the texture is flipped to match
-        const dy = (at(x, y + 1) - at(x, y - 1)) * strength
-        const length = Math.hypot(dx, dy, 1)
-        const i = (y * size + x) * 4
-        image.data[i] = 128 + (-dx / length) * 127
-        image.data[i + 1] = 128 + (dy / length) * 127
-        image.data[i + 2] = 128 + (1 / length) * 127
-        image.data[i + 3] = 255
-      }
-    }
-    yield
-  }
-  dst.putImageData(image, 0, 0)
-  const texture = new THREE.CanvasTexture(out)
-  // a normal map carries directions, not colour, so it must not be sRGB-decoded
-  texture.colorSpace = THREE.NoColorSpace
-  texture.wrapS = THREE.RepeatWrapping
-  texture.wrapT = THREE.RepeatWrapping
-  texture.repeat.set(repeat.x, repeat.y)
-  texture.anisotropy = 8
-  return texture
-}
-
-/**
- * Painted across frames like everything else on a surface: a quarter of a
- * million canvas operations is not a thing to do inside one frame.
- */
-function* paintSoil(planet: PlanetDef): Generator<void, SoilMaps, void> {
-  const planetId = planet.id
-  const repeat = soilRepeat(planet.surfaceRadius, planet.landerLat)
-  const size = SOIL_TEXELS
-  const rnd = makeRnd(8123 + planetId)
-  const colour = document.createElement('canvas')
-  colour.width = size
-  colour.height = size
-  const ctx = colour.getContext('2d')
-  const relief = document.createElement('canvas')
-  relief.width = size
-  relief.height = size
-  const depth = relief.getContext('2d')
-  if (!ctx || !depth) return { colour: finishTexture(colour), normal: flatTexture(128, 128, 255) }
-
-  // bare soil, and the same grey on the relief canvas as its resting level. The
-  // map is a detail layer rather than the colour: the planet's own palette is
-  // multiplied over it, so the soil has to sit near white or the ground ends up
-  // the product of two dark colours. It is also the last thing standing between the
-  // palette and the screen, so it is near-neutral rather than the warm tan it was:
-  // a tan filter over a red plain warms it straight back toward the orange the
-  // photographs say Mars is not.
-  ctx.fillStyle = '#cbbfb2'
-  ctx.fillRect(0, 0, size, size)
-  depth.fillStyle = '#808080'
-  depth.fillRect(0, 0, size, size)
-  yield
-
-  // grit: the same trick at a tenth of the size, which is what stops the soil
-  // reading as flat paint when it fills the whole screen
-  for (let i = 0; i < 560; i++) {
-    const x = rnd() * size
-    const y = rnd() * size
-    const r = 1.6 + rnd() * 16.3
-    const lighter = rnd() > 0.5
-    const alpha = 0.026 + rnd() * 0.09
-    ctx.fillStyle = lighter ? `rgba(236, 214, 182, ${alpha})` : `rgba(96, 62, 38, ${alpha})`
-    stampWrapped(size, x, y, r, (px, py) => {
-      ctx.beginPath()
-      ctx.arc(px, py, r, 0, TAU)
-      ctx.fill()
-    })
-    if (i % 80 === 0) yield
-  }
-
-  // and the stones sitting in it
-  for (let i = 0; i < 100; i++) {
-    paintStone(ctx, depth, size, rnd)
-    if (i % 20 === 0) yield
-  }
-  yield
-
-  const normal = yield* soilNormal(relief, size, repeat)
-  const soil = finishTexture(colour)
-  soil.wrapS = THREE.RepeatWrapping
-  soil.wrapT = THREE.RepeatWrapping
-  soil.repeat.set(repeat.x, repeat.y)
-  soil.anisotropy = 8
-  return { colour: soil, normal }
-}
 
 const soilMaps = new Map<number, SoilMaps>()
 
@@ -491,25 +278,52 @@ const soilMaps = new Map<number, SoilMaps>()
  * tiles are different widths.
  */
 function earthGrass(planet: PlanetDef): SoilMaps {
-  const repeat = soilRepeat(planet.surfaceRadius, planet.landerLat, EARTH_GRASS_SPAN)
+  const maps = photoSoil(planet, EARTH_GRASS_COLOUR, EARTH_GRASS_RELIEF, EARTH_GRASS_SPAN)
   const loader = new THREE.TextureLoader()
-  const load = (url: string, srgb: boolean): THREE.Texture => {
+  const load = (url: string): THREE.Texture => {
     const texture = loader.load(url)
-    // a normal map carries directions, not colour, so it must not be sRGB-decoded
-    texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace
+    texture.colorSpace = THREE.SRGBColorSpace
     texture.wrapS = THREE.RepeatWrapping
     texture.wrapT = THREE.RepeatWrapping
     texture.anisotropy = 8
     return texture
   }
-  const colour = load(EARTH_GRASS_COLOUR, true)
-  const normal = load(EARTH_GRASS_RELIEF, false)
-  for (const texture of [colour, normal]) texture.repeat.set(repeat.x, repeat.y)
-  return {
-    colour,
-    normal,
-    canopy: { colour: load(EARTH_CANOPY_COLOUR, true), normal: load(EARTH_CANOPY_RELIEF, false) },
+  // the canopy carries no repeat of its own - the shader derives its coordinates from
+  // the grass tile's, because a mesh has one set of UVs and the two tiles differ
+  maps.canopy = { colour: load(EARTH_CANOPY_COLOUR), normal: load(EARTH_CANOPY_RELIEF) }
+  return maps
+}
+
+/**
+ * A photographic soil: a colour map and the relief map that lets it catch a low sun,
+ * wrapped over the terrain at the span the ground actually wants.
+ *
+ * `srgb` is false for a relief map, because a normal carries directions rather than
+ * colour and must not be sRGB-decoded.
+ */
+function photoSoil(planet: PlanetDef, colourFile: string, reliefFile: string, span: number): SoilMaps {
+  const repeat = soilRepeat(planet.surfaceRadius, planet.landerLat, span)
+  const loader = new THREE.TextureLoader()
+  const load = (url: string, srgb: boolean): THREE.Texture => {
+    const texture = loader.load(url)
+    texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace
+    texture.wrapS = THREE.RepeatWrapping
+    texture.wrapT = THREE.RepeatWrapping
+    texture.anisotropy = 8
+    texture.repeat.set(repeat.x, repeat.y)
+    return texture
   }
+  return { colour: load(colourFile, true), normal: load(reliefFile, false) }
+}
+
+/**
+ * Mars's floor, from the owner's own photograph. Exactly Earth's arrangement: a
+ * colour map and a relief map, wrapped over the terrain, multiplied by the vertex
+ * palette - which is what carries the plain's red and the ring's strata, because a
+ * tile that repeated them would print them once every three metres.
+ */
+function marsGround(planet: PlanetDef): SoilMaps {
+  return photoSoil(planet, MARS_GROUND_COLOUR, MARS_GROUND_RELIEF, MARS_GROUND_SPAN)
 }
 
 /**
@@ -605,17 +419,13 @@ varying float vForest;`)
   material.customProgramCacheKey = () => 'earth-ground-canopy'
 }
 
-/** Loaded or painted once per session: a surface is rebuilt on every landing. */
-function* soilTextures(planet: PlanetDef): Generator<void, SoilMaps, void> {
+/** Loaded once per session: a surface is rebuilt on every landing. */
+function soilTextures(planet: PlanetDef): SoilMaps {
   const cached = soilMaps.get(planet.id)
   if (cached) return cached
-  // only Earth's floor has a source photograph; the other two are still painted
-  if (planet.theme === 'earth') {
-    const maps = earthGrass(planet)
-    soilMaps.set(planet.id, maps)
-    return maps
-  }
-  const maps = yield* paintSoil(planet)
+  // both landable worlds with soil wear a photograph now. The Moon does not come
+  // through here at all - it has its own regolith tile.
+  const maps = planet.theme === 'earth' ? earthGrass(planet) : marsGround(planet)
   soilMaps.set(planet.id, maps)
   return maps
 }
@@ -905,7 +715,7 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
     // normal map out of the same pass. Smooth-shaded on purpose - flat shading
     // takes its normals from the geometry's derivatives and leaves a normal map
     // nowhere to sit, and the normal map is where the close-up detail lives.
-    const soil = yield* soilTextures(planet)
+    const soil = soilTextures(planet)
     painted = new THREE.MeshStandardMaterial({
       map: soil.colour, normalMap: soil.normal, vertexColors: true, roughness: 1, metalness: 0,
     })

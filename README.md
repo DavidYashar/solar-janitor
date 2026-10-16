@@ -426,20 +426,48 @@ star points are what that damages. Every current browser decodes AVIF; if one ev
 does not, the same size buys WebP at 2048×1024 q92, which is exactly the version this
 was chosen over.
 
-Mars's globe map is orbit-only now: the ground you land on is generated in code
-(see below), so the map is never fetched at eye height. The cloud map is greyscale and drives the cloud deck's `alphaMap` — both on the globe and on the sky shell you look up at from the ground. The Moon is
+Mars's globe map is orbit-only now: the ground you land on wears a photograph of its
+own (see below), so the globe map is never fetched at eye height. The cloud map is greyscale and drives the cloud deck's `alphaMap` — both on the globe and on the sky shell you look up at from the ground. The Moon is
 downsampled to 1K because its disc stays under ~370 px on screen even at its
 closest approach, so the extra resolution would never be visible. The Sun's map
 drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
 thins as the ship gets close so the photosphere is what you see up close.
 Everything else in the game — every mesh, every other texture, every sound — is
-generated in code, with two exceptions: **Earth's ground and its plants**. The
-ground is two photographs, and both are graded before they ship. Each repeats
-hundreds of times across a valley fifteen hundred metres wide, so their low
-frequencies are flattened first — a patch of shade would otherwise print itself
-at a perfectly regular interval — and their tone is trimmed to sit under the
-terrain's vertex colours rather than fight them. The ground is green on the
+generated in code, with three exceptions: **Earth's ground, Mars's ground, and
+Earth's plants**. 
+
+Earth's ground is two photographs, and both are graded before they ship. Each
+repeats hundreds of times across a valley fifteen hundred metres wide, so their
+low frequencies are flattened first — a patch of shade would otherwise print
+itself at a perfectly regular interval — and their tone is trimmed to sit under
+the terrain's vertex colours rather than fight them. The ground is green on the
 palette's authority; all the tiles carry is the detail.
+
+Mars's ground is built the same way from a photograph of its own, sent by the
+owner, by `.tools/make-mars-tile.py` — cropped to a square where the pebble
+scale is even, cross-faded with itself rolled half a tile so that it joins to
+itself, flattened, and then calibrated twice: its mean is set against the
+palette, and its relief against a chosen normal strength. Those two calibrations
+are where it went wrong first, and both are worth knowing about. The relief has
+to be measured **relative to each point's own surroundings rather than to the
+image**, or a photograph that is dark nearly everywhere turns the whole ground
+into one smudge; and the reference for "its own surroundings" has to be a
+**geometric** mean, because a blur is an arithmetic mean and with a long tail of
+dark stones that sits below the median — which reads as "nothing here is darker
+than its surroundings" over ninety per cent of the frame. The tile's relief is
+also deliberately *weaker* than Earth's, not matched to it: Earth's source is a
+close-up with blades a few pixels wide, and this one is a wide shot where a stone
+is ten pixels, so matching Earth's 33-degree mean tilt produced a blistered,
+half-melted surface.
+
+| File | Role | Re-encoded |
+|---|---|---|
+| `mars_ground.webp` | Mars's floor, one tile per 5 m | WebP q90, 1024×1024, 78 kB |
+| `mars_ground_normal.webp` | its relief, derived from the same frame | WebP q90, 512×512, 74 kB |
+
+Both Mars tiles are built from **a photograph supplied by the project's owner**, and
+its provenance is the owner's to state; nothing is fetched from a third party for
+them, and the only thing added is the processing above.
 
 | File | Role | Re-encoded |
 |---|---|---|
