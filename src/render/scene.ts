@@ -111,6 +111,10 @@ function basisFor(up: THREE.Vector3, forward: THREE.Vector3, right: THREE.Vector
 export function createWorld(container: HTMLElement): World {
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
   renderer.setClearColor(0x04060f)
+  // one shadow map, from the sun, and it is the soft filter that makes a 6 cm
+  // texel read as a fuzzier edge than it is (see SUN_SHADOW_SPAN)
+  renderer.shadowMap.enabled = true
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.08
   container.appendChild(renderer.domElement)
@@ -466,15 +470,57 @@ export function createWorld(container: HTMLElement): World {
   const FLARE_DISTANCE = 2
   /** how far the pointer can tip the chase camera, in radians either way */
   const SURFACE_PITCH_MAX = 1.15
+  /**
+   * The sun's shadow camera is a box that travels with the janitor, not a box
+   * around the world: the valley is 1 500 m across and a single map over all of
+   * it would put one texel on every three metres, which is wider than a fence
+   * post. A hundred and forty metres of ground per map puts a texel under seven
+   * centimetres, and nothing outside that box is near enough to notice that it is
+   * not casting.
+   */
+  const SUN_SHADOW_SPAN = 70
+  const SUN_SHADOW_MAP = 2048
+  /** how far back along the sun ray the shadow camera sits, for its depth range */
+  const SUN_SHADOW_DISTANCE = 300
   surfaceScene.fog = new THREE.Fog(0xbfe4ff, 170, 560)
   const surfaceHemisphere = new THREE.HemisphereLight(0xcfe9ff, 0x2f5a3a, 1.2)
   surfaceScene.add(surfaceHemisphere)
+  // The key light is the sun - the same one drawn in the sky, aimed from the
+  // janitor at the disc - so a shadow points where the light in the sky says it
+  // should. It is a parallel light, but on a ball a kilometre across seen from
+  // 4 800 m out the sun is not far enough away for parallel to be exact, and the
+  // direction to the drawn disc is the one that matches what you can see.
   const surfaceKey = new THREE.DirectionalLight(0xfff4df, 2.0)
   surfaceKey.position.set(60, 120, 40)
+  surfaceKey.castShadow = true
+  surfaceKey.shadow.mapSize.set(SUN_SHADOW_MAP, SUN_SHADOW_MAP)
+  surfaceKey.shadow.camera.left = -SUN_SHADOW_SPAN
+  surfaceKey.shadow.camera.right = SUN_SHADOW_SPAN
+  surfaceKey.shadow.camera.top = SUN_SHADOW_SPAN
+  surfaceKey.shadow.camera.bottom = -SUN_SHADOW_SPAN
+  surfaceKey.shadow.camera.near = 40
+  surfaceKey.shadow.camera.far = SUN_SHADOW_DISTANCE + 220
+  // three reads the shadow camera's projection every frame but only recomputes it
+  // when asked, so a box resized without this stays at the default ten metres
+  surfaceKey.shadow.camera.updateProjectionMatrix()
+  // the cut-outs sort themselves out (see markShadows in surfaces.ts); what is
+  // left here is solid geometry, where a texel of normal offset is the right
+  // medicine and the depth bias only has to cover the rounding
+  surfaceKey.shadow.bias = -0.00015
+  surfaceKey.shadow.normalBias = 0.09
   surfaceScene.add(surfaceKey)
+  surfaceScene.add(surfaceKey.target)
   const surfaceFill = new THREE.DirectionalLight(0x9fd0ff, 0.45)
   surfaceFill.position.set(-70, -30, -60)
   surfaceScene.add(surfaceFill)
+
+  /** aim the key light from a point on the ground at the sun it belongs to */
+  const sunAim = new THREE.Vector3()
+  function aimKeyLightAt(at: THREE.Vector3) {
+    sunAim.copy(sunSprite.position).sub(at).normalize()
+    surfaceKey.target.position.copy(at)
+    surfaceKey.position.copy(at).addScaledVector(sunAim, SUN_SHADOW_DISTANCE)
+  }
 
   const themeLooks: Record<PlanetTheme, ThemeLook> = {
     earth: {
@@ -643,7 +689,6 @@ export function createWorld(container: HTMLElement): World {
     surfaceHemisphere.groundColor.setHex(look.groundLight)
     surfaceKey.color.setHex(look.keyLight)
     surfaceFill.color.setHex(look.fill)
-    blobShadow.material.color.setHex(planet.theme === 'earth' ? 0x102415 : 0x14161c)
   }
 
   // three landable worlds, streamed in ahead of the janitor (plan §9)
@@ -1020,6 +1065,18 @@ export function createWorld(container: HTMLElement): World {
   carriedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
   carriedMesh.count = 0
   playerGroup.add(carriedMesh)
+  /**
+   * The janitor casts, and he is the one thing out here that moves, so his shadow
+   * is what proves the light in the sky is the light on the ground. The visor
+   * does not cast: it is a third opaque, and a shell of glass would drop a solid
+   * black ball over his head.
+   */
+  playerGroup.traverse(object => {
+    const mesh = object as THREE.Mesh
+    if (!mesh.isMesh) return
+    mesh.receiveShadow = true
+    mesh.castShadow = !(mesh.material as THREE.Material).transparent
+  })
 
   const scoopRing = new THREE.Mesh(
     new THREE.TorusGeometry(1, 0.05, 6, 48),
@@ -1027,11 +1084,8 @@ export function createWorld(container: HTMLElement): World {
   )
   scoopRing.rotation.x = -Math.PI / 2
   surfaceScene.add(scoopRing)
-  const blobShadow = new THREE.Mesh(
-    new THREE.CircleGeometry(0.9, 18),
-    new THREE.MeshBasicMaterial({ color: 0x102415, transparent: true, opacity: 0.3, depthWrite: false }),
-  )
-  surfaceScene.add(blobShadow)
+  // the fake blob under the janitor is gone: he casts a real shadow now (the key
+  // light is the sun), and two shadows under one pair of boots looks like a bug
 
   // ----------------------------------------------------- surface particles
   const surfaceParticles: Particle[] = []
@@ -1184,12 +1238,9 @@ export function createWorld(container: HTMLElement): World {
     if (player.h > 0.05) {
       playerGroup.rotateX(-Math.min(0.45, player.h * 0.12))
     }
+    aimKeyLightAt(playerGroup.position)
 
     const groundRadius = surface.terrainRadius(player.lat, player.lon)
-    blobShadow.position.copy(up).multiplyScalar(groundRadius + 0.08)
-    blobShadow.quaternion.setFromUnitVectors(Z_AXIS, up)
-    blobShadow.scale.setScalar(Math.max(0.4, 1 - Math.min(0.55, player.h * 0.09)))
-
     scoopRing.position.copy(up).multiplyScalar(groundRadius + 0.12)
     scoopRing.quaternion.setFromUnitVectors(Z_AXIS, up)
     scoopRing.scale.setScalar(scoopRadius(game))

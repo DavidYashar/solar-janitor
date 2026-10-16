@@ -702,6 +702,7 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
     painted = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1, metalness: 0 })
   }
   const ground = new THREE.Mesh(geometry, painted)
+  ground.name = TERRAIN_NAME
   group.add(ground)
   yield
 }
@@ -723,6 +724,49 @@ function buildStarField(): THREE.Points {
       color: 0xe8f0ff, size: 2.3, sizeAttenuation: false, fog: false, transparent: true, opacity: 0.95,
     }),
   )
+}
+
+/**
+ * The ground's name is how the shadow pass tells it apart from everything standing
+ * on it (see markShadows).
+ */
+const TERRAIN_NAME = 'terrain'
+
+/**
+ * Shadows, applied once to a finished surface rather than at each of the thirty
+ * meshes that make one up: everything standing on the ground receives, and
+ * everything solid casts.
+ *
+ * Two things opt out. The ground itself, because it is four hundred thousand
+ * triangles and the shadow box is a hundred and forty metres across, so feeding
+ * the whole ball into the shadow map every frame would buy a silhouette that the
+ * box cannot even reach. And anything transparent, because a landing ring is
+ * light rather than an object and has no business casting one.
+ */
+function markShadows(root: THREE.Object3D) {
+  root.traverse(object => {
+    const mesh = object as THREE.Mesh
+    if (!mesh.isMesh) return
+    const material = mesh.material as THREE.Material | THREE.Material[]
+    const entries = Array.isArray(material) ? material : [material]
+    /**
+     * Three kinds of thing stand on a surface and they want three answers. Solid
+     * geometry casts and catches. A cut-out casts but does not catch - a crossed
+     * card is two flat quads with their normals turned to face the sky, and the
+     * normal offset that normally stops a surface shadowing itself needs a normal
+     * with some lean on the sun; pointing straight up under a sun seventeen
+     * degrees over the horizon it buys nothing, and without it the cards shade
+     * themselves into a screen door of shadow-map texels. The only bias that
+     * clears that is one big enough to detach every shadow from the thing casting
+     * it, which is worse. And anything see-through catches but never casts: water
+     * is light passing through, and a landing ring is light, and light has no
+     * shadow.
+     */
+    const cutOut = entries.some(entry => entry.alphaTest > 0)
+    const seeThrough = entries.some(entry => entry.transparent)
+    mesh.castShadow = object.name !== TERRAIN_NAME && !seeThrough
+    mesh.receiveShadow = !cutOut
+  })
 }
 
 // ------------------------------------------------------------------- props
@@ -1584,6 +1628,7 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {  
         index++
       }
       if (!job.build && lander) {
+        markShadows(detail)
         job.build = {
           planetId,
           group: detail,
