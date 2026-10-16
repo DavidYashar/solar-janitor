@@ -72,6 +72,17 @@ credits on gear. Clean all three worlds to restore the system.
   the top speed with the same brakes. Thrust *authority* is deliberately untouched, so
   a fast tug is a committed tug — twice as quick through a gravity well means twice
   the runway to slow down, and the landing limit is measured relative to the world.
+- **Mars reads off photographs now, not off a guess** (plan §8). Its ground palette, its
+  boulder field and its hills were re-read from the owner's five reference images,
+  measured as colour clusters rather than by eye. The plain is a **brick red** (hue
+  5–7°), not the orange it was — the old floor was wearing the *hills'* colour. The
+  stones are **dark angular wedges, a third of them cool blue-grey**, drawn in the
+  field's own frame at one per thirty square metres; before, 130 copies of a single
+  icosahedron were spread over the whole planet, which worked out at **about 1.7 rocks
+  in the entire bowl you play in**. And the ring is **banded**, four strata painted
+  from the reference's own measured values — the shelves were tried as geometry first
+  and measured out (`.tools/mars-strata.mjs`: at 2.6 m per vertex a shelf is two
+  vertices wide, and the skyline comes back as a picket fence).
 - **The station is a place now, and its port is unmistakable** (plan §5.2, §8). The ISS
   is built in its own module (`render/iss.ts`) from a user-supplied reference: a
   segmented truss with collars, greebles and a dish, four tall gold array wings on arms

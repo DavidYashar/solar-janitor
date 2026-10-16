@@ -316,6 +316,35 @@ function ringHeight(distance: number, bearing: number, north: number, east: numb
 const scratchOffset: PadOffset = { arc: 0, bearing: 0, north: 0, east: 0 }
 
 /**
+ * The inverse of `padOffset`: the point `arc` metres from the pad on `bearing`, as
+ * lat/lon. Exact rather than flat, because on a 96 m ball the ring is forty-five
+ * degrees of arc away and a planar walk out there lands nowhere near where it says.
+ *
+ * The renderer needs this to scatter props in the *field* - bearing and distance
+ * from the pad, the way the whole landscape is authored - rather than by drawing
+ * random coordinates on the globe and hoping some land in the bowl.
+ */
+export function marsFromPad(
+  anchorLat: number, anchorLon: number, bearing: number, arc: number, into: { lat: number; lon: number },
+): { lat: number; lon: number } {
+  const d = arc / SURFACE_RADIUS
+  const sinAnchor = Math.sin(anchorLat)
+  const cosAnchor = Math.cos(anchorLat)
+  const sinD = Math.sin(d)
+  const cosD = Math.cos(d)
+  const lat = Math.asin(clamp(sinAnchor * cosD + cosAnchor * sinD * Math.cos(bearing), -1, 1))
+  into.lat = lat
+  into.lon = anchorLon + Math.atan2(
+    Math.sin(bearing) * sinD * cosAnchor,
+    cosD - sinAnchor * Math.sin(lat),
+  )
+  return into
+}
+
+/** Inside this the ground is the crater field you work; outside it the ring climbs. */
+export const MARS_FIELD_RADIUS = RING.skirt
+
+/**
  * The landscape, in surface metres, before the landing pad is levelled into it.
  * Pure and deterministic: the renderer displaces the planet sphere with this and
  * the sim walks on top of it, so a crater you can see is a crater you can climb.

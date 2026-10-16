@@ -180,10 +180,23 @@ export const MARS: PlanetDef = {
   hazard: 'storm',
   spaceColor: 0xc0603a,
   atmosphere: 0xffb083,
-  groundLow: 0x8f481c,
-  groundHigh: 0xe0a050,
+  /**
+   * The ground, measured off the owner's Mars photographs rather than picked by eye.
+   *
+   * The plain and the hills are two different colours and the old pair had them the
+   * wrong way round: `mars surface 3` puts the flat dust at hue 5-7 degrees, 56-63%
+   * saturation - a brick red - while `mars hills 3` puts the high ground at hue 22-30
+   * and brightness 46-87%, a much more orange thing. The old floor sat at hue 23 with
+   * 80% saturation, which is the *hills* colour, so the widest area on screen was the
+   * one part of the palette no reference agreed with.
+   *
+   * `rock` is the layered material of the ring, the reference's own shaded band
+   * (#763e1d, hue 22, 75%, 46%) rather than the browner guess it used to be.
+   */
+  groundLow: 0x90443d,
+  groundHigh: 0xdda368,
   accent: 0xf0c08a,
-  rock: 0x6e3420,
+  rock: 0x763e1d,
   // the reference build's dome: one dust colour at the skyline going to a dark
   // rust overhead, with no blue anywhere in it. The bottom stop is under the
   // horizon, where only the far side of the ring can ever see it

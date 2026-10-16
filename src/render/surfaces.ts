@@ -5,6 +5,10 @@ import {
 } from '../sim/config.ts'
 import { landerSite, planetById, terrainHeight } from '../sim/planets.ts'
 import {
+  MARS_FIELD_RADIUS, marsFromPad, padOffset,
+} from '../sim/marsfield.ts'
+import type { PadOffset } from '../sim/marsfield.ts'
+import {
   moonBoulderValley, moonCraterFieldAt, moonDesignPoint, moonFieldHeight, moonFieldNoise,
   MOON_PAD_ORIGIN, moonSpherePoint, moonTrenchDistance,
 } from '../sim/moonfield.ts'
@@ -290,7 +294,16 @@ function stampWrapped(
   }
 }
 
-/** One stone in the soil, in colour and in relief. */
+/**
+ * One stone in the soil, in colour and in relief.
+ *
+ * The outline is irregular on purpose. It used to be an ellipse, and the same
+ * ellipse a hundred times over is what made the ground read as a printed scatter of
+ * coins - the reference's grit is broken-edged and varies from a speck to a fist.
+ * Three harmonics per stone do most of that on their own, and because the colour,
+ * the highlight and the hollow all use the same broken path, the facets belong to
+ * the stone instead of sliding about inside it.
+ */
 function paintStone(
   ctx: CanvasRenderingContext2D, depth: CanvasRenderingContext2D, size: number, rnd: () => number,
 ): void {
@@ -298,8 +311,6 @@ function paintStone(
   const y = rnd() * size
   const r = 2.9 + Math.pow(rnd(), 2.2) * 26
   const spin = rnd() * Math.PI
-  // every stone a different shape: all of them the same ellipse is what makes a
-  // scatter of grit read as a printed pattern
   const wide = 0.62 + rnd() * 0.5
   const flat = 0.45 + rnd() * 0.5
   // deliberately a light stone on a lighter ground: at fifty texels to the metre
@@ -307,33 +318,41 @@ function paintStone(
   // size is a speck of noise rather than a stone. The relief is in the dome below
   // and the normal map that comes out of it - the colour only has to say "not
   // sand here".
-  const grey = 98 + rnd() * 52
+  const grey = 84 + rnd() * 66
   const shadow = 0.13
   const lift = 0.09 + rnd() * 0.13
   const dome = 138 + Math.round(rnd() * 72)
-  const reach = r * 1.5
+  const reach = r * 1.8
+
+  const harmonics = [
+    { amp: 0.1 + rnd() * 0.26, freq: 2, phase: rnd() * Math.PI * 2 },
+    { amp: 0.08 + rnd() * 0.22, freq: 3, phase: rnd() * Math.PI * 2 },
+    { amp: 0.05 + rnd() * 0.16, freq: 5, phase: rnd() * Math.PI * 2 },
+  ]
+  const outline = (px: number, py: number, k: number) => {
+    const steps = 9
+    for (let i = 0; i <= steps; i++) {
+      const a = (i / steps) * TAU + spin
+      let bulge = 1
+      for (const h of harmonics) bulge += h.amp * Math.sin(a * h.freq + h.phase)
+      const ax = px + Math.cos(a) * r * wide * bulge * k
+      const ay = py + Math.sin(a) * r * flat * bulge * k
+      if (i === 0) ctx.moveTo(ax, ay)
+      else ctx.lineTo(ax, ay)
+    }
+    ctx.closePath()
+    ctx.fill()
+  }
 
   // the hollow it sits in, so it reads as set into the ground rather than on it
   ctx.fillStyle = `rgba(48, 24, 12, ${shadow})`
-  stampWrapped(size, x, y, reach, (px, py) => {
-    ctx.beginPath()
-    ctx.ellipse(px + r * 0.34, py + r * 0.4, r * wide, r * flat, spin, 0, TAU)
-    ctx.fill()
-  })
+  stampWrapped(size, x, y, reach, (px, py) => outline(px + r * 0.34, py + r * 0.4, 1))
   // the stone itself, cooler than the sand around it
   ctx.fillStyle = `rgb(${(grey + 26) | 0}, ${(grey * 0.95 + 16) | 0}, ${(grey * 0.92 + 12) | 0})`
-  stampWrapped(size, x, y, reach, (px, py) => {
-    ctx.beginPath()
-    ctx.ellipse(px, py, r * wide, r * flat, spin, 0, TAU)
-    ctx.fill()
-  })
+  stampWrapped(size, x, y, reach, (px, py) => outline(px, py, 1))
   // the facet that catches a low sun
   ctx.fillStyle = `rgba(255, 236, 206, ${lift})`
-  stampWrapped(size, x, y, reach, (px, py) => {
-    ctx.beginPath()
-    ctx.ellipse(px - r * 0.2, py - r * 0.24, r * wide * 0.5, r * flat * 0.45, spin, 0, TAU)
-    ctx.fill()
-  })
+  stampWrapped(size, x, y, reach, (px, py) => outline(px - r * 0.2, py - r * 0.24, 0.5))
   depth.fillStyle = `rgb(${dome}, ${dome}, ${dome})`
   stampWrapped(size, x, y, reach, (px, py) => {
     depth.beginPath()
@@ -658,6 +677,24 @@ function terrainGrid(radius: number, spacing: number): { x: number; y: number } 
 }
 
 /**
+ * The ring's strata, read off the owner's `mars hills 3`: the four albedo clusters in
+ * that photograph, from the shaded band at the foot of the wall to the sunlit crest.
+ * (Its fifth cluster is the shadow itself at value 23%, which is the key light's job,
+ * not the material's.)
+ */
+const MARS_BANDS = [0x763e1d, 0x9b6337, 0xbc814e, 0xdda368].map((hex) => new THREE.Color(hex))
+
+/**
+ * The climb the bands divide, in the design metres the terrain colour is read in:
+ * about where the ring's skirt leaves the floor, up to its highest crest. Those are
+ * the ends of the palette ramp, which used to saturate at 7 - see the comment where
+ * they are used.
+ */
+const STRATA_LOW = 9
+const STRATA_HIGH = 46
+const strataScratch = new THREE.Color()
+
+/**
  * The ground as the mesh draws it, rather than as the function computes it.
  *
  * The terrain is a ball of vertices ten metres apart, so what you stand on is
@@ -789,12 +826,34 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
       } else {
         const t = clampValue((h + 2.5) / 10, 0, 1)
         color.copy(low).lerp(high, t)
-        // Mars: sand in the floor of the field, rock up on the ring and on
-        // anything steep. Height alone would paint the ring the same bright
-        // dust as the dunes, and a sunward crest of bright dust blows out to
-        // white and stops reading as a mountain at all.
+        // steep faces read as rock whatever the height
         color.lerp(rock, slope * 0.5)
-        if (h > 7) color.lerp(rock, clampValue((h - 7) / 16, 0, 0.6))
+        /**
+         * The ring is layered rock - the owner's `mars hills 3`, five bands from
+         * value 23% to 87% - and here that is a *colour* fact rather than a shape one.
+         *
+         * It used to fade toward `rock` and then simply stop: the height ramp is
+         * fitted to the floor, whose whole relief is about five metres, and it
+         * saturates at h = 7 while the ring climbs to 48. Everything above that was
+         * one flat tone, which is why a sixty-metre wall read as a smooth orange
+         * cone. Cutting the shelves into the geometry was tried first and measured
+         * instead (`.tools/mars-strata.mjs`): the grid is 2.6 m, so a shelf is two
+         * vertices wide and the skyline comes back as a picket fence of spikes.
+         *
+         * So the strata are painted, in the reference's own four bands.
+         */
+        if (h > STRATA_LOW) {
+          const climb = clampValue((h - STRATA_LOW) / (STRATA_HIGH - STRATA_LOW), 0, 1) * (MARS_BANDS.length - 1)
+          const band = Math.min(MARS_BANDS.length - 2, Math.floor(climb))
+          const within = climb - band
+          // a stratum has an edge and then holds, so the climb is squeezed into the
+          // top fifth of the band rather than spread evenly across it
+          const edge = clampValue((within - 0.8) / 0.2, 0, 1)
+          strataScratch.copy(MARS_BANDS[band]).lerp(MARS_BANDS[band + 1], edge * edge * (3 - 2 * edge))
+          // and it fades in over the foot of the ring, so the crater field is not
+          // striped by the bands running out across it
+          color.lerp(strataScratch, clampValue((h - STRATA_LOW) / 5, 0, 1) * 0.9)
+        }
         // the mottling, which lives here rather than in the soil tile: the
         // ground's tone changes over metres, and a tile small enough to be
         // sharp under a boot is far too small to hold a patch of ground this
@@ -1916,34 +1975,154 @@ function buildProbeWreck(): THREE.Group {
   return group
 }
 
+/**
+ * The reference's stones, measured off `mars stones 2`: a warm dusty grey-brown at
+ * 17-19% saturation, a genuinely cool blue-grey at hue 216-219 which is the strongest
+ * contrast in the photograph, and the dark ones that sit at the bottom of a pile.
+ * The old single `planet.rock` was one saturated brown - hue 15 at 71% - which is
+ * four times the saturation the photograph shows and warmer than any stone in it.
+ */
+const STONE_WARM = new THREE.Color(0x7e6d68)
+const STONE_COOL = new THREE.Color(0x62738c)
+const STONE_DARK = new THREE.Color(0x4a5261)
+const stoneTint = new THREE.Color()
+
+/**
+ * Rock shapes for Mars, from `mars stones 2` rather than from a primitive.
+ *
+ * The field used to be 130 copies of one `IcosahedronGeometry(0.9, 0)`. A regular
+ * icosahedron is a ball with corners: every stone on the planet had the same twenty
+ * faces at the same angles, and the reference's stones are low angular wedges -
+ * plates and slabs lying on the sand, not crystals standing in it.
+ *
+ * So: three wedges, each a squashed icosahedron with its vertices pushed about. The
+ * push is keyed to the vertex *direction* rather than to the vertex index, because
+ * `PolyhedronGeometry` duplicates a corner once per face it belongs to and jittering
+ * per index tears the solid open.
+ */
+function marsRockGeometry(rnd: () => number, flat: number, squash: number): THREE.BufferGeometry {
+  const geometry = new THREE.IcosahedronGeometry(1, 0)
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute
+  const jitter = new Map<string, number>()
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i)
+    const y = position.getY(i)
+    const z = position.getZ(i)
+    const key = `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`
+    let scale = jitter.get(key)
+    if (scale === undefined) {
+      scale = 1 + (rnd() - 0.5) * flat
+      jitter.set(key, scale)
+    }
+    position.setXYZ(i, x * scale, y * scale * squash, z * scale)
+  }
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+/**
+ * A Mars boulder field, in the language of `mars stones 2`.
+ *
+ * Three things had to change, and each is a number from the photograph.
+ *
+ * **Where.** The scatter used to be drawn anywhere on the lat/lon rectangle, which
+ * put 130 rocks over 97 000 m2 - one per 750, or about **1.7 in the whole
+ * forty-metre bowl you play in**. That is why the field read as empty sand. It is
+ * drawn in the field's own frame now, bearing and distance from the pad, the way the
+ * rest of the landscape is authored, so every stone lands where the player can see it.
+ *
+ * **What.** The stones are dark and cool, and the colour is per instance: see the
+ * three tints above.
+ *
+ * **How much is buried.** A fixed lift of 0.2 m on a rock whose half-height runs from
+ * 0.3 to 2 m buries the big ones almost completely and floats the small ones. The lift
+ * is a fraction of the stone's own size now, and varies.
+ */
 function* marsPropStage(
   planet: PlanetDef, seed: number, radiusOf: (lat: number, lon: number) => number, group: THREE.Group,
 ): Generator<void, void, void> {
   const rnd = makeRnd(seed ^ 0x7c3d55)
   const site = landerSite(planet.id)
   const dummy = new THREE.Object3D()
+  const point = { lat: 0, lon: 0 }
+  const offset: PadOffset = { arc: 0, bearing: 0, north: 0, east: 0 }
 
-  const rockMesh = new THREE.InstancedMesh(
-    new THREE.IcosahedronGeometry(0.9, 0),
-    new THREE.MeshStandardMaterial({ color: planet.rock, flatShading: true, roughness: 1 }),
-    130,
-  )
-  // keep the scatter off the concrete, and off the craters the pad is cut into
-  const padClear = (PAD_RADIUS + 4) / planet.surfaceRadius
-  for (let i = 0; i < 130; i++) {
-    let lat = 0
-    let lon = 0
-    for (let attempt = 0; attempt < 12; attempt++) {
-      lat = (rnd() * 2 - 1) * 1.0
-      lon = rnd() * TAU
-      if (padDistance(lat, lon, site) > padClear) break
+  // one material, because the colour is carried per instance: the reference's warm
+  // dusty grey-brown for most of the field, its cool blue-grey for the rest, and a
+  // scatter of darker ones that sit at the bottom of the pile in every photograph
+  const material = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true, roughness: 1 })
+  const shapes = [
+    // a low wedge, a plate, and a slab with one steeper face
+    marsRockGeometry(rnd, 0.55, 0.52),
+    marsRockGeometry(rnd, 0.42, 0.38),
+    marsRockGeometry(rnd, 0.7, 0.62),
+  ]
+
+  /**
+   * Two populations, as in the photograph: cobbles under a metre, and boulders a
+   * couple of metres across that you have to walk round. Counts sized to the field
+   * rather than to the planet - the field is a disc of about seventeen thousand
+   * square metres, so this is roughly one stone per thirty, which is what leaves the
+   * craters, the trail and the junk legible. The reference is denser than that; a
+   * world you cannot walk across is not a world you can sweep.
+   */
+  const POPULATIONS: { count: number; min: number; max: number; bury: number }[] = [
+    { count: 430, min: 0.13, max: 0.42, bury: 0.1 },
+    { count: 150, min: 0.45, max: 1.35, bury: 0.22 },
+  ]
+  const total = POPULATIONS.reduce((sum, p) => sum + p.count, 0)
+  const meshes = shapes.map((geometry) => {
+    const mesh = new THREE.InstancedMesh(geometry, material, total)
+    mesh.count = 0
+    group.add(mesh)
+    return mesh
+  })
+
+  const padClear = PAD_RADIUS + 4
+
+  for (const population of POPULATIONS) {
+    for (let i = 0; i < population.count; i++) {
+      const mesh = meshes[Math.floor(rnd() * meshes.length)]
+
+      // uniform over the field's disc, then rejected if it lands on the concrete
+      let lat = 0
+      let lon = 0
+      for (let attempt = 0; attempt < 8; attempt++) {
+        marsFromPad(site.lat, site.lon, rnd() * TAU, Math.sqrt(rnd()) * MARS_FIELD_RADIUS, point)
+        lat = point.lat
+        lon = point.lon
+        padOffset(site.lat, site.lon, lat, lon, offset)
+        if (offset.arc > padClear) break
+      }
+
+      const size = population.min + rnd() * (population.max - population.min)
+      // how far the stone's own centre rides above the ground. Under its own
+      // half-height, so the base is always in the sand and the rock meets the ground
+      // on a line rather than on a point - which is what the dust line in the
+      // reference is - and varying, because half of them are lying much deeper than
+      // the other half
+      placeProp(dummy, radiusOf, lat, lon, size * (0.05 + rnd() * population.bury), size, rnd)
+      mesh.setMatrixAt(mesh.count, dummy.matrix)
+
+      // the reference's split, with a little variation either side of each colour so
+      // the families do not read as two flat fills
+      const roll = rnd()
+      const shade = 0.86 + rnd() * 0.3
+      if (roll < 0.34) stoneTint.copy(STONE_COOL)
+      else if (roll < 0.46) stoneTint.copy(STONE_DARK)
+      else stoneTint.copy(STONE_WARM)
+      mesh.setColorAt(mesh.count, stoneTint.multiplyScalar(shade))
+      mesh.count++
+
+      if ((i + 1) % LOD_PROP_SLICE === 0) yield
     }
-    placeProp(dummy, radiusOf, lat, lon, 0.2, 0.5 + rnd() * 1.9, rnd)
-    rockMesh.setMatrixAt(i, dummy.matrix)
-    if ((i + 1) % LOD_PROP_SLICE === 0) yield
+    yield
   }
-  rockMesh.instanceMatrix.needsUpdate = true
-  group.add(rockMesh)
+
+  for (const mesh of meshes) {
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
+  }
   yield
 
   for (let i = 0; i < 2; i++) {
