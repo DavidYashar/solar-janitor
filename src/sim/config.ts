@@ -173,10 +173,29 @@ export const EARTH_ORBIT_RATE = 0.011
 export const EARTH_RADIUS = 16 * SPACE_SCALE
 export const ISS_ORBIT = 22 * SPACE_SCALE
 export const ISS_ORBIT_RATE = 0.25
-/** airlock sits on the outward face of the station, away from Earth */
-export const ISS_DOCK_OFFSET = 4.5
-export const MOON_ORBIT = 42 * SPACE_SCALE
-export const MOON_ORBIT_RATE = 0.2
+/** the station's docking port: on the outward face of the arm, away from Earth */
+export const ISS_PORT_OFFSET = 4.5
+/**
+ * How far the tug's nose reaches ahead of its own origin.
+ *
+ * Docking has to put the NOSE on the port or the tug reads as parked beside the
+ * station rather than joined to it - so the berth is the port plus this, and a
+ * docked tug's origin sits that much further out with its nose in the airlock.
+ */
+export const SHIP_NOSE_OFFSET = 3.5
+/** where a docked tug's own origin sits */
+export const ISS_DOCK_OFFSET = ISS_PORT_OFFSET + SHIP_NOSE_OFFSET
+/**
+ * Twice the distance it was, and the rate follows Kepler with it.
+ *
+ * An orbit twice as wide takes 2^1.5 times as long, so at 840 u the Moon comes round
+ * in 89 s instead of 31 and travels at 59 u/s instead of 84 - a slower, more distant
+ * companion, and one the tug can still catch, since cruise is 55. Holding the old
+ * rate would have doubled its SPEED to 168 u/s: faster than the tug can fly, so the
+ * Moon would have been there and unreachable.
+ */
+export const MOON_ORBIT = 84 * SPACE_SCALE
+export const MOON_ORBIT_RATE = 0.2 * Math.pow(2, -1.5)
 export const MOON_RADIUS = 8 * SPACE_SCALE
 export const MARS_ORBIT = 900 * SPACE_SCALE
 export const MARS_ORBIT_RATE = 0.0075

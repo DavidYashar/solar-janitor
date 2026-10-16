@@ -585,6 +585,35 @@ function dockVelocity(game: Game, target: Vec3): Vec3 {
   return orbitVelocity(ISS_ORBIT + ISS_DOCK_OFFSET, ISS_ORBIT_RATE, game.issAngle, target)
 }
 
+/**
+ * How fast the ship is going relative to a world.
+ *
+ * `ship.speed` is the map-frame speed, and these worlds race along their orbits at
+ * 57-84 u/s, so comparing that to a limit meant for a docking or landing approach
+ * measures the world's speed, not the ship's.
+ */
+function speedRelativeTo(game: Game, body: number): number {
+  const drift = planetVelocity(game, body, SCRATCH_VEL)
+  const ship = game.ship
+  return Math.hypot(ship.vx - drift.x, ship.vy - drift.y, ship.vz - drift.z)
+}
+
+/**
+ * Put the ship on the world's own track, which is what "in orbit above it" means.
+ *
+ * Leaving it stopped in the map frame instead is not the same thing at all: it is
+ * doing that world's whole orbital speed relative to it, so anything that measures an
+ * approach against the local world reads it as a flyby.
+ */
+export function matchWorldVelocity(game: Game, body: number): void {
+  const ship = game.ship
+  const drift = planetVelocity(game, body, SCRATCH_VEL)
+  ship.vx = drift.x
+  ship.vy = drift.y
+  ship.vz = drift.z
+  ship.speed = Math.hypot(ship.vx, ship.vy, ship.vz)
+}
+
 /** How far outside every sphere of influence the ship is, in world units. */
 function distanceBeyondWells(game: Game, ship: Game['ship']): number {
   let closest = Infinity
@@ -761,7 +790,8 @@ export function landingZone(game: Game): number {
 /** The planet the ship can land on right now (inside the zone and slow enough). */
 export function landTarget(game: Game): number {
   const zone = landingZone(game)
-  if (zone < 0 || game.ship.speed > LAND_MAX_SPEED) return -1
+  if (zone < 0) return -1
+  if (speedRelativeTo(game, zone) > LAND_MAX_SPEED) return -1
   return zone
 }
 
@@ -1105,6 +1135,20 @@ function snapShipToDock(game: Game) {
   ship.vy = drift.y + station.y
   ship.vz = drift.z + station.z
   ship.speed = Math.hypot(ship.vx, ship.vy, ship.vz)
+  // and it faces its own airlock, which is what makes it read as joined to the
+  // station rather than as a tug that happened to stop next to it. The nose lands on
+  // the port because the berth is the port plus the nose; leaving it at whatever
+  // heading the player flew in with left the tug lying across the station.
+  const toStation = {
+    x: game.planetPos[0].x - game.dockPos.x,
+    y: game.planetPos[0].y - game.dockPos.y,
+    z: game.planetPos[0].z - game.dockPos.z,
+  }
+  const reach = Math.max(1e-6, Math.hypot(toStation.x, toStation.y, toStation.z))
+  ship.q = quatFromBasis(
+    { x: toStation.x / reach, y: toStation.y / reach, z: toStation.z / reach },
+    { x: 0, y: 1, z: 0 },
+  )
   ship.thrust = 0
   ship.boosting = false
 }

@@ -4,8 +4,8 @@ import {
 } from './sim/config.ts'
 import {
   bearingTo, buyItem, canDock, canLand, contextAction, contextLabel, createGame, hasRelic,
-  hasUpgrade, latLonDistance, nearLander, objective, progressSummary, scannerPings, step, undock,
-  wrapAngle,
+  hasUpgrade, latLonDistance, matchWorldVelocity, nearLander, objective, progressSummary,
+  scannerPings, step, undock, wrapAngle,
 } from './sim/game.ts'
 import { quatRotate } from './sim/orient.ts'
 import { landerSite, planetById } from './sim/planets.ts'
@@ -685,10 +685,7 @@ if (import.meta.env.DEV) {
       game.ship.x = position.x + offset
       game.ship.y = position.y
       game.ship.z = position.z
-      game.ship.vx = 0
-      game.ship.vy = 0
-      game.ship.vz = 0
-      game.ship.speed = 0
+      matchWorldVelocity(game, planetId)
       return true
     },
     dockNow: () => {
@@ -697,7 +694,7 @@ if (import.meta.env.DEV) {
       game.ship.x = game.dockPos.x
       game.ship.y = game.dockPos.y
       game.ship.z = game.dockPos.z
-      game.ship.speed = 0
+      matchWorldVelocity(game, 0)
       return contextAction(game)
     },
     landNow: () => {
@@ -707,7 +704,7 @@ if (import.meta.env.DEV) {
       game.ship.x = position.x + 8 * SPACE_SCALE
       game.ship.y = position.y
       game.ship.z = position.z
-      game.ship.speed = 0
+      matchWorldVelocity(game, game.planetId)
       return contextAction(game)
     },
     giveCredits: (amount: number) => {

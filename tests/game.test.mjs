@@ -4,7 +4,7 @@ import {
   BATCH_BONUS, BODY_CLEARANCE, CARRY_SLOTS, CLEAN_BONUS, EARTH_RADIUS, FULL_HOLD_BONUS,
   HARD_LAND_DAMAGE, HOLD_SLOTS, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_POINTS, METEOR_DAMAGE,
   METEOR_TELEGRAPH_BONUS, MOON_ORBIT, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
-  SHIP_SPEED, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH,
+  SHIP_BOOST_SPEED, SHIP_SPEED, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH,
   SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, HEALTH_MAX, SURFACE_RADIUS, TRANSITION_TIME,
   SUN_BURN_RADIUS, SUN_DAMAGE_HEAT, SUN_HEAT_RADIUS, SUN_WARN_HEAT,
 } from '../src/sim/config.ts'
@@ -54,6 +54,11 @@ function flying(seed, x = 0, y = 1400 * SPACE_SCALE, z = 0) {
   game.ship.x = x
   game.ship.y = y
   game.ship.z = z
+  // zero the VELOCITY, not just the cached speed readout: the sim derives what it
+  // needs from the vector, so a fixture that only writes `speed` is lying about it
+  game.ship.vx = 0
+  game.ship.vy = 0
+  game.ship.vz = 0
   game.ship.speed = 0
   return game
 }
@@ -86,7 +91,25 @@ function standOnDock(game) {
   game.ship.x = game.dockPos.x
   game.ship.y = game.dockPos.y
   game.ship.z = game.dockPos.z
+  game.ship.vx = 0
+  game.ship.vy = 0
+  game.ship.vz = 0
   game.ship.speed = 0
+}
+
+/** the world's own velocity in the map frame - the same formula the sim uses */
+function bodyVelocity(game, body) {
+  const planet = PLANETS[body]
+  const angle = body === 0 ? game.earthAngle : body === 1 ? game.moonAngle : game.marsAngle
+  const speed = planet.orbit * planet.orbitRate
+  const velocity = { x: -Math.sin(angle) * speed, y: 0, z: Math.cos(angle) * speed }
+  if (body === 1) {
+    const earth = bodyVelocity(game, 0)
+    velocity.x += earth.x
+    velocity.y += earth.y
+    velocity.z += earth.z
+  }
+  return velocity
 }
 
 function parkOnPlanet(game, planetId, offset = 8 * SPACE_SCALE) {
@@ -96,7 +119,14 @@ function parkOnPlanet(game, planetId, offset = 8 * SPACE_SCALE) {
   game.ship.x = position.x + offset
   game.ship.y = position.y
   game.ship.z = position.z
-  game.ship.speed = 0
+  // co-moving with the world, because that is what "parked at a world" has to mean.
+  // These worlds drift along their orbits at 57-84 u/s, so a ship sitting still in
+  // the map frame is doing that whole speed relative to the planet it is parked on.
+  const drift = bodyVelocity(game, planetId)
+  game.ship.vx = drift.x
+  game.ship.vy = drift.y
+  game.ship.vz = drift.z
+  game.ship.speed = Math.hypot(drift.x, drift.y, drift.z)
 }
 
 function onPlanet(game, planetId) {
@@ -340,11 +370,18 @@ test('landing needs a slow approach to the right planet', () => {
   const game = flying(48)
   parkOnPlanet(game, 2, 10 * SPACE_SCALE)
   assert.equal(landTarget(game), 2)
-  game.ship.speed = SHIP_SPEED
+  // "too fast" is measured relative to the world being landed on, not in the map
+  // frame, so it takes the world's own drift plus an unambiguous sprint
+  const drift = bodyVelocity(game, 2)
+  game.ship.vx = drift.x + SHIP_BOOST_SPEED
+  game.ship.vy = drift.y
+  game.ship.vz = drift.z
   assert.equal(landTarget(game), -1, 'too fast to land')
   assert.equal(landingZone(game), 2, 'but still inside the zone')
   assert.equal(contextLabel(game), 'SLOW DOWN TO LAND')
-  game.ship.speed = 0
+  game.ship.vx = drift.x
+  game.ship.vy = drift.y
+  game.ship.vz = drift.z
   assert.equal(landTarget(game), 2)
   assert.equal(contextLabel(game), 'LAND')
   assert.equal(canLand(game), true)

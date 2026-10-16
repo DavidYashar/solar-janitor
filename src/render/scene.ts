@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  EARTH_ORBIT, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_COLORS, LOD_COST_DETAIL, LOD_COST_STANDIN,
+  EARTH_ORBIT, ISS_ORBIT, ISS_PORT_OFFSET, JUNK_COLORS, LOD_COST_DETAIL, LOD_COST_STANDIN,
   LOD_SPACE_TUNING, LOD_SURFACE_TUNING, MARS_ORBIT, METEOR_RADIUS, MOON_ORBIT, OXYGEN_WARN,
   SPACE_SCALE, SUN_RADIUS, TAU,
 } from '../sim/config.ts'
@@ -430,15 +430,17 @@ export function createWorld(container: HTMLElement): World {
     iss.add(ring)
   }
 
-  // the docking arm points radially away from Earth; its hatch is the dock point
-  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, ISS_DOCK_OFFSET, 10), hullMaterial)
+  // the docking arm points radially away from Earth and its hatch is the port. The
+  // berth itself - where a docked tug's own origin sits - is further out again, by
+  // exactly the tug's nose, so the nose ends up in the airlock rather than beside it.
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, ISS_PORT_OFFSET, 10), hullMaterial)
   arm.rotation.z = Math.PI / 2
-  arm.position.set(ISS_DOCK_OFFSET / 2, 0, 0)
+  arm.position.set(ISS_PORT_OFFSET / 2, 0, 0)
   iss.add(arm)
   const hatchMaterial = new THREE.MeshBasicMaterial({ color: 0x7fe4ff })
   const hatch = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.16, 8, 24), hatchMaterial)
   hatch.rotation.y = Math.PI / 2
-  hatch.position.set(ISS_DOCK_OFFSET, 0, 0)
+  hatch.position.set(ISS_PORT_OFFSET, 0, 0)
   iss.add(hatch)
 
   const shopWindow = new THREE.Mesh(

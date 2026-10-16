@@ -105,6 +105,36 @@ could be slowed into — all while it was expected to dock with a station runnin
 tenth of its speed. Cruise, boost, reverse, strafe and the landing limit were each
 carrying that factor. They are orbital units now.
 
+**An approach speed limit has to be measured against the thing you are approaching.**
+The landing limit is 30 u/s, and comparing that to `ship.speed` compared it to the
+*map's* speed, which carries the world's own orbital drift of 57–84 u/s inside it. The
+worlds had always outrun the limit on paper — it went unnoticed only because the old
+limit was 300, and 57–84 is nowhere near 300. Bringing cruise down to the orbits' own
+speed is what turned that into a real bug: landing went from "usually fine" to
+impossible near a world, and the suite missed it because the fixtures wrote
+`ship.speed` without touching the velocity vector. `landTarget` now gates on the speed
+*relative* to the world being landed on, and every fixture that parks a ship at a world
+now parks it co-moving with that world, because that is what parked at a world means.
+
+**Docked means joined, not parked alongside.** A berthed tug is sent its attitude
+instead of keeping whatever heading it flew in with — before this it kept its arrival
+heading and read as a ship lying across the truss. The nose now turns to point straight
+at the station, and it is aimed that way every frame it is docked, so it holds the
+berth through the whole orbit: measured at 228.00 u from Earth's centre with a nose
+alignment of 1.0000, unchanged across a full second of flight. The geometry that makes
+the two agree is the berth = the port *plus* the nose: `ISS_PORT_OFFSET` (4.5 u, where
+the arm ends and the hatch ring sits) and `SHIP_NOSE_OFFSET` (3.5 u), so the ship's
+*origin* still rests exactly on `dockPos` while its nose tip lands on the ring at
+224.5 u — 3.5 u inside the berth, which is the airlock.
+
+**The Moon is twice as far out, and slower for it.** Its orbit went 420 → 840 u, and
+the rate moved with it — `0.2 × 2^-1.5`, which is Kepler's third law, not `0.2` held
+steady. Holding the rate would have doubled the Moon's own *speed* to 168 u/s, faster
+than the tug can fly at all, and a world you cannot reach is not a design. As it is the
+Moon laps Earth in 89 s at 59.4 u/s against a 55 u/s cruise: slower than the 84 u/s it
+ran at before, so strictly easier to catch on boost, and still 460 u inside Earth's
+sphere of influence with the depth to hold a landing approach.
+
 **The sky is the real one, not a scatter of dots.** It was 2200 points all of one
 size and one colour, and identical dots are exactly what that looks like. It is now
 NASA's Deep Star Maps 2020 on a single inside-out sphere: real constellations, and a
