@@ -5,6 +5,8 @@ import {
 } from './config.ts'
 import { flattenPad, marsFieldHeight } from './marsfield.ts'
 import { earthFieldHeight, flattenPad as flattenEarthPad, padCentre as fieldPadCentre } from './earthfield.ts'
+import { PAD_ORIGIN, padOffset, riverDistance } from './earthfield.ts'
+import type { PadOffset } from './earthfield.ts'
 import { flattenMoonPad, moonFieldAt, moonPadCentre } from './moonfield.ts'
 
 export type PlanetTheme = 'earth' | 'moon' | 'mars'
@@ -210,6 +212,29 @@ export function surfaceRadiusOf(planetId: number): number {
 export function landerSite(planetId: number): { lat: number; lon: number } {
   const planet = planetById(planetId)
   return { lat: planet.landerLat, lon: planet.landerLon }
+}
+
+const landmarkScratch: PadOffset = { arc: 0, bearing: 0, north: 0, east: 0 }
+
+/**
+ * How far a surface point is from the world's landmark, in metres (plan §8).
+ *
+ * Only Earth has one today: the river, which is the one piece of ground in the game
+ * that is somewhere rather than just more ground - it has its own music, and the
+ * music asks for its distance every frame. The Moon and Mars return `Infinity`, so a
+ * caller can test "is the janitor at the landmark" without knowing the world, and
+ * the Moon's trench is the obvious second entry here if it earns a bed of its own.
+ *
+ * The lat/lon -> pad-local metres conversion is `earthFieldHeight`'s, so a landmark
+ * query and the terrain always agree about where a point is.
+ */
+export function landmarkDistance(planetId: number, lat: number, lon: number): number {
+  if (planetId !== 0) return Infinity
+  const planet = planetById(planetId)
+  const offset = padOffset(
+    planet.landerLat, planet.landerLon, lat, lon, planet.surfaceRadius, landmarkScratch,
+  )
+  return riverDistance(offset.east + PAD_ORIGIN.x, offset.north + PAD_ORIGIN.z)
 }
 
 // ------------------------------------------------------- procedural terrain

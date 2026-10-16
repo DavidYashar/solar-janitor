@@ -1,3 +1,5 @@
+import type { MusicId } from './sim/types.ts'
+
 export type SoundKind =
   | 'pickup' | 'deposit' | 'deliver' | 'buy' | 'dock' | 'undock' | 'takeoff' | 'land'
   | 'hop' | 'oxygen' | 'rescue' | 'block' | 'clean' | 'win' | 'lose' | 'ui' | 'scrape' | 'thrust'
@@ -8,6 +10,14 @@ export type LoopKind = 'vacuum' | 'thruster' | 'wind'
 export interface Audio {
   unlock(): void
   play(kind: SoundKind, strength?: number): void
+  /**
+   * Choose the music bed (plan §8). The sim decides which one the moment calls for
+   * (`musicFor`); this only has to play it, crossfade, and do nothing gracefully when
+   * a track is missing. Passing `null` fades to silence.
+   */
+  setMusic(id: MusicId | null): void
+  /** What is playing, for the dev harness and for verifying the wiring. */
+  musicNow(): { id: MusicId; playing: boolean; time: number; level: number; error: string | null; context: string } | null
   setMuted(muted: boolean): void
   isMuted(): boolean
   setLoop(kind: LoopKind, intensity: number): void
@@ -102,6 +112,34 @@ const TONES: Record<string, Tone[]> = {
   hint: [{ wave: 'square', from: 1180, to: 1420, duration: 0.07, gain: 0.05 }],
 }
 
+/**
+ * The music beds: one file per moment, streamed from `public/music/`.
+ *
+ * `level` is not a taste knob. The seven tracks arrived **14 dB apart** in loudness -
+ * measured RMS from -28.3 dBFS (Moon) to -14.0 (Mars), which by ear is the Moon
+ * sounding less than half as loud as Mars - so each level brings its track to about
+ * -20 dBFS RMS instead. Each is also capped so the track's own peaks stay under
+ * -3 dBFS, and that is why the Earth bed sits quiet: it is the most dynamic of the
+ * seven (peak -2.3 dBFS against -27.2 RMS, a 25 dB crest), so lifting it to the
+ * common level would have clipped it. The numbers come from the measurements in the
+ * changelog; re-measure before changing a track.
+ */
+const MUSIC: Record<MusicId, { file: string; level: number }> = {
+  space: { file: 'space atmosphere.mp3', level: -2.8 },
+  sun: { file: 'when space craft approaching sun.mp3', level: -2.9 },
+  earth: { file: 'background earth.mp3', level: -0.7 },
+  river: { file: 'earth river when approaching the river.mp3', level: -4.5 },
+  moon: { file: 'moon background.mp3', level: 8.3 },
+  mars: { file: 'mars background.mp3', level: -6.0 },
+  storm: { file: 'when dust storming coming in mars.mp3', level: -5.5 },
+}
+/** the whole music layer's seat in the mix, under the effect one-shots */
+const MUSIC_BUS = 0.55
+/** long enough to be a crossfade rather than a cut, short enough to answer a keypress */
+const MUSIC_FADE = 1.4
+
+const dbToGain = (db: number) => 10 ** (db / 20)
+
 export function createAudio(): Audio {
   let context: AudioContext | undefined
   let master: GainNode | undefined
@@ -115,7 +153,22 @@ export function createAudio(): Audio {
     source: AudioBufferSourceNode
   }
 
+  /** One streamed track: an element for the audio, a node for its fade. */
+  interface MusicSlot {
+    el: HTMLAudioElement
+    gain: GainNode
+    nominal: number
+    /** pauses the element once its fade-out has finished, if it is still not wanted */
+    parked: number
+  }
+
   const loops: Loop[] = []
+  const music = new Map<MusicId, MusicSlot>()
+  const musicMissing = new Set<MusicId>()
+  let musicBus: GainNode | undefined
+  let current: MusicId | null = null
+  let wanted: MusicId | null = null
+  let lastError: string | null = null
   const loopTargets: Record<LoopKind, number> = { vacuum: 0, thruster: 0, wind: 0 }
   const loopFor = (kind: LoopKind) => loops.find(loop => loop.kind === kind)
 
@@ -194,10 +247,116 @@ export function createAudio(): Audio {
     }
   }
 
+  /** Build (once) the slot for a track, or undefined if the file is not there. */
+  function slotFor(id: MusicId): MusicSlot | undefined {
+    const ctx = context
+    if (!ctx || !master) return undefined
+    const existing = music.get(id)
+    if (existing) return existing
+    if (musicMissing.has(id)) return undefined
+    if (!musicBus) {
+      musicBus = ctx.createGain()
+      musicBus.gain.value = MUSIC_BUS
+      musicBus.connect(master)
+    }
+    const el = new Audio(`/music/${encodeURIComponent(MUSIC[id].file)}`)
+    el.loop = true
+    el.preload = 'auto'
+    el.addEventListener('error', () => {
+      // a missing or undecodable track is a silent slot, not a broken game - and the
+      // set stops us re-testing it every frame
+      musicMissing.add(id)
+      lastError = `no /music/${MUSIC[id].file}`
+      el.pause()
+      if (current === id) current = null
+    })
+    const gain = ctx.createGain()
+    const nominal = dbToGain(MUSIC[id].level)
+    gain.gain.value = 0.0001
+    ctx.createMediaElementSource(el).connect(gain)
+    gain.connect(musicBus)
+    const slot: MusicSlot = { el, gain, nominal, parked: 0 }
+    music.set(id, slot)
+    return slot
+  }
+
+  function startMusic(id: MusicId) {
+    const ctx = context
+    const slot = slotFor(id)
+    if (!ctx || !slot) return
+    clearTimeout(slot.parked)
+    slot.gain.gain.cancelScheduledValues(ctx.currentTime)
+    slot.gain.gain.setValueAtTime(Math.max(0.0001, slot.gain.gain.value), ctx.currentTime)
+    slot.gain.gain.linearRampToValueAtTime(slot.nominal, ctx.currentTime + MUSIC_FADE)
+    current = id
+    if (slot.el.paused) {
+      // before the first gesture the browser refuses to start audio; unlock() retries
+      const started = slot.el.play()
+      if (started) started.catch(() => { lastError = 'autoplay blocked' })
+    }
+  }
+
+  function stopMusic(id: MusicId) {
+    const ctx = context
+    const slot = music.get(id)
+    if (!ctx || !slot) return
+    slot.gain.gain.cancelScheduledValues(ctx.currentTime)
+    slot.gain.gain.setValueAtTime(Math.max(0.0001, slot.gain.gain.value), ctx.currentTime)
+    slot.gain.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + MUSIC_FADE)
+    clearTimeout(slot.parked)
+    // park it only once it has faded, and only if nothing asked for it back
+    slot.parked = window.setTimeout(() => {
+      if (current !== id) slot.el.pause()
+    }, MUSIC_FADE * 1000 + 80)
+  }
+
+  /** Make the audio match the request. Cheap and idempotent: the loop calls it every frame. */
+  function applyMusic() {
+    if (!context) return
+    if (current && current !== wanted) {
+      stopMusic(current)
+      current = null
+    }
+    if (wanted && current !== wanted) {
+      const slot = slotFor(wanted)
+      if (slot) startMusic(wanted)
+      // a missing track simply leaves us silent; wanted stays set so adding the file
+      // is all it takes, and the missing-set keeps that from meaning anything per frame
+    } else if (current) {
+      const slot = music.get(current)
+      if (slot && slot.el.paused) startMusic(current)
+    }
+  }
+
   return {
     unlock() {
       const ctx = ensure()
       if (ctx && ctx.state === 'suspended') void ctx.resume()
+      // the first gesture is also what lets the music start
+      applyMusic()
+    },
+
+    setMusic(id) {
+      if (id === wanted) return
+      wanted = id
+      ensure()
+      applyMusic()
+    },
+
+    musicNow() {
+      if (!current) return null
+      const slot = music.get(current)
+      if (!slot) return null
+      return {
+        id: current,
+        playing: !slot.el.paused && !slot.el.ended,
+        time: Math.round(slot.el.currentTime * 10) / 10,
+        level: Math.round(slot.nominal * 1000) / 1000,
+        error: lastError,
+        // a suspended context looks exactly like a playing track and makes no sound,
+        // so this is the one field that separates "wired up" from "audible"
+        context: context ? context.state : 'none',
+      }
     },
 
     play(kind, strength = 1) {
@@ -235,6 +394,16 @@ export function createAudio(): Audio {
     },
 
     stop() {
+      for (const slot of music.values()) {
+        clearTimeout(slot.parked)
+        slot.el.pause()
+        slot.el.src = ''
+      }
+      music.clear()
+      musicMissing.clear()
+      current = null
+      wanted = null
+      musicBus = undefined
       for (const loop of loops) {
         try {
           loop.source.stop()

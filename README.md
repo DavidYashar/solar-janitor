@@ -58,6 +58,11 @@ credits on gear. Clean all three worlds to restore the system.
   mask, magboots, grav harness, hazard weave, wide scoop, cargo gloves, junk
   scanner, emergency beacon, thruster kit, nav computer, cargo racks, docking
   assist and the third engine below.
+- **A soundtrack, one track per environment** (plan §8). Space flight, the Sun's
+  approach, Earth's valley, Earth's river, the Moon, Mars, and Mars in a dust storm —
+  chosen by `musicFor` in the sim, so every switch is testable headless, and streamed
+  lazily so the boot cost is unchanged. The tracks arrived 14 dB apart in loudness, so
+  each carries a normalising level; they are the only external assets in the project.
 - **The Third Engine is a visible purchase** (plan §5.5). The tug's
   dorsal engine pod is not part of the hull any more: the model builds it as its own
   group, hidden until you buy it, and buying it bolts the pod — pylon, barrel, collars
@@ -202,6 +207,22 @@ hand over a tool. The old rule that score and credits were the same number is go
 they answer different questions now — **score is how well you played, credits are what you can
 spend.**
 
+**The soundtrack is files, and the files needed measuring before use.** Seven tracks
+supplied by the project owner, one per environment. The first thing to do with them was
+not to wire them up but to decode them and look at the numbers, and the numbers said
+the mix would have been wrong: measured RMS ran from **−28.3 dBFS** on the Moon to
+**−14.0** on Mars — 14 dB apart, which by ear is the Moon sounding less than half as
+loud as Mars, and a player walking between worlds would be reaching for the volume
+slider. Each track now carries a level bringing it to about −20 dBFS RMS, capped so the
+track's own peaks stay under −3 dBFS. That cap is why Earth's bed sits quiet: at 25 dB
+of crest it is by far the most dynamic of the seven, and lifting it to the common level
+clips it. They load lazily — a track is fetched the first time its scene is wanted, so
+the 4.88 MB the game boots in stays 4.88 MB — and the Sun's bed starts where the Sun's
+*gravity* starts rather than at a picked distance, so the warning arrives before the
+heat does and lands on a boundary you can feel. The first version of that constant was
+"twice the heat radius", which is 5 208 u: just outside Earth's orbit at 5 200, so the
+Sun's alarm would have played every time you flew past Earth.
+
 Ranks: SILVER 4 000 · GOLD 9 000 · PLATINUM 12 500 · LEGEND 14 500
 (plan §5.6; measured against the achievable range rather than guessed).
 
@@ -297,6 +318,15 @@ twenty-three maps, of which Earth's two ground tiles are the largest single item
 1.7 MB together).
 
 ## Credits & licences
+
+**The music is supplied by the project owner** — seven tracks in `public/music/`, one
+per environment (space, the Sun's approach, Earth's valley, Earth's river, the Moon,
+Mars, Mars in a dust storm). They are the only external assets in the project; every
+other sound is synthesized in code. **Their provenance and licence still need recording
+here** — the file names are descriptive rather than sourced, so this line is a
+placeholder until the owner fills it in. The selection and mixing logic is ours: which
+track a moment calls for is decided in the sim (`musicFor`), and each track carries a
+measured normalising level in `audio.ts`.
 
 Earth's colour, night-lights and cloud maps, the Moon's surface, Mars and the
 Sun's photosphere — all in `public/textures/` — are from the **Solar System Scope**

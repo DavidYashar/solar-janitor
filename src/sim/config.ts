@@ -300,6 +300,20 @@ export const GRAVITY_SOI_FADE_SUN = 0.45
 export const SUN_HEAT_RADIUS = SUN_RADIUS * 3.1
 export const SUN_BURN_RADIUS = SUN_RADIUS * 1.5
 
+/**
+ * Music triggers (plan §8).
+ *
+ * The Sun's bed starts where the Sun's *gravity* takes over, not at a picked distance:
+ * crossing into its sphere of influence is a boundary the player can feel, and it is
+ * 1.42x the heat radius, so the warning arrives before the damage does. It is also
+ * 2120 u inside Earth's orbit, which matters - an earlier version of this constant
+ * used "twice the heat radius" and landed at 5208 u, just outside the orbit, so the
+ * Sun's alarm played every time you flew past Earth.
+ */
+export const MUSIC_SUN_RADIUS = GRAVITY_SOI_SUN
+/** how close to Earth's river the janitor has to be for its own bed to take over */
+export const MUSIC_RIVER_RANGE = 45
+
 /** heat per second at the burn ring - it falls off as the square of the gap */
 export const SUN_HEAT_RATE = 0.3
 /** and the flat rate the sky takes it back out at */

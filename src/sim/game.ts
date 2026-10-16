@@ -13,6 +13,7 @@ import {
   STORM_WARN_LEAD_BONUS, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
   THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS, THIRD_ENGINE_BONUS,
   FINAL_SWEEP_FRACTION, FINAL_SWEEP_MULT, STARTING_DELIVERED, SWEEP_STEP,
+  MUSIC_RIVER_RANGE, MUSIC_SUN_RADIUS,
   SHIP_STRAFE_SPEED, SURFACE_TURN_RATE, SURFACE_PITCH_RATE, BODY_BOUNCE, BODY_REST_SPEED,
   GRAVITY_SOI, GRAVITY_SOI_FADE, PLANET_MU, SHIP_WELL_ACCEL, SHIP_WELL_SOFT,
   ORBIT_TRIM_BAND_MIN, ORBIT_TRIM_BAND_MAX, ORBIT_TRIM_RATE, ORBIT_HOLD_RANGE, DEEP_SPACE_ASSIST_FADE,
@@ -21,10 +22,10 @@ import {
 } from './config.ts'
 import { RELIC_BY_PLANET, SHOP_BY_ID } from './economy.ts'
 import { quatForward, quatFromBasis, quatIntegrate, quatNlerp, quatRight, quatToFlightAngles } from './orient.ts'
-import { PLANETS, landerSite, planetById, surfaceRadiusOf } from './planets.ts'
+import { PLANETS, landerSite, landmarkDistance, planetById, surfaceRadiusOf } from './planets.ts'
 import { nextRandom, randomBetween } from './rng.ts'
 import type {
-  Game, GameEvent, HazardState, Input, Junk, JunkClass, PlayMode, Quat, Rank, Vec3,
+  Game, GameEvent, HazardState, Input, Junk, JunkClass, MusicId, PlayMode, Quat, Rank, Vec3,
 } from './types.ts'
 
 export const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
@@ -632,6 +633,31 @@ export function matchWorldVelocity(game: Game, body: number): void {
   ship.vy = drift.y
   ship.vz = drift.z
   ship.speed = Math.hypot(ship.vx, ship.vy, ship.vz)
+}
+
+/**
+ * Which music bed this moment calls for (plan §8), or `null` for silence.
+ *
+ * The sim decides rather than the audio layer, because the decision is game state -
+ * where you are, what is coming for you - and that makes every switch testable
+ * without a speaker. The precedence, in order:
+ *
+ * 1. a run that is not being played is silent (title, pause, results)
+ * 2. the Sun's approach beats everything in space: it is the one approach the game
+ *    warns you about, and the warning should be audible before the hull heats
+ * 3. the surface owns its own bed, and Earth's river cuts in over it
+ * 4. otherwise, space
+ */
+export function musicFor(game: Game): MusicId | null {
+  if (game.phase !== 'playing') return null
+  if (game.mode !== 'surface') {
+    const distance = Math.hypot(game.ship.x, game.ship.y, game.ship.z)
+    return distance < MUSIC_SUN_RADIUS ? 'sun' : 'space'
+  }
+  if (game.planetId === 2) return game.hazards.stormActive ? 'storm' : 'mars'
+  if (game.planetId === 1) return 'moon'
+  const landmark = landmarkDistance(0, game.player.lat, game.player.lon)
+  return landmark < MUSIC_RIVER_RANGE ? 'river' : 'earth'
 }
 
 /** How far outside every sphere of influence the ship is, in world units. */

@@ -5,6 +5,12 @@ export type TransitionKind = 'takeoff' | 'landing'
 export type JunkClass = 'scrap' | 'tech' | 'hazardous' | 'relic'
 export type JunkStatus = 'ground' | 'carried' | 'hold' | 'delivered'
 export type Rank = 'BRONZE' | 'SILVER' | 'GOLD' | 'PLATINUM' | 'LEGEND'
+/**
+ * Which music bed the moment calls for (plan §8). The sim decides, because the
+ * decision is game state - where you are, what is coming for you - and the audio
+ * layer only has to play it. `null` means nothing should be playing.
+ */
+export type MusicId = 'space' | 'sun' | 'earth' | 'river' | 'moon' | 'mars' | 'storm'
 export type EventKind =
   | 'pickup' | 'deposit' | 'deliver' | 'buy' | 'dock' | 'undock'
   | 'takeoff' | 'land' | 'oxygen' | 'refill' | 'rescue' | 'block'

@@ -4,7 +4,7 @@ import {
 } from './sim/config.ts'
 import {
   bearingTo, buyItem, canDock, canLand, contextAction, contextLabel, createGame, hasRelic,
-  hasUpgrade, latLonDistance, matchWorldVelocity, nearLander, objective, progressSummary,
+  hasUpgrade, latLonDistance, matchWorldVelocity, musicFor, nearLander, objective, progressSummary,
   scannerPings, step, undock, wrapAngle,
 } from './sim/game.ts'
 import { quatRotate } from './sim/orient.ts'
@@ -618,6 +618,9 @@ function frame(now: number) {
     audio.setLoop('thruster', 0)
     audio.setLoop('wind', 0)
   }
+  // the music bed: the sim decides which one this moment wants (plan §8), and the
+  // audio layer crossfades to it. `null` on the title, in pause and on the results.
+  audio.setMusic(musicFor(game))
 }
 
 window.addEventListener('resize', () => world.resize())
@@ -661,6 +664,9 @@ if (import.meta.env.DEV) {
     perf: () => ({ frames: perf.report(), render: world.renderStats() }),
     perfReset: () => perf.reset(),
     perfOverlay: (on: boolean) => { perfVisible = on; if (!on) hud.setPerf(null) },
+    /** what the music layer is doing - which bed, whether it is really playing, and how far in */
+    music: () => audio.musicNow(),
+    musicFor: () => musicFor(game),
     hud,
     audio,
     contextAction: onContext,
@@ -701,7 +707,10 @@ if (import.meta.env.DEV) {
       const position = game.planetPos[game.planetId]
       game.mode = 'space'
       game.transition = null
-      game.ship.x = position.x + 8 * SPACE_SCALE
+      // 60 u above the hull, measured from the world's own radius: a fixed altitude
+      // put the ship *on* the Moon (radius 80) and inside Mars
+      const altitude = planetById(game.planetId).spaceRadius + 60
+      game.ship.x = position.x + altitude
       game.ship.y = position.y
       game.ship.z = position.z
       matchWorldVelocity(game, game.planetId)

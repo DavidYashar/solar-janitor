@@ -8,7 +8,7 @@ import {
   STORM_PERIOD, STORM_PUSH, FINAL_SWEEP_MULT,
   SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, HEALTH_MAX, SURFACE_RADIUS, TRANSITION_TIME,
   SUN_BURN_RADIUS, SUN_DAMAGE_HEAT, SUN_HEAT_RADIUS, SUN_WARN_HEAT, SWEEP_STEP,
-  SHIP_REVERSE_SPEED, SHIP_STRAFE_SPEED, THIRD_ENGINE_BONUS,
+  SHIP_REVERSE_SPEED, SHIP_STRAFE_SPEED, THIRD_ENGINE_BONUS, MUSIC_RIVER_RANGE, MUSIC_SUN_RADIUS,
 } from '../src/sim/config.ts'
 import {
   allPlanetsClean, bearingTo, boostSpeed, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
@@ -16,9 +16,10 @@ import {
   landTarget, landingZone, latLonDistance, maxOxygen, nearLander, objective, placePlayerAtLander,
   planetJunkTotal, progressSummary, rankForScore, remainingCount, resetHazards, reverseSpeed, scannerPings,
   shipSpeed, strafeSpeed, step, sweepState, takeOff, undock, updateHazards, walkSpeed, systemReport,
-  screenMoveVector, wrapAngle,
+  screenMoveVector, wrapAngle, musicFor,
 } from '../src/sim/game.ts'
-import { PLANETS, landerSite } from '../src/sim/planets.ts'
+import { PLANETS, landerSite, landmarkDistance, surfaceRadiusOf } from '../src/sim/planets.ts'
+import { fromPad } from '../src/sim/earthfield.ts'
 import { SHOP_ITEMS } from '../src/sim/economy.ts'
 import { decodeSave, encodeSave, restoreSave, serializeSave } from '../src/sim/save.ts'
 import { dailySeed } from '../src/sim/rng.ts'
@@ -1100,6 +1101,92 @@ test('the run tracks the stats the results screen shows', () => {
   assert.equal(game.trips, 1)
   assert.equal(game.planetsCleaned, 0)
   assert.equal(progressSummary(game).planetsCleaned, 0)
+})
+
+// ------------------------------------------------------------------- music
+
+test('Earth has one landmark, and it is reachable on foot', () => {
+  const radius = surfaceRadiusOf(0)
+  const pad = landerSite(0)
+  assert.equal(landmarkDistance(1, 0, 0), Infinity, 'the Moon has no landmark yet')
+  assert.equal(landmarkDistance(2, 0, 0), Infinity, 'nor Mars - its storm is a hazard, not a place')
+  const atPad = landmarkDistance(0, pad.lat, pad.lon)
+  assert.ok(atPad > MUSIC_RIVER_RANGE, `the pad is clear of the river (${Math.round(atPad)} m)`)
+
+  // sweep the valley for its closest approach: this is also the assertion that the
+  // river trigger is reachable at all, since a range nobody can walk into is a track
+  // that never plays
+  let best = { distance: Infinity, lat: 0, lon: 0, arc: 0, bearing: 0 }
+  for (let bearing = 0; bearing < 360; bearing += 15) {
+    for (let arc = 20; arc <= 500; arc += 10) {
+      const radians = (bearing * Math.PI) / 180
+      const spot = fromPad(pad.lat, pad.lon, Math.cos(radians) * arc, Math.sin(radians) * arc, radius)
+      const distance = landmarkDistance(0, spot.lat, spot.lon)
+      if (distance < best.distance) best = { distance, lat: spot.lat, lon: spot.lon, arc, bearing }
+    }
+  }
+  assert.ok(
+    best.distance < MUSIC_RIVER_RANGE,
+    `the water is walkable from the pad (closest ${Math.round(best.distance)} m at ${best.arc} m on ${best.bearing} deg)`,
+  )
+  // the east bank, where the ground still counts as land: the river cuts a channel, so
+  // a point just inside the range is bank rather than water
+  assert.ok(best.distance >= 0)
+})
+
+test('the music bed follows where you are and what is coming for you', () => {
+  const earth = grounded(90, 0)
+  assert.equal(musicFor(earth), 'earth', 'the valley gets the ambient bed')
+
+  const space = flying(90)
+  assert.equal(musicFor(space), 'space')
+  // the Sun's bed has to arrive before the heat does. The ship is parked 14 km above
+  // the plane, so closing on the Sun means moving all three axes.
+  const nearSun = (factor) => {
+    space.ship.x = MUSIC_SUN_RADIUS * factor
+    space.ship.y = 0
+    space.ship.z = 0
+    return musicFor(space)
+  }
+  assert.equal(nearSun(0.9), 'sun')
+  assert.ok(MUSIC_SUN_RADIUS > SUN_HEAT_RADIUS, 'and outside the corona, so it is a warning')
+  assert.equal(nearSun(1.1), 'space')
+
+  const moon = grounded(90, 1)
+  assert.equal(musicFor(moon), 'moon')
+
+  const mars = grounded(90, 2)
+  assert.equal(musicFor(mars), 'mars')
+  mars.hazards.stormActive = true
+  assert.equal(musicFor(mars), 'storm', 'the storm takes the bed over')
+  mars.hazards.stormActive = false
+  assert.equal(musicFor(mars), 'mars')
+
+  // a run that is not being played is silent: title, pause, results
+  earth.phase = 'paused'
+  assert.equal(musicFor(earth), null)
+  earth.phase = 'playing'
+  earth.mode = 'docked'
+  assert.equal(musicFor(earth), 'space', 'docked at the ISS is still orbit')
+})
+
+test('the river takes precedence over the valley bed', () => {
+  const game = grounded(92, 0)
+  const radius = surfaceRadiusOf(0)
+  const pad = landerSite(0)
+  assert.equal(musicFor(game), 'earth')
+  // find water and stand on it
+  let spot = null
+  for (let bearing = 0; bearing < 360 && !spot; bearing += 15) {
+    for (let arc = 20; arc <= 500 && !spot; arc += 10) {
+      const radians = (bearing * Math.PI) / 180
+      const candidate = fromPad(pad.lat, pad.lon, Math.cos(radians) * arc, Math.sin(radians) * arc, radius)
+      if (landmarkDistance(0, candidate.lat, candidate.lon) < MUSIC_RIVER_RANGE) spot = candidate
+    }
+  }
+  assert.ok(spot, 'found the river')
+  park(game, spot.lat, spot.lon)
+  assert.equal(musicFor(game), 'river')
 })
 
 // --------------------------------------------------------------------- save
