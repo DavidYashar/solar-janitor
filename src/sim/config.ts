@@ -52,6 +52,8 @@ export const POLE_CLAMP = 1.04
 export const WALK_SPEED = 7.4
 /** how fast the janitor swings around to face the pointer (radians per second) */
 export const SURFACE_TURN_RATE = 4.2
+/** how fast the chase camera follows the pointer's height up into the sky */
+export const SURFACE_PITCH_RATE = 6.5
 export const SPRINT_MULTIPLIER = 1.6
 export const AIR_CONTROL_K = 3.4
 export const HOP_SPEED = 11.5

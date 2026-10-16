@@ -202,7 +202,7 @@ texture pack, used under the
 | `sun_surface.webp` | `2k_sun.jpg` | WebP q82, 2048×1024, 219 kB |
 
 Mars's globe map is orbit-only now: the ground you land on is generated in code
-(see below), so the map is never fetched at eye height. The cloud map is greyscale and drives the cloud deck's `alphaMap`. The Moon is
+(see below), so the map is never fetched at eye height. The cloud map is greyscale and drives the cloud deck's `alphaMap` — both on the globe and on the sky shell you look up at from the ground. The Moon is
 downsampled to 1K because its disc stays under ~370 px on screen even at its
 closest approach, so the extra resolution would never be visible. The Sun's map
 drives a `MeshBasicMaterial` (the Sun is its own light), and the halo around it
@@ -340,6 +340,23 @@ every tile. The same pass draws the stones a second time as bare domes, and a
 Sobel over those becomes the normal map. Relief has to come from somewhere: colour
 cannot carry it at eye height, and all a painted shadow can do two metres off the
 ground is look painted.
+
+**The sky has something in it now.** The sun is a disc rather than a smudge. The
+real one is 0.53° across and it is drawn at twice that, because at the sizes this
+camera runs at anything smaller stops reading as a disc and starts reading as a
+speck; the glare around it is a second sprite, since a soft blob alone is a light
+source but it takes a hard edge to read as the sun. Cloud is the Earth's own cloud
+map wrapped on a shell between the valley and the sky dome — the same
+equirectangular map that skins the globe, seen from the inside, where it becomes a
+sky you can look up at. The deck drifts the opposite way to the dome, so the sky
+is not one rigid thing.
+
+Looking up is the pointer's job, and it was the one control the surface camera
+never had. The pointer's height tips the view by raising the point the camera
+looks at and drawing the camera back as it goes: swinging the camera down instead
+would only drive it into the ground behind him, and without the draw-back a
+look-up becomes a first-person view of the sky with the janitor gone from his own
+game.
 
 ### How to check the streaming in a browser (M3)
 

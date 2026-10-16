@@ -267,6 +267,12 @@ export function createInput(actions: InputActions): InputSource {
       const hop = hopHeld || held.has('Space')
       boostQueued = false
 
+      const ramp = (value: number) => {
+        const magnitude = Math.abs(value)
+        if (magnitude <= AIM_DEAD) return 0
+        return Math.sign(value) * Math.min(1, (magnitude - AIM_DEAD) / (AIM_FULL - AIM_DEAD))
+      }
+
       // pointer heading in screen radians: 0 = straight up, + clockwise
       if (ctx.mode === 'surface') {
         // the janitor walks where he faces; the pointer only steers (chase cam),
@@ -274,16 +280,13 @@ export function createInput(actions: InputActions): InputSource {
         const screenX = down('KeyD') - down('KeyA') + down('ArrowRight') - down('ArrowLeft') + stickX
         const screenY = down('KeyW') - down('KeyS') + down('ArrowUp') - down('ArrowDown') + stickY
         const move = screenMoveVector(-ctx.facing, screenX, screenY)
-        // screen-right is -east in this mirror-handed world, so steering flips too
-        return { x: move.x, y: move.y, turn: -steer(aimX), pitch: 0, yaw: 0, roll: 0, boost, hop }
+        // screen-right is -east in this mirror-handed world, so steering flips too.
+        // The pointer's height tips the camera as well, because there is finally
+        // something up there worth looking at and this is the only control for it.
+        return { x: move.x, y: move.y, turn: -steer(aimX), pitch: ramp(aimY), yaw: 0, roll: 0, boost, hop }
       }
 
       // space: the pointer steers the nose, the arrows fly and side-step
-      const ramp = (value: number) => {
-        const magnitude = Math.abs(value)
-        if (magnitude <= AIM_DEAD) return 0
-        return Math.sign(value) * Math.min(1, (magnitude - AIM_DEAD) / (AIM_FULL - AIM_DEAD))
-      }
       const thrust = down('KeyW') - down('KeyS') + down('ArrowUp') - down('ArrowDown') + stickY
       const strafe = down('ArrowRight') - down('ArrowLeft') + stickX
       const roll = down('KeyD') - down('KeyA') + touchRoll

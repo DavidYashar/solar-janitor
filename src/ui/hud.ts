@@ -411,9 +411,10 @@ export function createHud(callbacks: HudCallbacks): Hud {
           ${saveInfo ? `<p class="save-note">${escapeHtml(saveInfo)}</p>` : ''}
           <p class="best">${best > 0 ? `BEST ${best.toLocaleString()}` : 'NO SHIFTS LOGGED YET'}</p>
           <div class="howto">
-            <div><b>ON FOOT</b>the camera rides behind you - steer with the mouse ·
-              <kbd>W</kbd>/<kbd>↑</kbd> walks forward · <kbd>S</kbd>/<kbd>↓</kbd> back ·
-              <kbd>A</kbd>/<kbd>D</kbd>/<kbd>←</kbd>/<kbd>→</kbd> side-step · <kbd>Shift</kbd> sprint</div>
+            <div><b>ON FOOT</b>the camera rides behind you - the mouse steers, and pointing
+              at the sky tips your head back · <kbd>W</kbd>/<kbd>↑</kbd> walks forward ·
+              <kbd>S</kbd>/<kbd>↓</kbd> back · <kbd>A</kbd>/<kbd>D</kbd>/<kbd>←</kbd>/<kbd>→</kbd>
+              side-step · <kbd>Shift</kbd> sprint</div>
             <div><b>VACUUM</b>walk near junk to suck it up - up to ${CARRY_SLOTS} pieces</div>
             <div><b>LANDER</b>stand in the ring to refill O<sub>2</sub> · <kbd>F</kbd> stows your haul or lifts off</div>
             <div><b>FLY</b>the mouse is your pointer — the nose follows it ·

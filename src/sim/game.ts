@@ -12,7 +12,7 @@ import {
   SPRINT_MULTIPLIER, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
   STORM_WARN_LEAD_BONUS, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
   THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS,
-  SHIP_STRAFE_SPEED, SURFACE_TURN_RATE, BODY_BOUNCE, BODY_REST_SPEED,
+  SHIP_STRAFE_SPEED, SURFACE_TURN_RATE, SURFACE_PITCH_RATE, BODY_BOUNCE, BODY_REST_SPEED,
   GRAVITY_SOI, GRAVITY_SOI_FADE, PLANET_MU, SHIP_WELL_ACCEL, SHIP_WELL_SOFT,
   ORBIT_TRIM_BAND_MIN, ORBIT_TRIM_BAND_MAX, ORBIT_TRIM_RATE, ORBIT_HOLD_RANGE, DEEP_SPACE_ASSIST_FADE,
 } from './config.ts'
@@ -327,7 +327,7 @@ export function createGame(options: CreateOptions = {}): Game {
     atLander: true,
     scrapeTimer: 0,
     planetId: options.planetId ?? 0,
-    player: { lat: 0, lon: 0, h: 0, vH: 0, vN: 0, vE: 0, facing: 0, hopCooldown: 0 },
+    player: { lat: 0, lon: 0, h: 0, vH: 0, vN: 0, vE: 0, facing: 0, lookPitch: 0, hopCooldown: 0 },
     ship: {
       x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
       q: { ...IDENTITY_Q }, speed: 0, thrust: 0, boosting: false,
@@ -628,6 +628,7 @@ export function placePlayerAtLander(game: Game) {
   player.vE = 0
   player.hopCooldown = 0
   player.facing = 0
+  player.lookPitch = 0
   game.atLander = true
 }
 
@@ -1065,6 +1066,10 @@ function updateSurface(game: Game, dt: number, input: Input) {
   // chase camera swings around behind whatever he is facing
   const turn = clamp(input.turn ?? 0, -1, 1)
   if (turn !== 0) player.facing = wrapAngle(player.facing + turn * SURFACE_TURN_RATE * dt)
+  // and where the pointer sits on the screen tips the camera over his shoulder,
+  // smoothed rather than set so a cursor crossing the middle does not snap the
+  // horizon about
+  player.lookPitch += (clamp(input.pitch ?? 0, -1, 1) - player.lookPitch) * Math.min(1, SURFACE_PITCH_RATE * dt)
 
   player.lat = clamp(player.lat + (player.vN * dt) / surfaceR, -POLE_CLAMP, POLE_CLAMP)
   const cosLat = Math.max(0.3, Math.cos(player.lat))

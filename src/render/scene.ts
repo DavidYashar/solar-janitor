@@ -15,7 +15,8 @@ import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
 import { buildShip } from './ship.ts'
 import {
-  canvasTexture, clampValue, createSurfaceJob, dir, glowTexture, makeRnd, riverFlow, surfacePoint, windRotors,
+  canvasTexture, clampValue, createSurfaceJob, dir, discTexture, glowTexture, makeRnd, riverFlow,
+  surfacePoint, windRotors,
 } from './surfaces.ts'
 import type { SurfaceBuild, SurfaceJob } from './surfaces.ts'
 
@@ -392,9 +393,20 @@ export function createWorld(container: HTMLElement): World {
    */
   const SURFACE_SKY_RADIUS = 6000
   const SURFACE_SUN_DISTANCE = 4800
-  /** the sprite's size at that distance: the original 130 units at 604 m */
-  const SUN_BASE_SCALE = 1030
+  /** the halo's size at that distance: the original 130 units at 604 m */
+  const SUN_BASE_SCALE = 430
   const SUN_DIRECTION = new THREE.Vector3(240, 520, 160).normalize()
+  /** a cloud deck hanging between the valley floor and the sky dome */
+  const SURFACE_CLOUD_RADIUS = 3400
+  /**
+   * The sun is 0.53 degrees across, and a disc is the whole point: a soft blob is
+   * a light source, but it takes a hard edge to read as the sun. Twice life size
+   * is the smallest that still looks like a disc rather than a speck at the sizes
+   * this camera runs at, and the glare is what carries the brightness anyway.
+   */
+  const SUN_DISC_SCALE = 2 * SURFACE_SUN_DISTANCE * Math.tan(0.00925)
+  /** how far the pointer can tip the chase camera, in radians either way */
+  const SURFACE_PITCH_MAX = 1.15
   surfaceScene.fog = new THREE.Fog(0xbfe4ff, 170, 560)
   const surfaceHemisphere = new THREE.HemisphereLight(0xcfe9ff, 0x2f5a3a, 1.2)
   surfaceScene.add(surfaceHemisphere)
@@ -451,6 +463,29 @@ export function createWorld(container: HTMLElement): World {
   sunSprite.position.copy(SUN_DIRECTION).multiplyScalar(SURFACE_SUN_DISTANCE)
   sunSprite.scale.setScalar(SUN_BASE_SCALE)
   surfaceScene.add(sunSprite)
+  // and the disc inside that glare, at an angle you could actually measure
+  const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: discTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+  }))
+  sunDisc.position.copy(SUN_DIRECTION).multiplyScalar(SURFACE_SUN_DISTANCE)
+  sunDisc.scale.setScalar(SUN_DISC_SCALE)
+  surfaceScene.add(sunDisc)
+
+  /**
+   * A cloud deck, for the worlds that have air. The cloud map is equirectangular,
+   * so it wraps a shell as happily as it wraps the globe - and seen from inside,
+   * that shell is a sky rather than a planet, which is the point: this is the one
+   * place in the game where looking up should show you something.
+   */
+  const clouds = new THREE.Mesh(
+    new THREE.SphereGeometry(SURFACE_CLOUD_RADIUS, 32, 16),
+    new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.9, side: THREE.BackSide,
+      depthWrite: false, fog: false, alphaMap: loadMap('/textures/earth_clouds.webp', 2, false).texture,
+    }),
+  )
+  clouds.visible = false
+  surfaceScene.add(clouds)
 
   // the LOD streamer: one queue, one per-frame budget, every world in the game
   const lod = createLodStreamer()
@@ -487,6 +522,9 @@ export function createWorld(container: HTMLElement): World {
     sky.material.needsUpdate = true
     sunSprite.material.color.setHex(look.sunTint)
     sunSprite.scale.setScalar(SUN_BASE_SCALE * (look.sunScale / 130))
+    sunDisc.material.color.setHex(look.sunTint)
+    // only the worlds with air have anything to put in the sky
+    clouds.visible = planet.theme === 'earth'
     surfaceHemisphere.color.setHex(look.skyLight)
     surfaceHemisphere.groundColor.setHex(look.groundLight)
     surfaceKey.color.setHex(look.keyLight)
@@ -1145,6 +1183,8 @@ export function createWorld(container: HTMLElement): World {
     if (carriedMesh.instanceColor) carriedMesh.instanceColor.needsUpdate = true
 
     sky.rotation.y += dt * 0.004
+    // and the deck drifts the other way, so the sky is not one rigid thing
+    clouds.rotation.y -= dt * 0.011
     // the river runs: scroll the ripple downstream, so standing water between
     // two banks becomes a river that is going somewhere
     const flow = riverFlow()
@@ -1291,8 +1331,18 @@ export function createWorld(container: HTMLElement): World {
       const playerPosition = surfacePoint(
         player.lat, player.lon, radiusAt(game.planetId, player.lat, player.lon) + player.h, camLook,
       )
-      camWish.copy(playerPosition).addScaledVector(up, 4.3).addScaledVector(forward, -8.8)
-      camUpWish.copy(playerPosition).addScaledVector(up, 1.6).addScaledVector(forward, 2.4)
+      // The pointer's height tips the view by raising the point the camera looks
+      // at, and drawing the camera back as it goes. Swinging the camera down
+      // instead would only drive it into the ground behind him, and without the
+      // draw-back a look-up becomes a first-person view of the sky with the
+      // janitor gone from his own game.
+      const tip = Math.sin(clampValue(player.lookPitch, -1, 1) * SURFACE_PITCH_MAX)
+      camWish.copy(playerPosition)
+        .addScaledVector(up, 4.3 + tip * 2)
+        .addScaledVector(forward, -8.8 - Math.max(0, tip) * 4)
+      camUpWish.copy(playerPosition)
+        .addScaledVector(up, 1.6 + tip * 14)
+        .addScaledVector(forward, 2.4)
       cameraUp.copy(up)
       if (firstFrame) {
         cameraPosition.copy(camWish)

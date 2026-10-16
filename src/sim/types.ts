@@ -44,6 +44,8 @@ export interface Player {
   vN: number
   vE: number
   facing: number
+  /** -1..1: how far the chase camera is tipped up over his shoulder */
+  lookPitch: number
   hopCooldown: number
 }
 

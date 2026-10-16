@@ -86,6 +86,24 @@ export function canvasTexture(
   return finishTexture(build.canvas)
 }
 
+/**
+ * The sun, as a disc rather than a smudge: solid all the way to a hard edge, with
+ * only enough taper that the rim does not crawl as the camera moves. The glare
+ * around it is a separate sprite - a soft blob alone reads as a light source, but
+ * it takes a hard edge to read as the sun.
+ */
+export function discTexture(): THREE.CanvasTexture {
+  return canvasTexture(128, 128, ctx => {
+    const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)')
+    gradient.addColorStop(0.88, 'rgba(255, 255, 255, 1)')
+    gradient.addColorStop(0.96, 'rgba(255, 249, 234, 0.55)')
+    gradient.addColorStop(1, 'rgba(255, 240, 214, 0)')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, 128, 128)
+  })
+}
+
 export function glowTexture(inner: string, outer: string): THREE.CanvasTexture {
   return canvasTexture(256, 256, ctx => {
     const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128)
