@@ -45,8 +45,10 @@ credits on gear. Clean all three worlds to restore the system.
   weather and does not telegraph: fly close and the hull heats, keep flying close
   and it burns through, and there is no rescue for that one — the run is over and
   the next shift starts from the beginning.
-  (every ~45 s: 35 % faster O₂ drain, thick haze, a sideways shove). Earth's ground
-  stays safe; its danger is the debris in orbit.
+  (every ~45 s: 35 % faster O₂ drain, thick haze, and a wind that picks a new
+  bearing every storm and carries you downwind with it — you can still walk
+  against it, just not for free). Earth's ground stays safe; its danger is the
+  debris in orbit.
 - **Full-freedom flight:** pitch + yaw + roll about the ship's own axes, thrust
   along the facing vector, strongly damped arcade feel with a gentle auto-bank.
   Steered by pointing with the mouse; the arrow keys thrust and side-step.
@@ -322,7 +324,7 @@ whole game testable headlessly.
 
 Performance budget (plan §9): one 2048² shadow map, and it exists only on a
 surface — the space scene draws none; pixel ratio capped at 1.75 (1.0 in
-low-quality mode), 300 particles and 320 dust motes per scene, both starfields
+low-quality mode), 300 particles and 1 200 dust motes per scene, both starfields
 are `Points` clouds (2 200 + 700, allocation-free), and every repeated object —
 junk, beacons, relic beams, cargo, trees, boulders, rocks — is an `InstancedMesh`.
 
@@ -818,6 +820,28 @@ itself — thrown in a **cone**, not a ball. The generic burst is a ball, which 
 for a hop or a landing and wrong for a crater: a hole throws its contents up and out,
 and a sphere of debris reads as something bursting in mid-air. It fires twice, heavy
 chips fast with the ground's own pull on them and fine dust slow with almost none.
+
+**A dust storm blows on one bearing, and it is the same bearing it shoves you on.**
+The air used to be 320 tumbling tetrahedra drifting a fixed `+east`, which made two
+things wrong at once: a tumbling tetrahedron shows a flat triangular silhouette, so a
+frame of them read as *shapes* rather than as grit, and an air that always blew east was
+not a wind. It is three solid classes now — a dodecahedral clod, a box grain and a
+six-sided flake, none of them triangular from any angle — tumbling on their own axes,
+and **every piece is small**: at three metres, a piece only twenty centimetres across
+already covers as much screen as a fist held at arm's length, and the old 0.5-radius
+tetrahedra were boulder-sized by that measure, which is what made them read as rocks
+flying rather than dust. A storm's thickness comes from the count (1 200) and not from
+the size of a piece, and the size distribution is squared so most of the air is fine
+grit with the chunky pieces as the tail. The box they live in is ±22 m by 12 m rather
+than ±38 m by 16 m: the count is fixed, so the smaller box is simply three and a half
+times the density, and it costs nothing, because a storm's own fog closes to eleven
+metres and nothing at thirty-eight was ever on screen. The whole field is kept in the
+**wind's own frame** — along, up, across — so a single bearing carries every piece and a
+piece that reaches the edge comes back at the far side instead of falling out of the
+box. `stormWind`, a coin-flip `±1` applied to longitude, is now `stormWindAngle`, a full
+bearing re-rolled at the start of every storm and never within 40° of the one before it;
+and it is **the one number both the dust in the air and the shove on the janitor are
+read from**, so what you watch streaming past is what is pushing you.
 
 **The Sun is the one thing out here that is not weather.** Every other hazard is
 telegraphed and survivable — a meteor you dodge, a storm you wait out — but the

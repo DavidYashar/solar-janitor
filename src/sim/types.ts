@@ -98,8 +98,13 @@ export interface HazardState {
   stormWarned: boolean
   /** 0..1 haze strength for the renderer */
   stormIntensity: number
-  /** which way the storm wind shoves the janitor: -1 or +1 */
-  stormWind: number
+  /**
+   * The direction the storm wind blows, as a bearing in the janitor's own frame:
+   * 0 blows due north, +pi/2 due east. Re-rolled at the start of every storm, and the
+   * one number the dust and the shove on the janitor are both read from, so what you
+   * see streaming past is what is pushing you.
+   */
+  stormWindAngle: number
 }
 
 export interface Transition {

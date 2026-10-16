@@ -10,7 +10,7 @@ import {
   RANKS, RECYCLER_REDUCTION, SCANNER_RANGE, SCOOP_RADIUS, SHIP_ACCEL_K, SHIP_BOOST_SPEED,
   SHIP_LEVEL_K, SHIP_PITCH_RATE, SHIP_REVERSE_SPEED, SHIP_ROLL_RATE, SHIP_SPEED, SHIP_YAW_RATE,
   SPRINT_MULTIPLIER, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
-  STORM_WARN_LEAD_BONUS, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
+  STORM_WARN_LEAD_BONUS, STORM_WIND_TURN, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
   THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS, THIRD_ENGINE_BONUS,
   FINAL_SWEEP_FRACTION, FINAL_SWEEP_MULT, STARTING_DELIVERED, SWEEP_STEP,
   MUSIC_RIVER_RANGE, MUSIC_SUN_RADIUS,
@@ -316,7 +316,7 @@ function freshHazards(): HazardState {
     stormTime: 0,
     stormWarned: false,
     stormIntensity: 0,
-    stormWind: 1,
+    stormWindAngle: 0,
   }
 }
 
@@ -750,7 +750,7 @@ export function resetHazards(game: Game) {
   hazards.stormWarned = false
   hazards.stormIntensity = 0
   hazards.stormTimer = hazard === 'storm' ? STORM_PERIOD : Infinity
-  hazards.stormWind = nextRandom(game) < 0.5 ? -1 : 1
+  hazards.stormWindAngle = randomBetween(game, 0, TAU)
 }
 
 export function placePlayerAtLander(game: Game) {
@@ -1326,15 +1326,20 @@ function updateSurface(game: Game, dt: number, input: Input) {
   // horizon about
   player.lookPitch += (clamp(input.pitch ?? 0, -1, 1) - player.lookPitch) * Math.min(1, SURFACE_PITCH_RATE * dt)
 
-  player.lat = clamp(player.lat + (player.vN * dt) / surfaceR, -POLE_CLAMP, POLE_CLAMP)
-  const cosLat = Math.max(0.3, Math.cos(player.lat))
-  player.lon = wrapAngle(player.lon + (player.vE * dt) / (surfaceR * cosLat))
+  // the storm wind is a second velocity, not a nudge: the janitor is carried along the
+  // bearing the storm is blowing on, at STORM_PUSH at full strength, and he can still
+  // walk against it at walking speed. Which way that is comes from `stormWindAngle`,
+  // the same number the dust in the air is drawn from, so the grit streams past him in
+  // the direction it is carrying him.
+  const wind = game.hazards.stormActive && game.hazards.stormIntensity > 0.05
+    ? STORM_PUSH * game.hazards.stormIntensity
+    : 0
+  const windN = Math.cos(game.hazards.stormWindAngle) * wind
+  const windE = Math.sin(game.hazards.stormWindAngle) * wind
 
-  // storm wind shoves the janitor sideways while a dust storm blows
-  if (game.hazards.stormActive && game.hazards.stormIntensity > 0.05) {
-    const push = STORM_PUSH * game.hazards.stormIntensity * game.hazards.stormWind * dt
-    player.lon = wrapAngle(player.lon + push / (surfaceR * cosLat))
-  }
+  player.lat = clamp(player.lat + ((player.vN + windN) * dt) / surfaceR, -POLE_CLAMP, POLE_CLAMP)
+  const cosLat = Math.max(0.3, Math.cos(player.lat))
+  player.lon = wrapAngle(player.lon + ((player.vE + windE) * dt) / (surfaceR * cosLat))
 
   player.hopCooldown = Math.max(0, player.hopCooldown - dt)
   if (input.hop && onGround && player.hopCooldown <= 0) {
@@ -1360,8 +1365,23 @@ function updateSurface(game: Game, dt: number, input: Input) {
 }
 
 /**
+ * A fresh bearing for the storm about to start: uniform over the whole compass, minus
+ * a wedge `STORM_WIND_TURN` wide either side of the previous one, so two storms in a
+ * row never blow the same way. Offsetting by the wedge and drawing over what is left
+ * makes that a guarantee rather than a retry loop, and it costs exactly one random
+ * draw - the same as the coin-flip it replaces, which keeps every seed's sequence of
+ * random numbers intact.
+ */
+function rollStormWind(game: Game): number {
+  const span = TAU - 2 * STORM_WIND_TURN
+  return wrapAngle(
+    game.hazards.stormWindAngle + STORM_WIND_TURN + randomBetween(game, 0, span),
+  )
+}
+
+/**
  * Moon: meteor showers telegraphed 2.5 s ahead (5.5 s with Storm Sense).
- * Mars: dust storms every ~45 s that thicken the air and shove you sideways.
+ * Mars: dust storms every ~45 s that thicken the air and carry you downwind.
  */
 export function updateHazards(game: Game, dt: number) {
   const planet = planetById(game.planetId)
@@ -1431,7 +1451,7 @@ export function updateHazards(game: Game, dt: number) {
         hazards.stormActive = true
         hazards.stormTime = 0
         hazards.stormWarned = false
-        hazards.stormWind = randomBetween(game, -1, 1) < 0 ? -1 : 1
+        hazards.stormWindAngle = rollStormWind(game)
         emitSurface(game, 'storm', 'DUST STORM - OXYGEN DRAINING FASTER', 0, playerPoint(game))
       }
     }

@@ -1028,29 +1028,84 @@ export function createWorld(container: HTMLElement): World {
   const meteorTangent = new THREE.Vector3()
   const meteorPath = new THREE.Vector3()
 
-  // hazard visuals: the Mars dust field, drifting around the janitor
-  const DUST_COUNT = 320
+  // hazard visuals: the Mars dust storm.
+  //
+  // Not sprites, and not the tetrahedra this used to be: a tumbling tetrahedron shows a
+  // flat triangular silhouette, and a frame full of them reads as shapes rather than
+  // grit. Three solid classes instead, none of which is triangular from any angle - a
+  // clod, a grain and a six-sided flake - tumbling on their own axes as the wind carries
+  // them. They are drawn in the wind's own frame (see `updateDustStorm`), so the whole
+  // field streams along one bearing, which is what makes it read as wind rather than as
+  // a swarm.
+  const DUST_COUNT = 1200
+  /**
+   * Half-width of the box the air is kept in, in surface units. A storm's own fog closes
+   * in to eleven metres, so nothing at thirty-eight metres is on screen anyway - and the
+   * count is fixed, so a smaller box is simply a thicker storm. This is the per-frame
+   * budget: every piece is drawn whether it is in the frustum or not.
+   */
+  const DUST_REACH = 22
+  const dustMaterial = new THREE.MeshBasicMaterial({
+    color: 0xd09660, transparent: true, opacity: 0, depthWrite: false,
+  })
+  // Every piece is *small*. Grit blows close past the camera, and at three metres a piece
+  // only twenty centimetres across covers as much screen as a fist held at arm's length -
+  // the 0.5-radius tetrahedra this replaced were the size of a boulder by that measure,
+  // which is what made them read as shapes in the air rather than as dust. A storm's
+  // thickness comes from the count, not from the size of one piece.
+  const DUST_KINDS: { geometry: THREE.BufferGeometry; size: number }[] = [
+    // a clod: twelve pentagons, the chunkiest of the three
+    { geometry: new THREE.DodecahedronGeometry(0.5, 0), size: 0.26 },
+    // a grain
+    { geometry: new THREE.BoxGeometry(0.62, 0.62, 0.62), size: 0.15 },
+    // a flake, prised out as a six-sided prism so that no face reads as a triangle
+    { geometry: new THREE.CylinderGeometry(0.5, 0.42, 0.46, 6), size: 0.19 },
+  ]
+  const DUST_KIND_COUNT = DUST_KINDS.length
+  /** per particle: along the wind, height above the ground, across the wind */
   const dustOffsets = new Float32Array(DUST_COUNT * 3)
+  /** three independent tumble rates, so no two pieces turn alike */
+  const dustSpin = new Float32Array(DUST_COUNT * 3)
   const dustSizes = new Float32Array(DUST_COUNT)
+  /** how far the wind carries this piece, as a multiple of the storm's own drift */
+  const dustSpeed = new Float32Array(DUST_COUNT)
+  /** how flat the piece is - the taller axis is `stretch`, the other is squashed */
+  const dustStretch = new Float32Array(DUST_COUNT)
+  const dustPhase = new Float32Array(DUST_COUNT)
+  const dustClass = new Uint8Array(DUST_COUNT)
+  const dustSlot = new Uint16Array(DUST_COUNT)
+  const dustDrawn = new Uint16Array(DUST_KIND_COUNT)
   {
     const rnd = makeRnd(4242)
     for (let i = 0; i < DUST_COUNT; i++) {
-      dustOffsets[i * 3] = (rnd() * 2 - 1) * 38
-      dustOffsets[i * 3 + 1] = 0.3 + rnd() * 16
-      dustOffsets[i * 3 + 2] = (rnd() * 2 - 1) * 38
-      dustSizes[i] = 0.5 + rnd() * 1.4
+      dustOffsets[i * 3] = (rnd() * 2 - 1) * DUST_REACH
+      // most of the air is fine grit low to the ground; the chunky pieces are the tail
+      dustOffsets[i * 3 + 1] = 0.3 + Math.pow(rnd(), 1.6) * 12
+      dustOffsets[i * 3 + 2] = (rnd() * 2 - 1) * DUST_REACH
+      dustSpin[i * 3] = (rnd() * 2 - 1) * 4.5
+      dustSpin[i * 3 + 1] = (rnd() * 2 - 1) * 3.6
+      dustSpin[i * 3 + 2] = (rnd() * 2 - 1) * 2.4
+      dustSizes[i] = 0.18 + rnd() * rnd() * 0.9
+      dustSpeed[i] = 0.55 + rnd() * 1.15
+      dustStretch[i] = 0.7 + rnd() * 0.8
+      dustPhase[i] = rnd() * TAU
+      // dealt round the classes rather than rolled, so the mix is the same in every
+      // storm and a half-strength one is still a mix of all of them
+      dustClass[i] = i % DUST_KIND_COUNT
+      dustSlot[i] = (i / DUST_KIND_COUNT) | 0
     }
   }
-  const dustMesh = new THREE.InstancedMesh(
-    new THREE.TetrahedronGeometry(0.5, 0),
-    new THREE.MeshBasicMaterial({ color: 0xdba576, transparent: true, opacity: 0, depthWrite: false }),
-    DUST_COUNT,
-  )
-  dustMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
-  dustMesh.frustumCulled = false
-  dustMesh.count = 0
-  dustMesh.visible = false
-  surfaceScene.add(dustMesh)
+  const dustMeshes = DUST_KINDS.map((kind) => {
+    const mesh = new THREE.InstancedMesh(
+      kind.geometry, dustMaterial, Math.ceil(DUST_COUNT / DUST_KIND_COUNT),
+    )
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
+    mesh.frustumCulled = false
+    mesh.count = 0
+    mesh.visible = false
+    surfaceScene.add(mesh)
+    return mesh
+  })
 
   // junk on the ground, plus faint pickup beacons so sweeps stay readable
   const JUNK_CLASSES: JunkClass[] = ['scrap', 'tech', 'hazardous', 'relic']
@@ -1603,14 +1658,17 @@ export function createWorld(container: HTMLElement): World {
     }
   }
 
-  /** Mars hazard: dust that wraps around the janitor, driven by stormIntensity. */
+  /** Mars hazard: dust on the wind, driven by stormIntensity. */
   function updateDustStorm(game: Game, dt: number) {
     const intensity = planetById(game.planetId).theme === 'mars'
       ? clampValue(game.hazards.stormIntensity, 0, 1)
       : 0
     if (intensity < 0.02) {
-      dustMesh.visible = false
-      dustMesh.count = 0
+      for (const mesh of dustMeshes) {
+        if (mesh.count === 0) continue
+        mesh.visible = false
+        mesh.count = 0
+      }
       return
     }
     const surface = surfaceBuild(game.planetId)
@@ -1624,31 +1682,66 @@ export function createWorld(container: HTMLElement): World {
     ).normalize()
     const east = vC.crossVectors(up, north).normalize()
     const base = surface.terrainRadius(player.lat, player.lon)
+
+    // The air is kept in the *wind's* frame, not the compass's: the along-wind
+    // coordinate is the only one that drifts, so a piece that reaches the edge of the
+    // box comes back at the far side instead of falling out of it, and every piece is
+    // travelling the same bearing. The frame is re-read here each frame, so the field
+    // turns with the wind the moment a new storm changes it - which happens while the
+    // intensity is still zero and nothing is on screen.
+    const angle = game.hazards.stormWindAngle
+    const windN = Math.cos(angle)
+    const windE = Math.sin(angle)
+    const sideE = -windN
+    const sideN = windE
+
     const drift = (5 + intensity * 22) * dt
     const count = Math.max(
       1, Math.round(DUST_COUNT * Math.min(1, intensity * 1.6) * (reducedMotion ? 0.5 : 1)),
     )
+    dustDrawn.fill(0)
     for (let i = 0; i < count; i++) {
       const index = i * 3
-      dustOffsets[index] += drift
-      if (dustOffsets[index] > 38) dustOffsets[index] -= 76
-      dustOffsets[index + 2] += drift * 0.4
-      if (dustOffsets[index + 2] > 38) dustOffsets[index + 2] -= 76
-      dustOffsets[index + 1] += Math.sin(elapsed * 0.8 + i) * dt * 1.6
-      if (dustOffsets[index + 1] > 16.3) dustOffsets[index + 1] = 0.3
-      else if (dustOffsets[index + 1] < 0.3) dustOffsets[index + 1] = 16.3
+      dustOffsets[index] += drift * dustSpeed[i]
+      if (dustOffsets[index] > DUST_REACH) dustOffsets[index] -= DUST_REACH * 2
+      // a cross-wind wobble at a different rate per piece, which is the difference
+      // between dust on the wind and a rigid translation of the whole field
+      dustOffsets[index + 2] += Math.sin(elapsed * 0.5 + dustPhase[i]) * dt * 2.4
+      if (dustOffsets[index + 2] > DUST_REACH) dustOffsets[index + 2] -= DUST_REACH * 2
+      else if (dustOffsets[index + 2] < -DUST_REACH) dustOffsets[index + 2] += DUST_REACH * 2
+      dustOffsets[index + 1] += Math.sin(elapsed * 0.8 + dustPhase[i]) * dt * 1.6
+      if (dustOffsets[index + 1] > 12.3) dustOffsets[index + 1] = 0.3
+      else if (dustOffsets[index + 1] < 0.3) dustOffsets[index + 1] = 12.3
+
+      const along = dustOffsets[index]
+      const across = dustOffsets[index + 2]
       dummy.position.copy(up).multiplyScalar(base + dustOffsets[index + 1])
-        .addScaledVector(east, dustOffsets[index])
-        .addScaledVector(north, dustOffsets[index + 2])
-      dummy.rotation.set(elapsed * 3 + i, elapsed * 2.4 + i * 0.6, 0)
-      dummy.scale.setScalar(dustSizes[i])
+        .addScaledVector(east, along * windE + across * sideE)
+        .addScaledVector(north, along * windN + across * sideN)
+      dummy.rotation.set(
+        elapsed * dustSpin[index] + dustPhase[i],
+        elapsed * dustSpin[index + 1] + dustPhase[i] * 0.6,
+        elapsed * dustSpin[index + 2],
+      )
+      const kind = dustClass[i]
+      const size = dustSizes[i] * DUST_KINDS[kind].size
+      dummy.scale.set(size, size * dustStretch[i], size / dustStretch[i])
       dummy.updateMatrix()
-      dustMesh.setMatrixAt(i, dummy.matrix)
+      dustMeshes[kind].setMatrixAt(dustSlot[i], dummy.matrix)
+      dustDrawn[kind]++
     }
-    dustMesh.instanceMatrix.needsUpdate = true
-    dustMesh.count = count
-    dustMesh.visible = true
-    dustMesh.material.opacity = 0.5 * intensity
+    for (let kind = 0; kind < dustMeshes.length; kind++) {
+      const mesh = dustMeshes[kind]
+      if (dustDrawn[kind] === 0) {
+        mesh.visible = false
+        mesh.count = 0
+        continue
+      }
+      mesh.instanceMatrix.needsUpdate = true
+      mesh.count = dustDrawn[kind]
+      mesh.visible = true
+    }
+    dustMaterial.opacity = 0.5 * intensity
   }
 
   function updateCamera(game: Game, dt: number, inSpace: boolean) {

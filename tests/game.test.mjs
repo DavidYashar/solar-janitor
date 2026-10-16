@@ -5,7 +5,7 @@ import {
   HARD_LAND_DAMAGE, HOLD_SLOTS, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_POINTS, METEOR_DAMAGE,
   METEOR_TELEGRAPH_BONUS, MOON_ORBIT, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
   SHIP_BOOST_SPEED, SHIP_SPEED, SPACE_SCALE, STARTING_DELIVERED, STORM_DRAIN_MULT, STORM_DURATION,
-  STORM_PERIOD, STORM_PUSH, FINAL_SWEEP_MULT,
+  STORM_PERIOD, STORM_PUSH, STORM_WIND_TURN, FINAL_SWEEP_MULT,
   SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, HEALTH_MAX, SURFACE_RADIUS, TRANSITION_TIME,
   SUN_BURN_RADIUS, SUN_DAMAGE_HEAT, SUN_HEAT_RADIUS, SUN_WARN_HEAT, SWEEP_STEP,
   SHIP_REVERSE_SPEED, SHIP_STRAFE_SPEED, THIRD_ENGINE_BONUS, MUSIC_RIVER_RANGE, MUSIC_SUN_RADIUS,
@@ -86,6 +86,19 @@ function park(game, lat, lon) {
   game.player.lon = lon
   game.player.h = 0
   game.player.vH = 0
+}
+
+/**
+ * How far one surface position is from another, as a north/east pair of distances in
+ * surface units. The east leg is scaled by the latitude the walk crossed at, because a
+ * degree of longitude is a shorter step up here than a degree of latitude.
+ */
+function surfaceOffset(from, to) {
+  const midLat = (from.lat + to.lat) / 2
+  return {
+    north: (to.lat - from.lat) * SURFACE_RADIUS,
+    east: wrapAngle(to.lon - from.lon) * Math.cos(midLat) * SURFACE_RADIUS,
+  }
 }
 
 function standOnDock(game) {
@@ -514,25 +527,37 @@ test('hazards stay silent on Earth and in orbit', () => {
   assert.equal(game.events.filter(event => event.kind === 'meteor').length, 0)
 })
 
-test('Mars: dust storms start on a timer, drain 35% more oxygen and shove you sideways', () => {
+test('Mars: dust storms start on a timer, drain 35% more oxygen and carry you downwind', () => {
   const game = grounded(55, 2)
-  park(game, 0.6, -0.5)
+  // well clear of the pad, because the wind is about to move him and a storm that
+  // carried him onto the ring would refill his oxygen and hide the drain
+  park(game, 0.05, -0.5)
   assert.equal(game.hazards.stormTimer, STORM_PERIOD)
   game.hazards.stormTimer = 0.5
   advance(game, 1)
   assert.ok(game.hazards.stormActive, 'the storm arrived')
   assert.ok(game.events.some(event => event.kind === 'storm' || event.kind === 'hint'))
 
+  // let the haze reach full strength, so what is measured is the storm at its worst
+  advance(game, 1.5)
+  assert.ok(game.hazards.stormIntensity > 0.9, 'haze reaches full strength')
+
   // drain rate: +35% while the storm blows
   game.oxygen = OXYGEN_MAX
-  const longitude = game.player.lon
+  const from = { lat: game.player.lat, lon: game.player.lon }
   advance(game, 5)
   const drained = OXYGEN_MAX - game.oxygen
   assert.ok(Math.abs(drained - OXYGEN_DRAIN * STORM_DRAIN_MULT * 5) < 0.2,
     `storm drain was ${drained.toFixed(2)}`)
-  assert.ok(Math.abs(game.player.lon - longitude) > STORM_PUSH * 2 / SURFACE_RADIUS,
-    'the wind pushed the janitor downwind')
-  assert.ok(game.hazards.stormIntensity > 0.9, 'haze reaches full strength')
+
+  // the wind carries him along the bearing it is blowing on, and not off to one side
+  const moved = surfaceOffset(from, game.player)
+  const carried = Math.hypot(moved.north, moved.east)
+  assert.ok(carried > STORM_PUSH * 4.5, `the storm carried him ${carried.toFixed(2)} u`)
+  const bearing = Math.atan2(moved.east, moved.north)
+  assert.ok(Math.abs(wrapAngle(bearing - game.hazards.stormWindAngle)) < 0.05,
+    `he was carried on ${bearing.toFixed(3)} but the wind blows on `
+    + `${game.hazards.stormWindAngle.toFixed(3)}`)
 
   // and it blows over
   game.hazards.stormTime = STORM_DURATION - 0.2
@@ -541,6 +566,29 @@ test('Mars: dust storms start on a timer, drain 35% more oxygen and shove you si
   assert.ok(game.hazards.stormTimer > STORM_PERIOD - 1, 'the next storm is already scheduled')
   advance(game, 3)
   assert.ok(game.hazards.stormIntensity < 0.1, 'haze clears')
+})
+
+test('Mars: no two storms in a row blow the same way', () => {
+  const game = grounded(91, 2)
+  park(game, 0.05, -0.5)
+  const bearings = []
+  for (let storm = 0; storm < 14; storm++) {
+    game.hazards.stormTimer = 0.1
+    advanceUntil(game, state => state.hazards.stormActive, 1)
+    assert.ok(game.hazards.stormActive, `storm ${storm} arrived`)
+    bearings.push(game.hazards.stormWindAngle)
+    // blow this one over and let the air clear, so the next roll is a fresh one
+    game.hazards.stormTime = STORM_DURATION
+    advance(game, 0.4)
+    advance(game, 2)
+  }
+  for (let i = 1; i < bearings.length; i++) {
+    const turn = Math.abs(wrapAngle(bearings[i] - bearings[i - 1]))
+    assert.ok(turn >= STORM_WIND_TURN - 1e-6,
+      `storm ${i} turned only ${turn.toFixed(3)} rad from the one before it`)
+  }
+  // and it is a bearing, not a coin flip: the storms are not all one of two directions
+  assert.ok(new Set(bearings.map(angle => angle.toFixed(1))).size > 6, 'the bearings vary')
 })
 
 test('Hazard Weave softens the blow of a direct meteor hit', () => {

@@ -343,8 +343,15 @@ export const METEOR_RANGE = 20
 export const STORM_PERIOD = 45
 export const STORM_DURATION = 14
 export const STORM_DRAIN_MULT = 1.35
-/** sideways drift the storm wind puts on the janitor, surface units per second */
+/** how fast the storm wind carries the janitor downwind, surface units per second */
 export const STORM_PUSH = 3.2
+/**
+ * How far a new storm's wind must be turned from the one before it, in radians.
+ * Every storm picks a fresh bearing off the whole compass; this is the wedge around
+ * the previous one that is off limits, so "a different direction each time" is a
+ * promise rather than a tendency.
+ */
+export const STORM_WIND_TURN = 0.7
 /** warning lead time before a storm hits; Storm Sense triples it */
 export const STORM_WARN_LEAD = 4
 export const STORM_WARN_LEAD_BONUS = 8
