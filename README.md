@@ -30,7 +30,8 @@ credits on gear. Clean all three worlds to restore the system.
   same concrete launch apron to come down on: Earth (green hills, trees, shores),
   the Moon (a surveyed crater field, a cut trench, a rover's route, 0.35 g floaty
   hops) and Mars (a crater field inside a ring of peaks, half-buried probes,
-  0.45 g).
+  0.45 g). The janitor wears his helmet on the worlds with no air and a cap on the
+  one with, and his legs stride as he walks.
 - **Hazards, all telegraphed:** Moon meteor showers (a shadow circle tightens for
   2.5 s, then the rock lands — being mid-hop clears you) and Mars dust storms
   (every ~45 s: 35 % faster O₂ drain, thick haze, a sideways shove). Earth's ground
@@ -119,7 +120,7 @@ real browser is still outstanding** — see the box below for the exact steps.
 quaternion flight maths, upgrade effects, ranks, determinism, a headless full
 three-world run, and the LOD scheduler — hysteresis, warm-ahead ordering, the
 frame budget, plus the renderer's budget loop driven with a fake scene graph),
-`tsc --noEmit` clean and the production build clean (~681 kB JS / 189 kB
+`tsc --noEmit` clean and the production build clean (~686 kB JS / 190 kB
 gzipped, plus 13 kB CSS and 397 kB of Earth maps — well inside the payload
 budget, and *smaller at boot* than before: the space globes and the three
 surfaces are no longer generated during startup). Stack: Vite, strict
@@ -489,6 +490,34 @@ on the one bearing with nothing parked on it — there is no collision in this g
 and a fence the janitor crosses every time he leaves is worse than a fence with a
 way through. Rubble and rock now keep off the concrete too, on every world: the
 apron is the one place the last crew clearly swept.
+
+**The janitor is a skeleton now, because a walk needs somewhere to hinge.** He
+used to be a pile of solids at fixed offsets, which meant the only thing that
+could move was all of him; his hip, knee, shoulder and torso are groups now, so
+his legs stride, his arms counter-swing and his body carries the weight with a
+bob on every step and a lean that grows with speed. The stride is wound off
+*distance travelled* rather than off time — a rate-in-seconds walk is fine at four
+metres a second and has him skating at seven, which is the sprint — and it eases
+in and out through a gait value, because a figure that snaps from a full stride to
+standing still is worse than one that never walked at all. Off the ground his legs
+tuck instead.
+
+The detail is real but the draw calls are not. A figure with a chest plate, belt
+and pouches, shoulder straps, a pack with tanks, knee pads, gloves and a boot with
+a sole and a toe cap is thirty-odd small solids, and thirty-odd solids would be
+thirty-odd draw calls and as many again into the shadow pass, for something two
+metres tall. So each limb's pieces are baked into one buffer per colour before they
+reach the scene: geometry copied, placed and concatenated. Only position and normal
+survive the bake, because none of these materials has a map and there is nothing for
+a UV to do. What was 13 meshes and two draw calls' worth of shading is now a rig
+that costs fourteen more calls than the old figure did.
+
+**What he wears depends on where he is.** Earth has an atmosphere, so on Earth he
+is a man in a jumpsuit with a cap on; the Moon and Mars have none, so there the cap
+is a helmet and the shell is the only thing between him and nothing. The visor does
+not cast a shadow — it is a third opaque, and a shell of glass would drop a solid
+black ball over his head — so for once the thing you would most want to be right is
+also the thing that must stay out of the shadow map.
 
 ### How to check the streaming in a browser (M3)
 

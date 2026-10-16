@@ -13,6 +13,7 @@ import { createSpaceBody, loadMap, makeLabel, whenReady } from './bodies.ts'
 import type { SpaceBody } from './bodies.ts'
 import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
+import { buildJanitor, poseJanitor } from './janitor.ts'
 import { buildShip } from './ship.ts'
 import {
   canvasTexture, clampValue, createSurfaceJob, dir, discTexture, flareTexture, glowTexture, lunarEarthTexture,
@@ -713,6 +714,10 @@ export function createWorld(container: HTMLElement): World {
     clouds.visible = planet.theme === 'earth'
     // and the Moon is the one place you can see home from
     earthInSky.visible = planet.theme === 'moon'
+    // he only wears the helmet where there is nothing to breathe: on Earth the
+    // cap is the hat he actually wears, and the shell is strapped to the lander
+    janitor.helmet.visible = planet.theme !== 'earth'
+    janitor.cap.visible = planet.theme === 'earth'
     surfaceHemisphere.color.setHex(look.skyLight)
     surfaceHemisphere.groundColor.setHex(look.groundLight)
     surfaceKey.color.setHex(look.keyLight)
@@ -1038,53 +1043,8 @@ export function createWorld(container: HTMLElement): World {
   // the janitor
   const playerGroup = new THREE.Group()
   surfaceScene.add(playerGroup)
-  {
-    const suit = new THREE.MeshStandardMaterial({ color: 0xf2913c, roughness: 0.65, flatShading: true })
-    const glove = new THREE.MeshStandardMaterial({ color: 0xf7d64c, roughness: 0.6, flatShading: true })
-    const dark = new THREE.MeshStandardMaterial({ color: 0x3c4456, roughness: 0.7, flatShading: true })
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.44, 0.55, 4, 10), suit)
-    torso.position.y = 1.15
-    playerGroup.add(torso)
-    const backpack = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.92, 0.46), dark)
-    backpack.position.set(0, 1.25, -0.42)
-    playerGroup.add(backpack)
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), suit)
-    head.position.y = 1.94
-    playerGroup.add(head)
-    const dome = new THREE.Mesh(
-      new THREE.SphereGeometry(0.44, 16, 12),
-      new THREE.MeshStandardMaterial({
-        color: 0xcdefff, transparent: true, opacity: 0.32, roughness: 0.1, metalness: 0.1, flatShading: true,
-      }),
-    )
-    dome.position.y = 1.98
-    playerGroup.add(dome)
-    for (const side of [-1, 1]) {
-      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.5, 3, 6), suit)
-      arm.position.set(side * 0.56, 1.16, 0.06)
-      arm.rotation.z = side * 0.22
-      playerGroup.add(arm)
-      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.19, 8, 6), glove)
-      hand.position.set(side * 0.68, 0.76, 0.12)
-      playerGroup.add(hand)
-      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.17, 0.5, 3, 6), dark)
-      leg.position.set(side * 0.24, 0.42, 0)
-      playerGroup.add(leg)
-      const boot = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.46), glove)
-      boot.position.set(side * 0.24, 0.1, 0.06)
-      playerGroup.add(boot)
-    }
-    const mopStick = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.7, 6), glove)
-    mopStick.position.set(0.34, 1.5, -0.62)
-    mopStick.rotation.set(0.32, 0, -0.22)
-    playerGroup.add(mopStick)
-    const mopHead = new THREE.Mesh(
-      new THREE.BoxGeometry(0.5, 0.22, 0.3),
-      new THREE.MeshStandardMaterial({ color: 0xdfe8f2, roughness: 0.9, flatShading: true }),
-    )
-    mopHead.position.set(0.44, 0.68, -0.8)
-    playerGroup.add(mopHead)
-  }
+  const janitor = buildJanitor()
+  playerGroup.add(janitor.group)
   const carriedMesh = new THREE.InstancedMesh(
     new THREE.BoxGeometry(0.34, 0.34, 0.34),
     new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.7 }),
@@ -1097,14 +1057,11 @@ export function createWorld(container: HTMLElement): World {
    * The janitor casts, and he is the one thing out here that moves, so his shadow
    * is what proves the light in the sky is the light on the ground. The visor
    * does not cast: it is a third opaque, and a shell of glass would drop a solid
-   * black ball over his head.
+   * black ball over his head. (His own parts are marked in the rig; this is for
+   * the cargo he is carrying.)
    */
-  playerGroup.traverse(object => {
-    const mesh = object as THREE.Mesh
-    if (!mesh.isMesh) return
-    mesh.receiveShadow = true
-    mesh.castShadow = !(mesh.material as THREE.Material).transparent
-  })
+  carriedMesh.receiveShadow = true
+  carriedMesh.castShadow = true
 
   const scoopRing = new THREE.Mesh(
     new THREE.TorusGeometry(1, 0.05, 6, 48),
@@ -1263,6 +1220,7 @@ export function createWorld(container: HTMLElement): World {
     playerGroup.position.copy(up).multiplyScalar(playerRadius)
     playerGroup.quaternion.setFromRotationMatrix(basisFor(up, forward, vE))
     playerGroup.visible = game.transition?.kind !== 'takeoff'
+    poseJanitor(janitor, Math.hypot(player.vN, player.vE), player.h > 0.05, dt, elapsed)
     if (player.h > 0.05) {
       playerGroup.rotateX(-Math.min(0.45, player.h * 0.12))
     }
