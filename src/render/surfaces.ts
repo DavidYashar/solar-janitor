@@ -428,8 +428,11 @@ function* paintSoil(planet: PlanetDef): Generator<void, SoilMaps, void> {
   // bare soil, and the same grey on the relief canvas as its resting level. The
   // map is a detail layer rather than the colour: the planet's own palette is
   // multiplied over it, so the soil has to sit near white or the ground ends up
-  // the product of two dark colours
-  ctx.fillStyle = '#c9b49c'
+  // the product of two dark colours. It is also the last thing standing between the
+  // palette and the screen, so it is near-neutral rather than the warm tan it was:
+  // a tan filter over a red plain warms it straight back toward the orange the
+  // photographs say Mars is not.
+  ctx.fillStyle = '#cbbfb2'
   ctx.fillRect(0, 0, size, size)
   depth.fillStyle = '#808080'
   depth.fillRect(0, 0, size, size)
@@ -686,12 +689,12 @@ const MARS_BANDS = [0x763e1d, 0x9b6337, 0xbc814e, 0xdda368].map((hex) => new THR
 
 /**
  * The climb the bands divide, in the design metres the terrain colour is read in:
- * about where the ring's skirt leaves the floor, up to its highest crest. Those are
- * the ends of the palette ramp, which used to saturate at 7 - see the comment where
- * they are used.
+ * the top of the floor's own saucer, up to the ring's highest crest. The floor ramp
+ * ends where this begins, so sand hands over to rock at the ring's foot rather than
+ * fading out somewhere up the wall.
  */
-const STRATA_LOW = 9
-const STRATA_HIGH = 46
+const STRATA_LOW = 11
+const STRATA_HIGH = 40
 const strataScratch = new THREE.Color()
 
 /**
@@ -824,23 +827,27 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
           (h - 8) / 34 + (valueNoise(lon * 26, lat * 26, seed ^ 0x7f3a91) - 0.5) * 0.5, 0, 1,
         )
       } else {
-        const t = clampValue((h + 2.5) / 10, 0, 1)
+        // the plain, the reference's own dark-to-lit brick red. The ramp spans the
+        // floor's real relief: the saucer lifts the outer floor to about fourteen
+        // design metres, so the old divisor of ten - which put the floor's own swell
+        // at the top stop - painted most of what you can see one flat colour
+        const t = clampValue((h + 2.5) / 13, 0, 1)
         color.copy(low).lerp(high, t)
         // steep faces read as rock whatever the height
         color.lerp(rock, slope * 0.5)
         /**
-         * The ring is layered rock - the owner's `mars hills 3`, five bands from
-         * value 23% to 87% - and here that is a *colour* fact rather than a shape one.
+         * Above the floor it is the ring, and the ring is layered rock - the owner's
+         * `mars hills 3`, five bands from value 23% to 87% - which here is a *colour*
+         * fact rather than a shape one.
          *
-         * It used to fade toward `rock` and then simply stop: the height ramp is
-         * fitted to the floor, whose whole relief is about five metres, and it
-         * saturates at h = 7 while the ring climbs to 48. Everything above that was
-         * one flat tone, which is why a sixty-metre wall read as a smooth orange
-         * cone. Cutting the shelves into the geometry was tried first and measured
-         * instead (`.tools/mars-strata.mjs`): the grid is 2.6 m, so a shelf is two
-         * vertices wide and the skyline comes back as a picket fence of spikes.
+         * Cutting the shelves into the geometry was tried first and measured
+         * (`.tools/mars-strata.mjs`): the grid is 2.6 m, so a shelf is two vertices
+         * wide and the skyline comes back as a picket fence of spikes. So the strata
+         * are painted, in the reference's own four bands.
          *
-         * So the strata are painted, in the reference's own four bands.
+         * The first version of this started at 9 and faded in over five units, which
+         * put the top of the fade almost at the crest - the wall's lower two thirds
+         * were untouched, which is why it looked like nothing had happened.
          */
         if (h > STRATA_LOW) {
           const climb = clampValue((h - STRATA_LOW) / (STRATA_HIGH - STRATA_LOW), 0, 1) * (MARS_BANDS.length - 1)
@@ -850,9 +857,9 @@ function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Gen
           // top fifth of the band rather than spread evenly across it
           const edge = clampValue((within - 0.8) / 0.2, 0, 1)
           strataScratch.copy(MARS_BANDS[band]).lerp(MARS_BANDS[band + 1], edge * edge * (3 - 2 * edge))
-          // and it fades in over the foot of the ring, so the crater field is not
-          // striped by the bands running out across it
-          color.lerp(strataScratch, clampValue((h - STRATA_LOW) / 5, 0, 1) * 0.9)
+          // a short fade at the very foot, because sand meets rock on a line and the
+          // bands should start there rather than halfway up the wall
+          color.lerp(strataScratch, clampValue((h - STRATA_LOW) / 3, 0, 1) * 0.95)
         }
         // the mottling, which lives here rather than in the soil tile: the
         // ground's tone changes over metres, and a tile small enough to be

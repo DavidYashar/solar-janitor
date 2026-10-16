@@ -183,18 +183,24 @@ export const MARS: PlanetDef = {
   /**
    * The ground, measured off the owner's Mars photographs rather than picked by eye.
    *
-   * The plain and the hills are two different colours and the old pair had them the
-   * wrong way round: `mars surface 3` puts the flat dust at hue 5-7 degrees, 56-63%
-   * saturation - a brick red - while `mars hills 3` puts the high ground at hue 22-30
-   * and brightness 46-87%, a much more orange thing. The old floor sat at hue 23 with
-   * 80% saturation, which is the *hills* colour, so the widest area on screen was the
-   * one part of the palette no reference agreed with.
+   * Both stops are the **plain**. `mars surface 3` puts the flat dust at hue 5-7 with
+   * 56-63% saturation - a brick red - and its own dark and lit clusters are the two
+   * ends of that: #7e3c35 in shadow, #a44f48 in sun. That is the whole floor ramp. The
+   * hills are a different family and they are not on this ramp at all; they come from
+   * the strata bands in `surfaces.ts`, which is what the second reference,
+   * `mars hills 3`, is for (hue 22-30, brightness 46-87%).
    *
-   * `rock` is the layered material of the ring, the reference's own shaded band
-   * (#763e1d, hue 22, 75%, 46%) rather than the browner guess it used to be.
+   * The first attempt at this only moved the *stops* and left the ramp where it was,
+   * which is why it changed nothing visible: the ramp saturates at design height 7
+   * while the saucer alone lifts the outer floor to 14, so most of the ground you can
+   * actually see was still painted with the top stop. Both ends are the plain now, and
+   * the ramp spans the floor's real relief.
+   *
+   * `rock` is the layered material of the ring, the reference's own shaded band, and
+   * it is also the first stratum.
    */
-  groundLow: 0x90443d,
-  groundHigh: 0xdda368,
+  groundLow: 0x7e3c35,
+  groundHigh: 0xa44f48,
   accent: 0xf0c08a,
   rock: 0x763e1d,
   // the reference build's dome: one dust colour at the skyline going to a dark
