@@ -130,12 +130,49 @@ export function createWorld(container: HTMLElement): World {
   let followHeight = 4.2
   let firstFrame = true
 
+  /** metres of air the ground camera keeps under it, and probes along the way back */
+  const CAMERA_CLEARANCE = 1.3
+  const CAMERA_PROBES = 6
+
+  /**
+   * Lift a camera point until the ground on the way back to the janitor stops being
+   * in the way.
+   *
+   * The trailing camera sits 8.8 m behind him, so facing downhill it is uphill of
+   * him and buried in the slope - and from inside the hill the near faces are
+   * culled away, which is the flat band of sky across the bottom of the frame.
+   * Probes run along the line rather than only under the camera, because a ridge
+   * between the two hides him just as thoroughly.
+   *
+   * A probe at fraction f of the way back rises by only f of whatever the camera
+   * rises, so each shortfall is divided by its f before it is compared - and the
+   * clearance wanted at a probe scales with f for the same reason. A flat margin
+   * would be wrong: the line starts at his feet, where the ground is a hand's
+   * breadth below it, and demanding a metre and a half there lifts a camera on
+   * level ground for no reason at all.
+   */
+  function clearGround(point: THREE.Vector3, eye: THREE.Vector3, planetId: number): void {
+    const reach = point.length()
+    let lift = 0
+    for (let i = 1; i <= CAMERA_PROBES; i++) {
+      const fraction = i / CAMERA_PROBES
+      vF.lerpVectors(eye, point, fraction)
+      const distance = vF.length()
+      vF.divideScalar(distance)
+      const ground = radiusAt(planetId, Math.asin(clampValue(vF.y, -1, 1)), Math.atan2(vF.z, vF.x))
+      const shortfall = (ground - distance) / fraction + CAMERA_CLEARANCE
+      if (shortfall > lift) lift = shortfall
+    }
+    if (lift > 0) point.setLength(reach + lift)
+  }
+
   // scratch vectors (reused every frame, no per-frame allocation)
   const vA = new THREE.Vector3()
   const vB = new THREE.Vector3()
   const vC = new THREE.Vector3()
   const vD = new THREE.Vector3()
   const vE = new THREE.Vector3()
+  const vF = new THREE.Vector3()
   const shipForward = new THREE.Vector3(0, 0, 1)
   const shipUp = new THREE.Vector3(0, 1, 0)
   const shipOrigin = new THREE.Vector3()
@@ -1264,6 +1301,10 @@ export function createWorld(container: HTMLElement): World {
         cameraPosition.lerp(camWish, 1 - Math.pow(0.0028, dt))
         cameraTarget.lerp(camUpWish, 1 - Math.pow(0.0015, dt))
       }
+      // applied to the wish and then again to the smoothed position: the camera lags
+      // the wish, so clearing only the wish would leave it inside the hill on the way
+      clearGround(camWish, playerPosition, game.planetId)
+      clearGround(cameraPosition, playerPosition, game.planetId)
     }
     firstFrame = false
     camera.position.copy(cameraPosition)
