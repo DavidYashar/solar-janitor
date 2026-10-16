@@ -217,11 +217,20 @@ slider. Each track now carries a level bringing it to about −20 dBFS RMS, capp
 track's own peaks stay under −3 dBFS. That cap is why Earth's bed sits quiet: at 25 dB
 of crest it is by far the most dynamic of the seven, and lifting it to the common level
 clips it. They load lazily — a track is fetched the first time its scene is wanted, so
-the 4.88 MB the game boots in stays 4.88 MB — and the Sun's bed starts where the Sun's
-*gravity* starts rather than at a picked distance, so the warning arrives before the
-heat does and lands on a boundary you can feel. The first version of that constant was
-"twice the heat radius", which is 5 208 u: just outside Earth's orbit at 5 200, so the
-Sun's alarm would have played every time you flew past Earth.
+the 4.88 MB the game boots in stays 4.88 MB.
+
+**The Sun's music *is* the heat.** Its band is the corona radius exactly, so there is no
+distance at which the bed plays while the Sun is still harmless, and none at which the
+hull heats without it — the heat *warning* still arrives later, because heat takes time
+to build, so the bed leads the banner rather than replacing it. Getting there took two
+corrections, and the second is the interesting one. The first version used "twice the
+heat radius", which is 5 208 u: just outside Earth's orbit at 5 200, so the alarm would
+have played every time you flew past Earth. The second used the Sun's sphere of
+influence, 3 080 u, and *still* played while nothing was happening to the ship — and
+the measurement says why. Over 300 straight Earth → Mars lines (Earth orbits at 5 200,
+Mars at 9 000, so the direct path can pass close to the Sun), **95/300 pass inside
+3 080 u but only 63/300 inside the corona**: the 32-trip difference is exactly the false
+alarms. A band wider than the danger is not a warning, it is a coincidence.
 
 **The interface is a console now, not a dashboard.** It had the right type and the
 right palette from the start — uppercase at wide letterspacing, tabular numerals, four

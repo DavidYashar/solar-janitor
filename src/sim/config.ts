@@ -303,14 +303,19 @@ export const SUN_BURN_RADIUS = SUN_RADIUS * 1.5
 /**
  * Music triggers (plan §8).
  *
- * The Sun's bed starts where the Sun's *gravity* takes over, not at a picked distance:
- * crossing into its sphere of influence is a boundary the player can feel, and it is
- * 1.42x the heat radius, so the warning arrives before the damage does. It is also
- * 2120 u inside Earth's orbit, which matters - an earlier version of this constant
- * used "twice the heat radius" and landed at 5208 u, just outside the orbit, so the
- * Sun's alarm played every time you flew past Earth.
+ * The Sun's bed starts **exactly where the corona does**, so the music is the heat:
+ * there is no distance at which it plays while the Sun is still harmless, and none at
+ * which the hull heats without it. The heat *warning* still arrives later still
+ * (`SUN_WARN_HEAT` takes time to build), so the bed is a lead on the banner, not a
+ * substitute for it.
+ *
+ * This started life as the Sun's sphere of influence (3 080 u), which is 1.42x the
+ * corona and therefore played while nothing was happening to the ship: measured over
+ * 300 straight Earth -> Mars lines, 95/300 pass inside 3 080 u against 63/300 inside
+ * the corona, and those 32 extra are the false alarms. Re-measure with
+ * `.tools/sun-chord.mjs` if the orbits ever move.
  */
-export const MUSIC_SUN_RADIUS = GRAVITY_SOI_SUN
+export const MUSIC_SUN_RADIUS = SUN_HEAT_RADIUS
 /** how close to Earth's river the janitor has to be for its own bed to take over */
 export const MUSIC_RIVER_RANGE = 45
 

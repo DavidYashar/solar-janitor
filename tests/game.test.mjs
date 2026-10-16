@@ -1149,8 +1149,9 @@ test('the music bed follows where you are and what is coming for you', () => {
     return musicFor(space)
   }
   assert.equal(nearSun(0.9), 'sun')
-  assert.ok(MUSIC_SUN_RADIUS > SUN_HEAT_RADIUS, 'and outside the corona, so it is a warning')
   assert.equal(nearSun(1.1), 'space')
+  // the band is the corona, so the music cannot play before the hull heats
+  assert.equal(MUSIC_SUN_RADIUS, SUN_HEAT_RADIUS, 'the music is the heat')
 
   const moon = grounded(90, 1)
   assert.equal(musicFor(moon), 'moon')
