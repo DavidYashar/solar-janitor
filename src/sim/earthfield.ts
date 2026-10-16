@@ -363,6 +363,16 @@ export function riverDistance(x: number, z: number): number {
 }
 
 /**
+ * How far the water reaches either side of the meander at a design point: the
+ * ribbon is drawn to 0.85 of the local half-width, and the local half-width
+ * changes along the river, so a fixed keep-out distance is either too small at
+ * the bends or needlessly wide everywhere else.
+ */
+export function riverHalfWidth(x: number, z: number): number {
+  return riverInfo(x, z).width * 0.85
+}
+
+/**
  * The landed height at a design point: the valley floor with the river cut into
  * it. Inner bends get a gravel bar that rises slowly; outer bends get a cut bank
  * that rises fast, which is what a real meander does and what stops the channel

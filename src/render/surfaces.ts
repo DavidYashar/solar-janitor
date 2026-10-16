@@ -3,7 +3,7 @@ import {
   LANDER_RING_RADIUS, LOD_COST_SURFACE, LOD_PROP_SLICE, LOD_TERRAIN_SLICE, SURFACE_SCALE, TAU,
 } from '../sim/config.ts'
 import { cratersFor, landerSite, planetById, terrainHeight } from '../sim/planets.ts'
-import { fromPad, PAD_ORIGIN, riverDistance, riverSamples } from '../sim/earthfield.ts'
+import { fromPad, PAD_ORIGIN, riverDistance, riverHalfWidth, riverSamples } from '../sim/earthfield.ts'
 import { valueNoise } from '../sim/noise.ts'
 import type { PlanetDef } from '../sim/planets.ts'
 
@@ -606,6 +606,63 @@ function terrainGrid(radius: number): { x: number; y: number } {
   }
 }
 
+/**
+ * The ground as the mesh draws it, rather than as the function computes it.
+ *
+ * The terrain is a ball of vertices ten metres apart, so what you stand on is
+ * the flat triangle between three of them, not the curve they were sampled from.
+ * On the valley floor the two agree to within a hand's breadth. But the
+ * landscape carries detail finer than the grid - the high ground especially, and
+ * the river's cut bank - and there the triangle sits as much as two and a half
+ * metres away from the curve it approximates. Anything planted on the curve
+ * therefore hangs in the air above the surface actually drawn.
+ *
+ * This walks the same lattice in the same order with the same split across each
+ * quad, which is the only way to ask the question the renderer answers.
+ */
+function meshGround(surfaceRadius: number, seed: number, planetId: number) {
+  const grid = terrainGrid(surfaceRadius)
+  const across = grid.x + 1
+  const heights = new Map<number, number>()
+  const corner = (ix: number, iy: number): number => {
+    const key = iy * across + ix
+    const held = heights.get(key)
+    if (held !== undefined) return held
+    const theta = (iy / grid.y) * Math.PI
+    // the same vertex the sphere, and so the mesh, actually places: its longitude
+    // runs the other way round from atan2(z, x), which is how the terrain stage
+    // reads it back out
+    const ring = Math.sin(theta)
+    const phi = ((((ix % grid.x) + grid.x) % grid.x) / grid.x) * TAU
+    const height = terrainHeight(
+      Math.asin(clampValue(Math.cos(theta), -1, 1)),
+      Math.atan2(ring * Math.sin(phi), -ring * Math.cos(phi)),
+      seed, planetId,
+    )
+    heights.set(key, height)
+    return height
+  }
+  return (lat: number, lon: number): number => {
+    const row = clampValue(((Math.PI / 2 - lat) / Math.PI) * grid.y, 0, grid.y)
+    let phi = Math.atan2(Math.sin(lon), -Math.cos(lon))
+    if (phi < 0) phi += TAU
+    const column = (phi / TAU) * grid.x
+    const ix = Math.min(grid.x - 1, Math.floor(column))
+    const iy = Math.min(grid.y - 1, Math.floor(row))
+    const fx = column - ix
+    const fy = row - iy
+    const a = corner(ix, iy)
+    const b = corner(ix, iy + 1)
+    const c = corner(ix + 1, iy + 1)
+    const d = corner(ix + 1, iy)
+    // three splits each quad from its north-west corner to its south-east one
+    const height = fx + fy <= 1
+      ? a + (d - a) * fx + (b - a) * fy
+      : c + (b - c) * (1 - fx) + (d - c) * (1 - fy)
+    return surfaceRadius + height
+  }
+}
+
 function* terrainStage(planet: PlanetDef, seed: number, group: THREE.Group): Generator<void, void, void> {
   const surfaceRadius = planet.surfaceRadius
   const grid = terrainGrid(surfaceRadius)
@@ -1068,7 +1125,7 @@ function* earthPropStage(
     const height = radiusOf(point.lat, point.lon) - radius
     const nearRiver = riverDistance(north, east)
     // boulders belong on the slopes and along the water, but not in it
-    if (nearRiver < 20) continue
+    if (nearRiver < riverHalfWidth(north, east) + 4) continue
     if (height < 6 && nearRiver > 30) continue
     const stone = stones[Math.floor(rnd() * stones.length)]
     if (stone.count >= 220) continue
@@ -1120,8 +1177,10 @@ function* earthPropStage(
     for (let i = 0; i < howMany && planted < 33000; i++) {
       const north = bedNorth + (rnd() * 2 - 1) * spread
       const east = bedEast + (rnd() * 2 - 1) * spread
-      // along the water is fine, in it is not
-      if (riverDistance(north, east) < 7) continue
+      // clear of the water, not merely clear of the line it runs along: the
+      // ribbon reaches 0.85 of the local half-width either side, which at a bend
+      // is most of twenty metres
+      if (riverDistance(north, east) < riverHalfWidth(north, east) + 3) continue
       const point = fromPad(planet.landerLat, planet.landerLon, north, east, radius)
       if (padDistance(point.lat, point.lon, landerSite(planet.id)) < 0.02) continue
       const species = kind.species
@@ -1413,7 +1472,7 @@ function* earthSettlementStage(
         const out = 5.6 + row * 1.05
         const bedNorth = north + Math.cos(side) * out - Math.sin(side) * along + (rnd() - 0.5) * 0.22
         const bedEast = east + Math.sin(side) * out + Math.cos(side) * along + (rnd() - 0.5) * 0.22
-        if (riverDistance(bedNorth, bedEast) < 6) continue
+        if (riverDistance(bedNorth, bedEast) < riverHalfWidth(bedNorth, bedEast) + 3) continue
         const kind = gardenKinds[Math.floor(rnd() * gardenKinds.length)]
         if (kind.count >= gardenCapacity) continue
         const species = kind.species
@@ -1582,9 +1641,9 @@ export function createSurfaceJob(planetId: number, seed: number): SurfaceJob {  
       color: planet.groundLow, flatShading: true, roughness: 1, transparent: true, opacity: 1,
     }),
   )
-  const terrainRadius = (lat: number, lon: number) => (
-    planet.surfaceRadius + terrainHeight(lat, lon, seed, planetId)
-  )
+  // everything that stands on this world is placed on the surface the mesh
+  // draws, not the one the height function describes (see meshGround)
+  const terrainRadius = meshGround(planet.surfaceRadius, seed, planetId)
   let lander: LanderParts | null = null
 
   const stages: (() => Generator<void, void, void>)[] = [

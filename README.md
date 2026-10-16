@@ -299,6 +299,23 @@ a gorge in the next. The grass is a canvas tile - blades, clumps, bare earth and
 a few flowers - stamped nine times apiece so it repeats without a seam, with the
 blades repeated as ridges in the normal map.
 
+**Ten metres a segment is the reason props are placed on the mesh, not on the
+curve.** A vertex every ten metres means what you stand on is the flat triangle
+between three of them, and the landscape carries detail finer than that grid -
+the river's cut bank, the shoulders of the peaks - so the triangle can sit two
+and a half metres from the curve it was sampled at. Anything placed on the curve
+therefore hangs in the air above the ground that is actually drawn, which is
+exactly what the meadow did along the water. Props now walk the same lattice in
+the same order with the same split across each quad, which is the only way to ask
+the question the renderer answers. It costs one extra height sample per lattice
+corner and it is cached, so a bed of twenty plants usually shares four of them.
+
+The same ten metres is why the river needs a keep-out measured from the water
+rather than from the line it runs along. The ribbon is drawn to 0.85 of the local
+half-width, and the meander widens at every bend, so a fixed distance is either
+too small where it curves or needlessly wide everywhere else; bushes and flowers
+now stand clear of the actual edge, with three metres to spare.
+
 **Mars is designed, not photographed.** The Moon lands on its painted,
 vertex-coloured ground on purpose — Earth's lander site sits in open ocean on the
 real map, and the Moon's is a smooth plain. Mars gets a surface of its own, laid
