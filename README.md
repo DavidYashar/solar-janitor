@@ -223,6 +223,32 @@ heat does and lands on a boundary you can feel. The first version of that consta
 "twice the heat radius", which is 5 208 u: just outside Earth's orbit at 5 200, so the
 Sun's alarm would have played every time you flew past Earth.
 
+**The interface is a console now, not a dashboard.** It had the right type and the
+right palette from the start — uppercase at wide letterspacing, tabular numerals, four
+disciplined colours — and the wrong *shape*: 20 px panel radii, pill buttons, a huge
+blurred drop shadow, and `backdrop-filter: blur` on two layers. That is the vocabulary
+of a web dashboard: rounded, soft, floating. A console is the opposite, so shape now
+carries meaning.
+
+Panels and slots are square, flat plates with a hairline edge and a lit top border, and
+the overlays wear 2 px corner brackets — **inset 7 px, not at −1 px**, because outside
+the padding box an overflowing child in a scroll container pops both scrollbars (my
+first attempt did exactly that). **The blur is gone from both layers**: the overlay was
+blurring the entire viewport, which is the most expensive thing a phone can be asked to
+composite and it *hid the game behind it*, which is half of what makes that screen feel
+like part of the ship. In its place is a faint 46 px console grid — cheaper, and it
+reads as a screen bolted to a station. **The primary button is the only chamfered shape**
+in the interface, the secondaries are square cyan hairlines, so the hierarchy survives
+greyscale; before, every button was the same rounded pill in different colours.
+
+The change I'd argue matters most is the least decorative: **catalogue states are rails
+now, not opacity.** "Can't afford / owned / locked" used to fade the entire card — which
+dims the very text the player is trying to read, and is the one state cue you cannot
+scan a list by. Each row carries a 2 px rail (amber on hover, green when owned, dim when
+locked) next to plain wording, so every line stays readable. And one deliberate
+exception to all of it: **the compass stays a dial.** Shape language applies to panels,
+not to instruments.
+
 Ranks: SILVER 4 000 · GOLD 9 000 · PLATINUM 12 500 · LEGEND 14 500
 (plan §5.6; measured against the achievable range rather than guessed).
 
