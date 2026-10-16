@@ -1,0 +1,45 @@
+# Render blueprint — Solar System Janitor.
+#
+# The game is a static bundle: no server, no API, no secrets, and no outbound
+# network calls at all. A Static Site serves it from Render's global CDN and
+# never spins down — which matters, because a free Web Service sleeps after 15
+# minutes idle and shows connecting browsers a loading page for about a minute
+# while it wakes.
+#
+# The CSP below is not aspirational. It was verified against a real production
+# build served with these exact headers: the game boots, every texture
+# transfers and audio reaches `canplaythrough`, with zero console errors and
+# zero policy violations. It needs no `unsafe-inline`: index.html loads only
+# external script and CSS, and the source contains no inline style attribute,
+# no `eval`, no worker and no `toDataURL`.
+
+services:
+  - type: web
+    name: solar-system-janitor
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: same-origin
+      # The textures and tracks are not content-hashed, so they cannot be cached
+      # forever — but a week spares returning players re-fetching 12.6 MB of music.
+      - path: /music/*
+        name: Cache-Control
+        value: "public, max-age=604800"
+      - path: /textures/*
+        name: Cache-Control
+        value: "public, max-age=604800"
