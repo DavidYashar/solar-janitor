@@ -120,11 +120,26 @@ export const SUFFOCATION_DAMAGE = 8
 export const HEALTH_MAX = 100
 
 // -------------------------------------------------------------------- ship
-export const SHIP_SPEED = 55 * SPACE_SCALE
-export const SHIP_BOOST_SPEED = 110 * SPACE_SCALE
-export const SHIP_REVERSE_SPEED = 24 * SPACE_SCALE
+/**
+ * The ship's speeds are in ORBITAL units, not map units, and deliberately do NOT
+ * carry SPACE_SCALE.
+ *
+ * They used to, and it broke gravity outright. The world's orbits were scaled with
+ * the map but their rates were not, so the station still laps the Earth in 25 s and
+ * keeps a circular speed of 55 u/s - while a ship scaled by ten flew past it at 550.
+ * Ten times the speed of every orbit is a flyby so fast that the well cannot bend
+ * its course by even a degree, no world can capture it, and yet it was still being
+ * asked to dock with a station doing one tenth of its speed.
+ *
+ * Cruise is now the station's own speed, so "match the ISS" is simply flying, and
+ * the booster - twice orbital - is the one thing that still flies past a world
+ * without being caught by it.
+ */
+export const SHIP_SPEED = 55
+export const SHIP_BOOST_SPEED = 110
+export const SHIP_REVERSE_SPEED = 24
 /** lateral thruster speed for arrow-key strafing */
-export const SHIP_STRAFE_SPEED = 34 * SPACE_SCALE
+export const SHIP_STRAFE_SPEED = 34
 /** exponential velocity blend rate - heavy damping, no drift-fighter float */
 export const SHIP_ACCEL_K = 3.1
 /** angular rates, radians per second, applied in the ship's local frame */
@@ -143,7 +158,9 @@ export const DOCK_ASSIST_TURN = 3.4
 export const BODY_REST_SPEED = 12
 export const BODY_BOUNCE = 1.35
 export const LAND_ZONE_HEIGHT = 16 * SPACE_SCALE
-export const LAND_MAX_SPEED = 30 * SPACE_SCALE
+/** a SPEED, so orbital units like the ship's own - the zone wants you slower than a
+ *  circle, and this is what makes "SLOW DOWN TO LAND" mean something */
+export const LAND_MAX_SPEED = 30
 export const BODY_CLEARANCE = 2 * SPACE_SCALE
 
 // -------------------------------------------------------------- transitions
@@ -193,16 +210,29 @@ export const GRAVITY_SOI = [130 * SPACE_SCALE, 16 * SPACE_SCALE, 70 * SPACE_SCAL
 /** the field fades to nothing across the outer slice of the SOI */
 export const GRAVITY_SOI_FADE = 0.3
 
-/** inside a well the tug flies like a real engine: thrust is an acceleration */
-export const SHIP_WELL_ACCEL = 1700
+/** inside a well the tug flies like a real engine: thrust is an acceleration.
+ *  Scaled with the ship's own speeds rather than left absolute: at 1700 a tug whose
+ *  cruise is 55 reaches it in 30 ms and gravity is 65x too weak to be part of the
+ *  picture, so the throttle reads as a switch. This is the same authority relative
+ *  to gravity it always had - six times the pull at a world's surface. */
+export const SHIP_WELL_ACCEL = 170
 /** ... easing off over the last slice of each speed cap, so the caps still hold */
 export const SHIP_WELL_SOFT = 0.25
 
 /** Idle in a well, the tug trims itself into the local orbit - but only while its
  *  speed relative to that world sits inside this band of the circular speed, so a
- *  fast flyby stays a flyby and a slow arrival becomes a satellite. */
+ *  fast flyby stays a flyby and a slow arrival becomes a satellite.
+ *
+ *  The ceiling has to clear a normal arrival or the whole thing is unreachable, and
+ *  it has to do so at EVERY world - the smaller the world the faster its cruise
+ *  arrival looks, because a circular orbit at the edge of its pull is slower. At
+ *  cruise, on the inner edge where the trim starts working: Earth 2.0x, Mars 3.0x,
+ *  the Moon 3.5x. At boost the same three read 4.1x, 6.0x and 7.0x. So 4.0 is the
+ *  number that catches a cruising arrival everywhere and still lets a sprinting one
+ *  fly past - and flying past is still there for anyone holding the throttle, since
+ *  the autopilot only ever touches a tug that has been let go of. */
 export const ORBIT_TRIM_BAND_MIN = 0.5
-export const ORBIT_TRIM_BAND_MAX = 1.7
+export const ORBIT_TRIM_BAND_MAX = 4.0
 export const ORBIT_TRIM_RATE = 0.6
 /** this close to the hatch the trim matches the station instead of the orbit */
 export const ORBIT_HOLD_RANGE = DOCK_ASSIST_RANGE

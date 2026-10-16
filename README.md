@@ -88,11 +88,22 @@ nearest world that still has junk on it.
 
 **Gravity is real and invisible** (nothing is drawn for it): every world has a
 sphere of influence, and inside it the tug flies like a spacecraft — thrust is an
-acceleration, releasing the keys means coasting, and the world pulls you. Slowing
-down near a world gets you caught in orbit around it (matching the station's
-speed puts you in orbit *with* the station); dive at a world and you keep diving;
-fly past fast and you are only deflected. Deep space is unchanged: out there the
-tug still parks itself when you let go. Full model and numbers: plan §5.2.1.
+acceleration, releasing the keys means coasting, and the world pulls you. Let go
+near a world and its autopilot trims you into the local orbit, which is how arriving
+works; dive at it and you keep diving, because a landing approach must not be
+circularised; hold the throttle and you fly past. Deep space is unchanged: out there
+the tug still parks itself when you let go. Full model and numbers: plan §5.2.1.
+
+**And the tug flies at the speed of the orbits it visits**, which is the only reason
+any of that works. Cruise is 55 u/s — the station's own orbital speed — so "match the
+ISS" is simply flying, and a circular orbit at cruise sits at 220 u, which *is* the
+station's altitude. It was not always: when the system was scaled ten times over, the
+ship's speed was scaled with it and the worlds' orbits were not, so the tug spent
+that whole time crossing the map at ten times the speed of every orbit in it. Gravity
+bent its course by less than a degree, no world could catch it, and no landing zone
+could be slowed into — all while it was expected to dock with a station running at a
+tenth of its speed. Cruise, boost, reverse, strafe and the landing limit were each
+carrying that factor. They are orbital units now.
 
 **The sky is the real one, not a scatter of dots.** It was 2200 points all of one
 size and one colour, and identical dots are exactly what that looks like. It is now
