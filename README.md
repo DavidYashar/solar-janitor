@@ -344,12 +344,30 @@ ground is look painted.
 **The sky has something in it now.** The sun is a disc rather than a smudge. The
 real one is 0.53° across and it is drawn at twice that, because at the sizes this
 camera runs at anything smaller stops reading as a disc and starts reading as a
-speck; the glare around it is a second sprite, since a soft blob alone is a light
-source but it takes a hard edge to read as the sun. Cloud is the Earth's own cloud
-map wrapped on a shell between the valley and the sky dome — the same
-equirectangular map that skins the globe, seen from the inside, where it becomes a
-sky you can look up at. The deck drifts the opposite way to the dome, so the sky
-is not one rigid thing.
+speck. Around it: a wide aureole, a crown of spikes turning against itself, and a
+line of lens ghosts hung on the frame's own centre line.
+
+The aureole is blended, not added, and that is the whole reason it has a colour.
+Added light can only end up white — the sky behind the sun is already near the top
+of its range, so red, green and blue all clip and the sun comes out a colourless
+hole with a bright rim. Letting the aureole *cover* the sky instead is the only way
+it can be the pale yellow you actually see looking up from Earth, so the sprite
+carries an opaque lemon core that thins outward and lets the sky back in. The hue
+lives in one per-world tint: Earth pale yellow, Mars orange, the Moon white,
+because a world with no air has nothing to colour it.
+
+The spikes start just outside the core rather than at the middle of the sprite. A
+fan converging on a point stacks its own alpha there, and the additive pile-up
+whitened the aureole from the inside out; moving the rays' inner stop out by 5% of
+their reach keeps the core gold. Only the sun draws after the cloud deck —
+otherwise the clouds, which are nearer, are drawn over the top of it and take a
+quarter of its light away. Terrain still hides it, because terrain is opaque and
+writes depth and the clouds do not.
+
+Cloud is the Earth's own cloud map wrapped on a shell between the valley and the
+sky dome — the same equirectangular map that skins the globe, seen from the inside,
+where it becomes a sky you can look up at. The deck drifts the opposite way to the
+dome, so the sky is not one rigid thing.
 
 Looking up is the pointer's job, and it was the one control the surface camera
 never had. The pointer's height tips the view by raising the point the camera

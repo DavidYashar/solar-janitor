@@ -104,6 +104,79 @@ export function discTexture(): THREE.CanvasTexture {
   })
 }
 
+/**
+ * The sun's crown: a fan of wedges around the core, every fourth one long, because
+ * an even fan reads as a pinwheel and an uneven one reads as light.
+ *
+ * Drawn rather than photographed. The reference frames for this are stock pictures
+ * with watermarks across them, and a sun does not need one anyway - it is a shape
+ * this simple, and drawing it means it arrives without somebody else's sky behind
+ * it.
+ */
+export function raysTexture(): THREE.CanvasTexture {
+  return canvasTexture(512, 512, (ctx, rnd) => {
+    ctx.translate(256, 256)
+    ctx.globalCompositeOperation = 'lighter'
+    for (let i = 0; i < 112; i++) {
+      const long = i % 4 === 0
+      const angle = (i / 112) * TAU + (rnd() - 0.5) * 0.06
+      const reach = long ? 190 + rnd() * 60 : 55 + rnd() * 145
+      const half = (long ? 0.005 : 0.012) + rnd() * 0.015
+      const gradient = ctx.createRadialGradient(0, 0, reach * 0.05, 0, 0, reach)
+      gradient.addColorStop(0, 'rgba(255, 255, 255, 0)')
+      gradient.addColorStop(0.14, `rgba(255, 255, 255, ${(long ? 0.26 : 0.15).toFixed(3)})`)
+      gradient.addColorStop(0.36, `rgba(255, 254, 250, ${(long ? 0.09 : 0.055).toFixed(3)})`)
+      gradient.addColorStop(1, 'rgba(255, 252, 244, 0)')
+      ctx.fillStyle = gradient
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.lineTo(Math.cos(angle - half) * reach, Math.sin(angle - half) * reach)
+      ctx.lineTo(Math.cos(angle + half) * reach, Math.sin(angle + half) * reach)
+      ctx.closePath()
+      ctx.fill()
+    }
+  })
+}
+
+/**
+ * One ghost of a lens flare: a defocused disc with a brighter rim, which is what
+ * a real one looks like - a flat blob reads as a decal, and the ring is what makes
+ * it read as glass.
+ */
+export function flareTexture(): THREE.CanvasTexture {
+  return canvasTexture(128, 128, ctx => {
+    const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 0.5)')
+    gradient.addColorStop(0.6, 'rgba(255, 255, 255, 0.34)')
+    gradient.addColorStop(0.84, 'rgba(255, 255, 255, 0.68)')
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, 128, 128)
+  })
+}
+
+/**
+ * The light around the sun: bright against the core and falling away slowly, which
+ * is the difference between a sun and a headlight. The glare in a photograph of a
+ * real sun runs a long way out from the disc and gives up gradually, so the stops
+ * are dense near the middle and thin towards the rim.
+ */
+export function sunGlowTexture(): THREE.CanvasTexture {
+  return canvasTexture(256, 256, ctx => {
+    const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128)
+    gradient.addColorStop(0, 'rgba(255, 254, 250, 1)')
+    gradient.addColorStop(0.1, 'rgba(255, 252, 242, 1)')
+    gradient.addColorStop(0.2, 'rgba(255, 250, 234, 0.95)')
+    gradient.addColorStop(0.32, 'rgba(255, 248, 226, 0.78)')
+    gradient.addColorStop(0.48, 'rgba(255, 246, 218, 0.5)')
+    gradient.addColorStop(0.68, 'rgba(255, 244, 212, 0.24)')
+    gradient.addColorStop(0.86, 'rgba(255, 242, 208, 0.07)')
+    gradient.addColorStop(1, 'rgba(255, 240, 204, 0)')
+    ctx.fillStyle = gradient
+    ctx.fillRect(0, 0, 256, 256)
+  })
+}
+
 export function glowTexture(inner: string, outer: string): THREE.CanvasTexture {
   return canvasTexture(256, 256, ctx => {
     const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128)

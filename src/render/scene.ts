@@ -15,8 +15,8 @@ import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
 import { buildShip } from './ship.ts'
 import {
-  canvasTexture, clampValue, createSurfaceJob, dir, discTexture, glowTexture, makeRnd, riverFlow,
-  surfacePoint, windRotors,
+  canvasTexture, clampValue, createSurfaceJob, dir, discTexture, flareTexture, glowTexture, makeRnd,
+  raysTexture, riverFlow, sunGlowTexture, surfacePoint, windRotors,
 } from './surfaces.ts'
 import type { SurfaceBuild, SurfaceJob } from './surfaces.ts'
 
@@ -24,6 +24,8 @@ const MAX_PARTICLES = 300
 const MAX_JUNK = 160
 const Z_AXIS = new THREE.Vector3(0, 0, 1)
 const UP = new THREE.Vector3(0, 1, 0)
+/** white, for pulling the sun disc's tint back towards it while the haze stays gold */
+const FLARE_WHITE = new THREE.Color(0xffffff)
 
 export interface World {
   update(game: Game, dt: number): void
@@ -167,6 +169,56 @@ export function createWorld(container: HTMLElement): World {
     if (lift > 0) point.setLength(reach + lift)
   }
 
+  /**
+   * Is the sun behind a hill? The ghosts are the one screen-space part of this,
+   * and without asking they shine happily through the ground.
+   */
+  function sunOccluded(eye: THREE.Vector3, planetId: number): boolean {
+    vG.copy(SUN_DIRECTION).multiplyScalar(SURFACE_SUN_DISTANCE)
+    // quadratically spaced, so the samples crowd the ground near the camera: a hill
+    // three hundred metres away hides the sun as thoroughly as a mountain at three
+    // thousand, and an even spread would step straight over it
+    for (let i = 1; i <= 16; i++) {
+      const at = (i / 16) * (i / 16)
+      vH.lerpVectors(eye, vG, at)
+      const reach = vH.length()
+      vH.divideScalar(reach)
+      const ground = radiusAt(planetId, Math.asin(clampValue(vH.y, -1, 1)), Math.atan2(vH.z, vH.x))
+      if (ground > reach) return true
+    }
+    return false
+  }
+
+  /**
+   * Hang the lens ghosts for this frame in the camera's own basis, mirrored through
+   * the middle of the frame the way a real one runs: the further from the sun they
+   * sit, the further the other side of centre they land.
+   */
+  function updateFlare(planetId: number, visible: boolean): void {
+    if (!visible || sunOccluded(camera.position, planetId)) {
+      for (const ghost of flareGhosts) ghost.sprite.visible = false
+      return
+    }
+    camera.updateMatrixWorld()
+    vG.copy(SUN_DIRECTION).multiplyScalar(SURFACE_SUN_DISTANCE).project(camera)
+    const off = vG.z > 1 || Math.abs(vG.x) > 2 || Math.abs(vG.y) > 2
+    const reach = Math.tan((camera.fov * Math.PI) / 360) * FLARE_DISTANCE
+    // the camera's own axes, off its quaternion: matrixWorld is a frame stale here
+    vH.set(1, 0, 0).applyQuaternion(camera.quaternion)
+    vE.set(0, 1, 0).applyQuaternion(camera.quaternion)
+    vF.set(0, 0, 1).applyQuaternion(camera.quaternion)
+    for (const { sprite, def } of flareGhosts) {
+      sprite.visible = !off
+      if (off) continue
+      sprite.position.copy(camera.position)
+        .addScaledVector(vF, -FLARE_DISTANCE)                 // the camera looks down its own -Z
+        .addScaledVector(vH, -vG.x * def.at * reach * camera.aspect)
+        .addScaledVector(vE, -vG.y * def.at * reach)
+      const size = def.size * reach * 2
+      sprite.scale.set(size, size, 1)
+    }
+  }
+
   // scratch vectors (reused every frame, no per-frame allocation)
   const vA = new THREE.Vector3()
   const vB = new THREE.Vector3()
@@ -174,6 +226,8 @@ export function createWorld(container: HTMLElement): World {
   const vD = new THREE.Vector3()
   const vE = new THREE.Vector3()
   const vF = new THREE.Vector3()
+  const vG = new THREE.Vector3()
+  const vH = new THREE.Vector3()
   const shipForward = new THREE.Vector3(0, 0, 1)
   const shipUp = new THREE.Vector3(0, 1, 0)
   const shipOrigin = new THREE.Vector3()
@@ -393,8 +447,8 @@ export function createWorld(container: HTMLElement): World {
    */
   const SURFACE_SKY_RADIUS = 6000
   const SURFACE_SUN_DISTANCE = 4800
-  /** the halo's size at that distance: the original 130 units at 604 m */
-  const SUN_BASE_SCALE = 430
+  /** the halo's size at that distance: wide enough that the sun reads as a light in the sky */
+  const SUN_BASE_SCALE = 1500
   const SUN_DIRECTION = new THREE.Vector3(240, 520, 160).normalize()
   /** a cloud deck hanging between the valley floor and the sky dome */
   const SURFACE_CLOUD_RADIUS = 3400
@@ -405,6 +459,10 @@ export function createWorld(container: HTMLElement): World {
    * this camera runs at, and the glare is what carries the brightness anyway.
    */
   const SUN_DISC_SCALE = 2 * SURFACE_SUN_DISTANCE * Math.tan(0.00925)
+  /** how far the sun's spikes reach: far enough to read as a crown, not a sticker */
+  const SUN_RAY_SCALE = 1400
+  /** where the lens ghosts are hung, in metres in front of the camera */
+  const FLARE_DISTANCE = 2
   /** how far the pointer can tip the chase camera, in radians either way */
   const SURFACE_PITCH_MAX = 1.15
   surfaceScene.fog = new THREE.Fog(0xbfe4ff, 170, 560)
@@ -422,7 +480,7 @@ export function createWorld(container: HTMLElement): World {
       // bright overcast daylight, the way the reference photographs are lit:
       // a strong cool-white key, a blue sky fill and very little else
       keyLight: 0xfff6e2, keyIntensity: 2.6, skyLight: 0xcfe4ff, groundLight: 0x4a7a3a,
-      hemiIntensity: 1.35, fill: 0xa8c8ff, fillIntensity: 0.4, sunTint: 0xfffaf0, sunScale: 130,
+      hemiIntensity: 1.35, fill: 0xa8c8ff, fillIntensity: 0.4, sunTint: 0xffeb96, sunScale: 130,
     },
     moon: {
       keyLight: 0xffffff, keyIntensity: 2.7, skyLight: 0x2c3a58, groundLight: 0x14161c,
@@ -457,8 +515,8 @@ export function createWorld(container: HTMLElement): World {
   )
   surfaceScene.add(sky)
   const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowTexture('rgba(255, 246, 214, 1)', 'rgba(255, 214, 140, 0)'),
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+    map: sunGlowTexture(),
+    transparent: true, depthWrite: false, fog: false,
   }))
   sunSprite.position.copy(SUN_DIRECTION).multiplyScalar(SURFACE_SUN_DISTANCE)
   sunSprite.scale.setScalar(SUN_BASE_SCALE)
@@ -470,6 +528,55 @@ export function createWorld(container: HTMLElement): World {
   sunDisc.position.copy(SUN_DIRECTION).multiplyScalar(SURFACE_SUN_DISTANCE)
   sunDisc.scale.setScalar(SUN_DISC_SCALE)
   surfaceScene.add(sunDisc)
+
+  // the crown: two ray layers turning against each other, so the spikes shimmer
+  // rather than sitting there as one flat decal
+  const rayLayers = [1, 0.62].map((shrink, index) => {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: raysTexture(), transparent: true, opacity: index === 0 ? 1 : 0.6,
+      depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+    }))
+    sprite.position.copy(SUN_DIRECTION).multiplyScalar(SURFACE_SUN_DISTANCE)
+    sprite.scale.setScalar(SUN_RAY_SCALE * shrink)
+    surfaceScene.add(sprite)
+    return sprite
+  })
+
+  /**
+   * Nothing but the sun itself draws after the cloud deck. It is the one thing in
+   * the sky that is allowed to burn through a thin veil, and left in the normal
+   * transparent order - farthest first - the clouds are drawn over the top of it
+   * and take a quarter of its light away. Terrain still hides it, because terrain
+   * is opaque and writes depth; the clouds are not and do not.
+   *
+   * The aureole around the disc is blended, not added. Added light can only ever
+   * end up white: the sky behind it is already near the top of its range, so
+   * red, green and blue all clip and the sun comes out a colourless hole. Letting
+   * it cover the sky instead is the only way it can be gold.
+   */
+  for (const sprite of [sunSprite, sunDisc, ...rayLayers]) sprite.renderOrder = 1
+
+  /**
+   * Lens ghosts. They are a screen-space effect - the whole point of them is that
+   * they lie on the line through the middle of the frame - so rather than parenting
+   * them to the camera, which the space scene shares, they are placed in front of
+   * it every frame in its own basis.
+   */
+  const flareGhosts = [
+    { at: 0.34, size: 0.044, tint: 0xfff2d6 },
+    { at: 0.64, size: 0.025, tint: 0xc6ffd6 },
+    { at: 0.98, size: 0.064, tint: 0xffd7ac },
+    { at: 1.3, size: 0.031, tint: 0xd6ccff },
+    { at: 1.66, size: 0.05, tint: 0xffe4bd },
+  ].map((def) => {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: flareTexture(), color: def.tint, transparent: true, opacity: 0.36,
+      depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+    }))
+    sprite.visible = false
+    surfaceScene.add(sprite)
+    return { sprite, def }
+  })
 
   /**
    * A cloud deck, for the worlds that have air. The cloud map is equirectangular,
@@ -522,7 +629,13 @@ export function createWorld(container: HTMLElement): World {
     sky.material.needsUpdate = true
     sunSprite.material.color.setHex(look.sunTint)
     sunSprite.scale.setScalar(SUN_BASE_SCALE * (look.sunScale / 130))
-    sunDisc.material.color.setHex(look.sunTint)
+    // the core stays white-hot while everything around it goes gold: that is what
+    // you actually see when you look at a sun, a white centre in a haze of it
+    // the core stays white-hot inside the pale halo - that is what you actually
+    // see when you look up at it - so the disc is pulled most of the way to white
+    // while the aureole and the spikes keep the colour
+    sunDisc.material.color.setHex(look.sunTint).lerp(FLARE_WHITE, 0.28)
+    for (const ray of rayLayers) ray.material.color.setHex(look.sunTint)
     // only the worlds with air have anything to put in the sky
     clouds.visible = planet.theme === 'earth'
     surfaceHemisphere.color.setHex(look.skyLight)
@@ -1185,6 +1298,10 @@ export function createWorld(container: HTMLElement): World {
     sky.rotation.y += dt * 0.004
     // and the deck drifts the other way, so the sky is not one rigid thing
     clouds.rotation.y -= dt * 0.011
+    // the crown turns too, the two layers against each other, so the spikes
+    // shimmer instead of sitting there as one flat decal
+    rayLayers[0].material.rotation += dt * 0.021
+    rayLayers[1].material.rotation -= dt * 0.034
     // the river runs: scroll the ripple downstream, so standing water between
     // two banks becomes a river that is going somewhere
     const flow = riverFlow()
@@ -1367,6 +1484,8 @@ export function createWorld(container: HTMLElement): World {
       shake = Math.max(0, shake - dt * 2.2)
     }
     camera.lookAt(cameraTarget)
+    // after lookAt, because the ghosts are placed in the camera's own basis
+    updateFlare(game.planetId, game.mode === 'surface')
   }
 
   // ------------------------------------------------------------- interface
