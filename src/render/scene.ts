@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import {
-  EARTH_ORBIT, ISS_ORBIT, ISS_PORT_OFFSET, JUNK_COLORS, LOD_COST_DETAIL, LOD_COST_STANDIN,
+  EARTH_ORBIT, ISS_ORBIT, JUNK_COLORS, LOD_COST_DETAIL, LOD_COST_STANDIN,
   LOD_SPACE_TUNING, LOD_SURFACE_TUNING, MARS_ORBIT, METEOR_RADIUS, MOON_ORBIT, OXYGEN_WARN,
   SPACE_SCALE, SUN_RADIUS, TAU,
 } from '../sim/config.ts'
@@ -15,6 +15,7 @@ import { createLodStreamer, generatorBuild, oneshotBuild } from './lod.ts'
 import type { LodBuild, LodQuery } from './lod.ts'
 import { buildJanitor, poseJanitor } from './janitor.ts'
 import { buildShip } from './ship.ts'
+import { buildStation } from './iss.ts'
 import {
   canvasTexture, clampValue, createSurfaceJob, dir, discTexture, flareTexture, glowTexture, lunarEarthTexture,
   makeRnd, raysTexture, riverFlow, sunGlowTexture, surfacePoint, windRotors,
@@ -400,65 +401,15 @@ export function createWorld(container: HTMLElement): World {
   spaceScene.add(orbitRing(MARS_ORBIT, 0xc08050, 0.13))
 
   // ------------------------------------------------------------------- ISS
+  // the station lives in render/iss.ts: segmented truss, four array wings, the module
+  // cluster, and a docking port built to be found
   const iss = new THREE.Group()
   earthSystem.add(iss)
-  const hullMaterial = new THREE.MeshStandardMaterial({ color: 0xd9dfe8, roughness: 0.55, metalness: 0.35 })
-  const panelMaterial = new THREE.MeshStandardMaterial({ color: 0x2b4f9a, roughness: 0.4, metalness: 0.5 })
-  const ringMaterial = new THREE.MeshStandardMaterial({ color: 0xe7eaef, roughness: 0.6, metalness: 0.25 })
-
-  const truss = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 12.4), hullMaterial)
-  iss.add(truss)
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, 4, 12), hullMaterial)
-  core.rotation.z = Math.PI / 2
-  iss.add(core)
-  const lab = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.6, 2.6), hullMaterial)
-  iss.add(lab)
-
-  // four solar arrays hang below the truss like the real station
-  for (const z of [-6.4, -3.2, 3.2, 6.4]) {
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.12, 1.9), panelMaterial)
-    panel.position.set(0, -1.3, z)
-    iss.add(panel)
-  }
-
-  const spinningRings: THREE.Mesh[] = []
-  for (let i = 0; i < 2; i++) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.5 + i * 0.9, 0.16, 6, 40), ringMaterial)
-    ring.rotation.x = Math.PI / 2
-    ring.position.y = 1.8 + i * 1.1
-    spinningRings.push(ring)
-    iss.add(ring)
-  }
-
-  // the docking arm points radially away from Earth and its hatch is the port. The
-  // berth itself - where a docked tug's own origin sits - is further out again, by
-  // exactly the tug's nose, so the nose ends up in the airlock rather than beside it.
-  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, ISS_PORT_OFFSET, 10), hullMaterial)
-  arm.rotation.z = Math.PI / 2
-  arm.position.set(ISS_PORT_OFFSET / 2, 0, 0)
-  iss.add(arm)
-  const hatchMaterial = new THREE.MeshBasicMaterial({ color: 0x7fe4ff })
-  const hatch = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.16, 8, 24), hatchMaterial)
-  hatch.rotation.y = Math.PI / 2
-  hatch.position.set(ISS_PORT_OFFSET, 0, 0)
-  iss.add(hatch)
-
-  const shopWindow = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.6, 0.95),
-    new THREE.MeshBasicMaterial({ color: 0xffdf9b }),
-  )
-  shopWindow.position.set(0.5, 1.1, 1.32)
-  iss.add(shopWindow)
-  const shopGlow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowTexture('rgba(255, 226, 150, 0.85)', 'rgba(255, 170, 60, 0)'),
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-  }))
-  shopGlow.scale.setScalar(5.4)
-  shopGlow.position.set(0.5, 1.2, 1.5)
-  iss.add(shopGlow)
+  const station = buildStation()
+  iss.add(station.group)
 
   const issLabel = makeLabel('ISS', '#ffe1a3')
-  issLabel.position.set(0, 7.4, 0)
+  issLabel.position.set(0, 8.6, 0)
   // the station is one of the two things SPACE_SCALE does not touch, so its
   // label is sized against the real world, not the scaled one
   issLabel.userData.scaleRef = 1
@@ -1328,13 +1279,9 @@ export function createWorld(container: HTMLElement): World {
       game.issPos.z - earthPos.z,
     )
     iss.rotation.y = -game.issAngle
-    for (let i = 0; i < spinningRings.length; i++) {
-      spinningRings[i].rotation.z += dt * (i === 0 ? 0.7 : -0.55)
-    }
     const docking = canDock(game)
-    hatchMaterial.color.setHex(docking ? 0x8dff9d : canLand(game) ? 0xffe066 : 0x7fe4ff)
-    hatch.scale.setScalar(docking ? 1.25 + Math.sin(elapsed * 8) * 0.08 : 1)
-    shopGlow.material.opacity = 0.68 + Math.sin(elapsed * 2.4) * 0.2
+    station.setApproach(docking, canLand(game))
+    station.animate(elapsed, dt)
 
     moonRoot.position.set(game.moonPos.x, game.moonPos.y, game.moonPos.z)
     const marsPos = game.planetPos[2]

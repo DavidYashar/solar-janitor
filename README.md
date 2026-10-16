@@ -72,6 +72,16 @@ credits on gear. Clean all three worlds to restore the system.
   the top speed with the same brakes. Thrust *authority* is deliberately untouched, so
   a fast tug is a committed tug — twice as quick through a gravity well means twice
   the runway to slow down, and the landing limit is measured relative to the world.
+- **The station is a place now, and its port is unmistakable** (plan §5.2, §8). The ISS
+  is built in its own module (`render/iss.ts`) from a user-supplied reference: a
+  segmented truss with collars, greebles and a dish, four tall gold array wings on arms
+  at the ends, grey radiator panels, a cluster of capsule modules with hatches and end
+  caps, a mast with a hexagonal head, and the two spinning rings. The dock is a **flared
+  capture cone** whose mouth lands exactly on the berth, so a docked tug sits visibly
+  inside the funnel, with four guide vanes down the throat, a lit rim, a glow that
+  breathes faster once you are cleared to dock, and a **strobe beacon** for the part of
+  the approach where a funnel is two pixels wide. 28 draw calls and 4 486 triangles, 8 of
+  those instanced; the docked frame is unchanged at 60 fps.
 - **Save & continue:** the run autosaves at checkpoints (docking, delivery,
   landing, purchases) and the title screen offers CONTINUE. Versioned, validated
   `localStorage` save — a corrupt or stale save silently falls back to a new shift.
