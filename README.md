@@ -94,6 +94,25 @@ speed puts you in orbit *with* the station); dive at a world and you keep diving
 fly past fast and you are only deflected. Deep space is unchanged: out there the
 tug still parks itself when you let go. Full model and numbers: plan §5.2.1.
 
+**The sky is the real one, not a scatter of dots.** It was 2200 points all of one
+size and one colour, and identical dots are exactly what that looks like. It is now
+NASA's Deep Star Maps 2020 on a single inside-out sphere: real constellations, and a
+Milky Way with its dust lanes in it. Three things make it behave as a background
+rather than as an object — no depth write, no depth test, and a render order ahead of
+everything else — so it fills the frame first and every world, sun and ship then
+paints over it. That is what lets it hold a fixed radius without ever cutting into
+anything. Its *position* follows the camera while its orientation does not: the stars
+hold still as the tug crosses the system and swing past when you turn, which is the
+only way "infinitely far away" survives contact with a ship that can do 1700 u/s².
+The map's pole is tilted 23.4° off the ecliptic because that is where the celestial
+pole actually is, and that tilt is what puts the galaxy on the slant it holds instead
+of lying flat across the view. Encoding it took real thought, because a star map is all
+high frequency and this one wanted to be 1.5 MB — over a payload budget the plan sets at
+5 MB. AVIF at q45 holds the full 4096×2048 for 518 kB, and measured against the source
+that is *closer* than a half-resolution WebP of the same size: 6.24 RMSE against 8.46.
+A smaller map has to be magnified to fill the same view, and magnifying is exactly what
+turns a star into a smudge.
+
 **The Moon is the one world whose frame is itself accelerating**, because it rides
 Earth's orbit as well as its own, and the conversion back to map coordinates has to
 charge for both. It did not, once: Earth's 0.63 u/s² about the Sun went uncharged and
@@ -196,9 +215,9 @@ to ~66 ms in the dev harness (where every number is worse than production).
 
 Tuning levers, in the order to reach for them: `world.setQuality(true)` (drops
 the pixel ratio to 1), the reduced-motion setting (skips the warm-up and all
-shake), and the per-world texture resolution (`public/textures` — 3.8 MB for all
-twenty-two maps, of which Earth's two ground tiles are the largest single item at
-1.7 MB).
+shake), and the per-world texture resolution (`public/textures` — 4.2 MB for all
+twenty-three maps, of which Earth's two ground tiles are the largest single item at
+1.7 MB together).
 
 ## Credits & licences
 
@@ -218,6 +237,31 @@ texture pack, used under the
 | `moon_surface.webp` | `2k_moon.jpg` | WebP q85, 1024×512, 138 kB |
 | `mars_surface.webp` | `2k_mars.jpg` | WebP q82, 2048×1024, 200 kB |
 | `sun_surface.webp` | `2k_sun.jpg` | WebP q82, 2048×1024, 219 kB |
+
+The star map is from **NASA's Scientific Visualization Studio** and is public domain,
+so no licence terms attach to it — the credit belongs there anyway:
+
+> *Deep Star Maps 2020* — NASA / Goddard Space Flight Center Scientific Visualization
+> Studio. 1.7 billion stars plotted from the Hipparcos-2, Tycho-2 and Gaia DR2
+> catalogues, in plate carrée. [svs.gsfc.nasa.gov/4851](https://svs.gsfc.nasa.gov/4851/)
+
+| File | Source | Re-encoded |
+|---|---|---|
+| `sky_stars.avif` | `starmap_2020_4k.exr` (half-float linear) | linear → sRGB, AVIF q45, 4096×2048, 518 kB |
+
+It is deliberately the **plain star map and not the constellation-figures variant** of
+that release: the figures carry Sky & Telescope artwork, which is somebody else's, and
+the game does not need drawn constellation lines in a sky it already renders.
+
+It is also the only AVIF in the build, and that was a measured decision rather than a
+preference. The plan's payload budget is under 5 MB and the WebP encode of this map is
+where that budget went: q82 at 4096×2048 is 1.5 MB, and no WebP setting that fits gets
+below ~1.1 MB. Measured against the source at **the same 518 kB**, AVIF at 4096 scores
+an RMSE of 6.24 against WebP's 8.46 — better with four times the pixels, because a
+half-resolution map has to be magnified 2.4× to fill the same field of view and the
+star points are what that damages. Every current browser decodes AVIF; if one ever
+does not, the same size buys WebP at 2048×1024 q92, which is exactly the version this
+was chosen over.
 
 Mars's globe map is orbit-only now: the ground you land on is generated in code
 (see below), so the map is never fetched at eye height. The cloud map is greyscale and drives the cloud deck's `alphaMap` — both on the globe and on the sky shell you look up at from the ground. The Moon is

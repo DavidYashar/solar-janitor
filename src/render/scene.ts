@@ -272,42 +272,48 @@ export function createWorld(container: HTMLElement): World {
   spaceFill.position.set(-1, 0.6, -0.8)
   spaceScene.add(spaceFill)
 
-  // starfield: one Points cloud, no per-star objects to allocate or cull
-  {
-    const starCount = 2200
-    const positions = new Float32Array(starCount * 3)
-    let state = 20261
-    const rnd = () => {
-      state = (Math.imul(state, 1664525) + 1013904223) >>> 0
-      return state / 4294967296
-    }
-    for (let i = 0; i < starCount; i++) {
-      let x = rnd() * 2 - 1
-      let y = rnd() * 2 - 1
-      let z = rnd() * 2 - 1
-      const length = Math.hypot(x, y, z)
-      if (length < 1e-3) {
-        x = 0
-        y = 1
-        z = 0
-      } else {
-        x /= length
-        y /= length
-        z /= length
-      }
-      const distance = (1000 + rnd() * 900) * SPACE_SCALE
-      positions[i * 3] = x * distance
-      positions[i * 3 + 1] = y * distance
-      positions[i * 3 + 2] = z * distance
-    }
-    const stars = new THREE.Points(
-      new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)),
-      new THREE.PointsMaterial({ color: 0xd6e6ff, size: 2.4, sizeAttenuation: false }),
-    )
-    stars.userData.spin = true
-    spaceScene.add(stars)
-    spaceScene.userData.stars = stars
+  /**
+   * The sky: one equirectangular map on one inside-out sphere.
+   *
+   * It is drawn as a background rather than as an object - no depth write, no depth
+   * test, and a render order well ahead of everything else - so it fills the frame
+   * first and every world, sun and ship then paints over it. That is what lets it
+   * sit at a fixed radius without ever cutting into anything, and it costs one draw
+   * call where a scatter of points cost one geometry to allocate and cull.
+   *
+   * Its POSITION follows the camera while its orientation does not, which is what
+   * "infinitely far away" has to mean in practice: the stars hold still while the
+   * tug crosses the system, and swing past when you turn. The one motion it gets is
+   * about its own pole - not the world's - which reads as the world turning under.
+   *
+   * The map is NASA's Deep Star Maps 2020, public domain: 1.7 billion catalogued
+   * stars from Hipparcos-2, Tycho-2 and Gaia DR2, in plate carree, centred on 0h
+   * right ascension. Real constellations and a real Milky Way with its dust lanes
+   * in it, hence the tilt - leaning the celestial pole 23.4 degrees off the
+   * ecliptic pole is what puts the galaxy on the slant it actually holds.
+   */
+  const STAR_SKY_RADIUS = 20000
+  const STAR_SKY_TILT = THREE.MathUtils.degToRad(23.44)
+  /** radians per second: a tenth of the truth, so it reads as a drift and not a spin */
+  const STAR_SKY_SPIN = 0.002
+  const starSkyTexture = loadMap('/textures/sky_stars.avif', 4).texture
+  const starSkyGeometry = new THREE.SphereGeometry(STAR_SKY_RADIUS, 64, 32)
+  const buildStarSky = (): { pivot: THREE.Group; mesh: THREE.Mesh } => {
+    const pivot = new THREE.Group()
+    pivot.rotation.x = STAR_SKY_TILT
+    const mesh = new THREE.Mesh(starSkyGeometry, new THREE.MeshBasicMaterial({
+      map: starSkyTexture, side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false,
+    }))
+    mesh.renderOrder = -1000
+    // it is carried to the camera every frame, so it must not be culled for sitting
+    // outside a frustum that was built around wherever the camera happens to be
+    mesh.frustumCulled = false
+    pivot.add(mesh)
+    pivot.frustumCulled = false
+    return { pivot, mesh }
   }
+  const starSky = buildStarSky()
+  spaceScene.add(starSky.pivot)
 
   // the Sun: a self-luminous globe. The flat colour holds until the photosphere
   // map arrives, then the map takes over and a slow spin keeps it alive.
@@ -1348,8 +1354,9 @@ export function createWorld(container: HTMLElement): World {
     spaceKey.position.copy(shipModel.group.position).addScaledVector(vA, -420)
     spaceKey.target.position.copy(shipModel.group.position)
 
-    const stars = spaceScene.userData.stars as THREE.Points
-    stars.rotation.y += dt * 0.002
+    // the sky turns about its own pole, which reads as the world turning under it
+    starSky.mesh.rotation.y += dt * STAR_SKY_SPIN
+    starSky.pivot.position.copy(cameraPosition)
     // the photosphere turns slowly, so the granulation is not a dead texture
     sun.rotation.y += dt * 0.012
     // up close the surface should dominate, so the halo thins as the ship nears
