@@ -329,14 +329,32 @@ export function createWorld(container: HTMLElement): World {
   }))
   sunGlow.scale.setScalar(SUN_RADIUS * 7)
   spaceScene.add(sunGlow)
-  const corona = new THREE.Mesh(
-    new THREE.SphereGeometry(SUN_RADIUS * 1.16, 32, 24),
-    new THREE.MeshBasicMaterial({
-      color: 0xff9a3c, transparent: true, opacity: 0.22, side: THREE.BackSide,
-      blending: THREE.AdditiveBlending, depthWrite: false,
+
+  /**
+   * The tight glow that hugs the disc.
+   *
+   * It used to be a shell: a sphere a sixth bigger than the photosphere, painted
+   * one flat colour. A shell reads as a sticker, because it is one - the same
+   * brightness from every angle and a hard edge where it stops, which is not what
+   * anything burning looks like. This is a gradient instead, and its bright band
+   * is tuned to land where the photosphere's edge does, so the disc hides the
+   * middle of it and what shows is brightest at the limb and gone by the time it
+   * matters. Two soft layers now, no seam anywhere between the surface and space.
+   */
+  const sunCorona = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: canvasTexture(256, 256, ctx => {
+      const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128)
+      gradient.addColorStop(0, 'rgba(255, 246, 220, 1)')
+      gradient.addColorStop(0.38, 'rgba(255, 236, 178, 0.95)')
+      gradient.addColorStop(0.62, 'rgba(255, 178, 74, 0.42)')
+      gradient.addColorStop(1, 'rgba(255, 118, 26, 0)')
+      ctx.fillStyle = gradient
+      ctx.fillRect(0, 0, 256, 256)
     }),
-  )
-  spaceScene.add(corona)
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }))
+  sunCorona.scale.setScalar(SUN_RADIUS * 2.6)
+  spaceScene.add(sunCorona)
 
   // ---------------------------------------------------------- earth system
   const earthSystem = new THREE.Group()
@@ -1338,8 +1356,8 @@ export function createWorld(container: HTMLElement): World {
     // the Sun and comes back to full strength out in the system
     const sunRange = clampValue((shipModel.group.position.length() - SUN_RADIUS * 1.2) / (SUN_RADIUS * 3), 0, 1)
     sunGlow.material.opacity = (0.85 + Math.sin(elapsed * 1.4) * 0.08) * (0.3 + 0.7 * sunRange)
-    corona.material.opacity = 0.22 * (0.1 + 0.9 * sunRange)
-    corona.scale.setScalar(1 + Math.sin(elapsed * 1.1) * 0.015)
+    sunCorona.material.opacity = 0.7 * (0.12 + 0.88 * sunRange)
+    sunCorona.scale.setScalar(SUN_RADIUS * 2.6 * (1 + Math.sin(elapsed * 1.1) * 0.018))
 
     for (const label of labels) {
       label.getWorldPosition(vB)

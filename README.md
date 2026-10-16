@@ -579,6 +579,18 @@ where it began. The warning is a glow round the frame as much as it is text, bec
 heat is the one hazard that has to reach you wherever you are looking, and because
 brightness can say "nearly cooked" where words have to spell it out.
 
+**Its halo is two layers, and only one of them used to be a shell.** There is a wide
+one that carries across the outer system and a tight one that hugs the disc. The
+tight one was a sphere a sixth wider than the photosphere painted a single flat
+colour, and it read as a sticker because it was one: the same brightness from every
+angle, stopping dead at a hard edge, which is not what anything burning looks like.
+It is a gradient sprite now, and its bright band is placed so that the band lands
+where the photosphere's edge does — the disc hides the middle of it, so what survives
+is brightest right at the limb and gone within a disc-width of it. There is no seam
+left to find between surface and space at any range, and it breathes on its own slow
+sine. Both layers thin as the ship closes in, so the photosphere is what you see when
+you are close enough for it to matter.
+
 This is also the change that moved a test fixture: two space-flight tests parked the
 tug at two thousand units and called it open space. It is not open space any more —
 it is inside a star's sphere of influence — so they park at fourteen thousand, which
