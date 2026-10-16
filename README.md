@@ -32,8 +32,9 @@ credits on gear. Clean all three worlds to restore the system.
   hops) and Mars (a crater field inside a ring of peaks, half-buried probes,
   0.45 g). The janitor wears his helmet on the worlds with no air and a cap on the
   one with, and his legs stride as he walks.
-- **Hazards, all telegraphed:** Moon meteor showers (a shadow circle tightens for
-  2.5 s, then the rock lands — being mid-hop clears you) and Mars dust storms
+- **Hazards, all telegraphed:** Moon meteor showers (a stone falls out of the sky
+  for 2.5 s, getting larger the closer it gets — watch it come down, then run —
+  and being mid-hop clears you) and Mars dust storms
   (every ~45 s: 35 % faster O₂ drain, thick haze, a sideways shove). Earth's ground
   stays safe; its danger is the debris in orbit.
 - **Full-freedom flight:** pitch + yaw + roll about the ship's own axes, thrust
@@ -120,7 +121,7 @@ real browser is still outstanding** — see the box below for the exact steps.
 quaternion flight maths, upgrade effects, ranks, determinism, a headless full
 three-world run, and the LOD scheduler — hysteresis, warm-ahead ordering, the
 frame budget, plus the renderer's budget loop driven with a fake scene graph),
-`tsc --noEmit` clean and the production build clean (~686 kB JS / 190 kB
+`tsc --noEmit` clean and the production build clean (~690 kB JS / 192 kB
 gzipped, plus 13 kB CSS and 397 kB of Earth maps — well inside the payload
 budget, and *smaller at boot* than before: the space globes and the three
 surfaces are no longer generated during startup). Stack: Vite, strict
@@ -518,6 +519,37 @@ is a helmet and the shell is the only thing between him and nothing. The visor d
 not cast a shadow — it is a third opaque, and a shell of glass would drop a solid
 black ball over his head — so for once the thing you would most want to be right is
 also the thing that must stay out of the shadow map.
+
+**The Moon's meteor is a stone now, not a shadow.** It used to be a shadow, a ring
+and a nineteen-metre line, and the line was the only part of it that existed
+anywhere except on the ground — which meant there was nothing to see coming, only
+something to stand out of. It is a real rock at a real distance now, so the approach
+reads the way an approach should: a speck with a halo while it is high, a boulder
+by the time it is close, out of the same perspective that turns a planet from a
+point of light into a world. The rock is a lumped icosahedron, hashed off the unit
+direction rather than rolled per vertex, because a polyhedron keeps a separate copy
+of every corner for each face that touches it and a fresh number for each copy tears
+the stone open along its shared edges.
+
+Two things about the fall are not obvious until you watch it happen. It has to come
+in on a **slant**: the target is twenty metres from the janitor, so a stone dropped
+from directly overhead stands at eighty-six degrees of elevation, past the top of a
+camera that can only look up thirty-six, and the entire approach happens out of
+frame. Angled off a tangent at 300 m up and 260 m out it comes down across the sky
+at forty-nine degrees instead, and you watch the whole way. And most of the warning
+has to be spent high and small: the height falls as `(1-t)^1.5`, where a square law
+drops it out of the sky in the last third with nothing left to watch and a linear one
+never looks like it is falling at all. Its trail is a cone rather than a streak,
+because a trail has to lie along the way the stone is travelling and a sprite's one
+axis is the camera's up.
+
+The strike is five things over seven seconds: a flash that blooms and is gone, **two**
+shock rings so the ground reads as being moved rather than painted, a column of dust
+standing up out of the hole, a scorch that outlives the noise, and the material
+itself — thrown in a **cone**, not a ball. The generic burst is a ball, which is right
+for a hop or a landing and wrong for a crater: a hole throws its contents up and out,
+and a sphere of debris reads as something bursting in mid-air. It fires twice, heavy
+chips fast with the ground's own pull on them and fine dust slow with almost none.
 
 ### How to check the streaming in a browser (M3)
 

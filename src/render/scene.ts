@@ -33,6 +33,8 @@ export interface World {
   resize(): void
   addShake(amount: number): void
   burst(event: GameEvent, color: number, count: number, speed?: number): void
+  /** the Moon meteor has landed: light it up where it hit */
+  meteorStrike(lat: number, lon: number): void
   setQuality(low: boolean): void
   setReducedMotion(value: boolean): void
   /** live view of the LOD streamer, for browser playtests and debug output */
@@ -105,6 +107,22 @@ function basisFor(up: THREE.Vector3, forward: THREE.Vector3, right: THREE.Vector
   right.crossVectors(up, forward).normalize()
   forward.crossVectors(right, up).normalize()
   return new THREE.Matrix4().makeBasis(right, up, forward)
+}
+
+/**
+ * A stable pseudo-random number for a direction.
+ *
+ * Used to lump out a rock: an icosahedron repeats each corner once per face it
+ * touches, so a fresh number per vertex pulls the copies apart and the rock comes
+ * out in pieces. Hashing the direction itself gives every copy the same answer.
+ */
+function hashDirection(v: THREE.Vector3): number {
+  const key = (Math.round(v.x * 512) * 73856093)
+    ^ (Math.round(v.y * 512) * 19349663)
+    ^ (Math.round(v.z * 512) * 83492791)
+  let mixed = Math.imul(key ^ (key >>> 15), 2246822519) >>> 0
+  mixed = Math.imul(mixed ^ (mixed >>> 13), 3266489917) >>> 0
+  return ((mixed ^ (mixed >>> 16)) >>> 0) / 4294967295
 }
 
 // ------------------------------------------------------------------ world
@@ -917,7 +935,60 @@ export function createWorld(container: HTMLElement): World {
     sky.material.color.copy(skyColor)
   }
 
-  // hazard visuals: the Moon meteor telegraph
+  // hazard visuals: the Moon meteor, and what it leaves behind
+  /**
+   * The stone that comes down with the shower.
+   *
+   * There was no rock before. The telegraph was a shadow, a ring and a
+   * nineteen-metre line, and the line was the only part of it that existed
+   * anywhere except on the ground. The stone is a real body at a real distance
+   * now, so the approach reads the way an approach should - a speck while it is
+   * high, a boulder by the time it is close - out of the same perspective that
+   * turns a planet from a point of light into a world as you fly at it.
+   */
+  const METEOR_START_HEIGHT = 300
+  const METEOR_START_REACH = 260
+  const METEOR_TRAIL = 38
+
+  const meteorStone = new THREE.Mesh(
+    (() => {
+      const geometry = new THREE.IcosahedronGeometry(METEOR_RADIUS, 2)
+      const position = geometry.attributes.position
+      const vertex = new THREE.Vector3()
+      for (let i = 0; i < position.count; i++) {
+        vertex.fromBufferAttribute(position, i).normalize()
+        // hashed off the unit direction, so the copies a polyhedron makes of each
+        // corner for its separate faces all get the same displacement. Rolling a
+        // fresh number per vertex tears the rock open at every shared edge.
+        const lump = 0.78 + hashDirection(vertex) * 0.44
+        position.setXYZ(i, vertex.x * METEOR_RADIUS * lump, vertex.y * METEOR_RADIUS * lump, vertex.z * METEOR_RADIUS * lump)
+      }
+      geometry.computeVertexNormals()
+      return geometry
+    })(),
+    new THREE.MeshStandardMaterial({
+      color: 0x6b625a, roughness: 0.95, metalness: 0.04, flatShading: true,
+      emissive: 0xd4480f, emissiveIntensity: 1.1,
+    }),
+  )
+  const meteorHeat = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture('rgba(255, 226, 176, 1)', 'rgba(255, 96, 20, 0)'),
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }))
+  const meteorTrail = new THREE.Group()
+  // a cone rather than a streak: it has to lie along the way the stone is
+  // travelling, and a sprite's one axis is the camera's up, not the path's. It is
+  // long and faint because most of the time you are looking at it end-on, and a
+  // short bright one reads as a disc stuck on the back of the rock.
+  for (const width of [0.7, 1.6]) {
+    meteorTrail.add(new THREE.Mesh(
+      new THREE.ConeGeometry(METEOR_RADIUS * width, METEOR_TRAIL, 12, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xff8a44, transparent: true, opacity: width < 1 ? 0.3 : 0.11,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+      }),
+    ))
+  }
   const meteorShadow = new THREE.Mesh(
     new THREE.CircleGeometry(1, 40),
     new THREE.MeshBasicMaterial({
@@ -930,14 +1001,55 @@ export function createWorld(container: HTMLElement): World {
       color: 0xff7048, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false,
     }),
   )
-  const meteorStreak = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
-    new THREE.LineBasicMaterial({ color: 0xffb894, transparent: true, opacity: 0.7 }),
-  )
-  for (const object of [meteorShadow, meteorRing, meteorStreak]) {
+  for (const object of [meteorStone, meteorHeat, meteorTrail, meteorShadow, meteorRing]) {
     object.visible = false
     surfaceScene.add(object)
   }
+
+  // and the strike itself: a flash, a shock ring running out along the ground,
+  // a scorch it leaves, and a column of dust going up
+  const impactFlash = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 14, 10),
+    new THREE.MeshBasicMaterial({
+      color: 0xffe0ac, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  )
+  const impactRing = new THREE.Mesh(
+    new THREE.RingGeometry(0.78, 1, 56),
+    new THREE.MeshBasicMaterial({
+      color: 0xffb367, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
+      depthWrite: false, side: THREE.DoubleSide,
+    }),
+  )
+  // a second ring trailing the first: one wave of dust off a strike reads as a
+  // decal painted on the ground, two read as ground being moved
+  const impactRing2 = new THREE.Mesh(
+    new THREE.RingGeometry(0.86, 1, 56),
+    new THREE.MeshBasicMaterial({
+      color: 0xd8894a, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
+      depthWrite: false, side: THREE.DoubleSide,
+    }),
+  )
+  const impactScorch = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 40),
+    new THREE.MeshBasicMaterial({
+      color: 0x120c07, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide,
+    }),
+  )
+  const impactPlume = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowTexture('rgba(214, 198, 174, 0.9)', 'rgba(150, 132, 112, 0)'),
+    transparent: true, depthWrite: false,
+  }))
+  for (const object of [impactFlash, impactRing, impactRing2, impactScorch, impactPlume]) {
+    object.visible = false
+    surfaceScene.add(object)
+  }
+  const impact = { active: false, t: 0 }
+  const impactUp = new THREE.Vector3()
+  const impactAt = new THREE.Vector3()
+  const meteorIncoming = new THREE.Vector3()
+  const meteorTangent = new THREE.Vector3()
+  const meteorPath = new THREE.Vector3()
 
   // hazard visuals: the Mars dust field, drifting around the janitor
   const DUST_COUNT = 320
@@ -1103,6 +1215,45 @@ export function createWorld(container: HTMLElement): World {
         size: 0.7 + Math.random() * 0.9,
         gravity,
         centre: centre.clone(),
+      })
+    }
+  }
+
+  /**
+   * Ejecta: what a strike throws, rather than what a bang drops.
+   *
+   * The generic spawn is a ball, which is right for a hop or a landing and wrong
+   * for an impact - a crater throws its material up and out, and a ball of debris
+   * reads as something bursting in mid-air instead of punching the ground. This
+   * throws a cone instead, and the caller fires it twice: heavy chips fast with
+   * the ground's own pull on them, and fine dust slow with almost none.
+   */
+  function spawnEjecta(
+    list: Particle[], from: THREE.Vector3, up: THREE.Vector3, count: number,
+    speed: number, gravity: number, color: number, spread = 1.2,
+  ) {
+    const total = reducedMotion ? Math.ceil(count * 0.4) : count
+    const tangent = new THREE.Vector3(0, 1, 0)
+    if (Math.abs(up.y) > 0.9) tangent.set(1, 0, 0)
+    tangent.crossVectors(up, tangent).normalize()
+    const binormal = new THREE.Vector3().crossVectors(up, tangent)
+    const direction = new THREE.Vector3()
+    for (let i = 0; i < total && list.length < MAX_PARTICLES; i++) {
+      const around = Math.random() * TAU
+      const tilt = Math.pow(Math.random(), 0.65) * spread
+      direction.copy(up).multiplyScalar(Math.cos(tilt))
+        .addScaledVector(tangent, Math.sin(tilt) * Math.cos(around))
+        .addScaledVector(binormal, Math.sin(tilt) * Math.sin(around))
+      const life = 0.85 + Math.random() * 1.15
+      list.push({
+        position: from.clone().addScaledVector(direction, Math.random() * 1.6),
+        velocity: direction.clone().multiplyScalar(speed * (0.45 + Math.random() * 0.9)),
+        life,
+        maxLife: life,
+        color: new THREE.Color(color).offsetHSL(0, 0, (Math.random() - 0.5) * 0.3),
+        size: 0.35 + Math.random() * 1.05,
+        gravity,
+        centre: new THREE.Vector3(0, 0, 0),
       })
     }
   }
@@ -1349,41 +1500,127 @@ export function createWorld(container: HTMLElement): World {
     const spin = dt * (0.5 + (game.hazards.stormIntensity ?? 0) * 2.4)
     for (const rotor of windRotors) rotor.rotation.z += spin
     updateSurfaceMood(game)
-    updateMeteorTelegraph(game)
+    updateMeteor(game, dt)
     updateDustStorm(game, dt)
   }
 
-  /** Moon hazard: a shadow that tightens under the incoming meteor. */
-  function updateMeteorTelegraph(game: Game) {
+  /** Moon hazard: the stone on its way down, and what is left when it lands. */
+  function updateMeteor(game: Game, dt: number) {
     const surface = surfaceBuild(game.planetId)
     const hazards = game.hazards
-    const active = game.planetId === 1 && !!surface && hazards.meteorTelegraph >= 0 && hazards.meteorDelay > 0
-    meteorShadow.visible = active
-    meteorRing.visible = active
-    meteorStreak.visible = active
-    if (!active || !surface) return
-    const t = clampValue(hazards.meteorTelegraph / hazards.meteorDelay, 0, 1)
-    const up = dir(hazards.meteorLat, hazards.meteorLon, vA)
-    const radius = surface.terrainRadius(hazards.meteorLat, hazards.meteorLon)
-    const scale = METEOR_RADIUS * (1.6 - 0.6 * t)
+    const falling = game.planetId === 1 && !!surface
+      && hazards.meteorTelegraph >= 0 && hazards.meteorDelay > 0
+    meteorStone.visible = falling
+    meteorHeat.visible = falling
+    meteorTrail.visible = falling
+    meteorShadow.visible = falling
+    meteorRing.visible = falling
 
-    meteorShadow.position.copy(up).multiplyScalar(radius + 0.12)
-    meteorShadow.quaternion.setFromUnitVectors(Z_AXIS, up)
-    meteorShadow.scale.setScalar(scale)
-    meteorShadow.material.opacity = 0.15 + t * 0.7
+    if (falling && surface) {
+      const t = clampValue(hazards.meteorTelegraph / hazards.meteorDelay, 0, 1)
+      const up = dir(hazards.meteorLat, hazards.meteorLon, vA)
+      const radius = surface.terrainRadius(hazards.meteorLat, hazards.meteorLon)
 
-    meteorRing.position.copy(up).multiplyScalar(radius + 0.3)
-    meteorRing.quaternion.setFromUnitVectors(Z_AXIS, up)
-    meteorRing.scale.setScalar(METEOR_RADIUS * (1.05 + Math.sin(elapsed * 9) * 0.1) * (1.5 - 0.5 * t))
-    meteorRing.material.opacity = 0.3 + t * 0.45 + Math.sin(elapsed * 12) * 0.08
+      // It has to come in on a slant, not from straight up. The target is twenty
+      // metres away, so a stone dropped from directly overhead stands at
+      // eighty-six degrees of elevation - past the top of a camera that can only
+      // look up thirty-six - and the whole approach happens out of frame. Angled
+      // off a tangent it comes down across the sky instead, and you watch it the
+      // whole way. The bearing is hashed off the impact point, so it is fixed for
+      // the volley and different next time.
+      meteorTangent.set(0, 1, 0)
+      if (Math.abs(up.y) > 0.9) meteorTangent.set(1, 0, 0)
+      meteorIncoming.crossVectors(up, meteorTangent).normalize()
+      meteorTangent.crossVectors(up, meteorIncoming).normalize()
+      const swing = hashDirection(up) * TAU
+      meteorIncoming.multiplyScalar(Math.cos(swing)).addScaledVector(meteorTangent, Math.sin(swing))
+      // and the way it is travelling, which is what the trail lies along
+      meteorPath.copy(up).multiplyScalar(METEOR_START_HEIGHT)
+        .addScaledVector(meteorIncoming, METEOR_START_REACH).normalize()
 
-    const positions = meteorStreak.geometry.attributes.position
-    vB.copy(up).multiplyScalar(radius + 34 - t * 10)
-    positions.setXYZ(0, vB.x, vB.y, vB.z)
-    vB.copy(up).multiplyScalar(radius + 15 - t * 5)
-    positions.setXYZ(1, vB.x, vB.y, vB.z)
-    positions.needsUpdate = true
-    meteorStreak.material.opacity = 0.35 + t * 0.5
+      // Most of the warning is spent high and small, and then it closes fast: a
+      // square law drops it out of the sky in the last third with nothing left to
+      // watch, and a linear one never looks like it is falling at all.
+      const close = Math.pow(1 - t, 1.5)
+      meteorStone.position.copy(up).multiplyScalar(radius + METEOR_START_HEIGHT * close)
+      meteorStone.position.addScaledVector(meteorIncoming, METEOR_START_REACH * close)
+      meteorStone.rotation.set(elapsed * 1.9, elapsed * 2.6, elapsed * 1.1)
+
+      // it grows into its own heat on the way down: airless or not, something
+      // arriving this fast has a leading face you would not want to look at
+      meteorHeat.position.copy(meteorStone.position)
+      meteorHeat.scale.setScalar(METEOR_RADIUS * (3.4 + t * 2.2))
+      meteorHeat.material.opacity = 0.4 + t * 0.55
+
+      meteorTrail.position.copy(meteorStone.position).addScaledVector(meteorPath, METEOR_TRAIL * 0.5)
+      meteorTrail.quaternion.setFromUnitVectors(UP, meteorPath)
+
+      // and the ground marker underneath it, tightening as it closes
+      meteorShadow.position.copy(up).multiplyScalar(radius + 0.12)
+      meteorShadow.quaternion.setFromUnitVectors(Z_AXIS, up)
+      meteorShadow.scale.setScalar(METEOR_RADIUS * (1.6 - 0.6 * t))
+      meteorShadow.material.opacity = 0.15 + t * 0.7
+
+      meteorRing.position.copy(up).multiplyScalar(radius + 0.3)
+      meteorRing.quaternion.setFromUnitVectors(Z_AXIS, up)
+      meteorRing.scale.setScalar(METEOR_RADIUS * (1.05 + Math.sin(elapsed * 9) * 0.1) * (1.5 - 0.5 * t))
+      meteorRing.material.opacity = 0.3 + t * 0.45 + Math.sin(elapsed * 12) * 0.08
+    }
+
+    updateMeteorImpact(dt)
+  }
+
+  /**
+   * The strike, over the seven seconds it takes to play out: a flash that blooms
+   * and is gone, a shock ring running out along the ground faster than the eye
+   * follows it, a column of dust standing up out of the hole, and a scorch that
+   * is still there long after the noise has stopped.
+   */
+  function updateMeteorImpact(dt: number) {
+    if (!impact.active) return
+    impact.t += dt
+    const t = impact.t
+
+    impactFlash.position.copy(impactAt)
+    impactRing.position.copy(impactAt)
+    impactRing.quaternion.setFromUnitVectors(Z_AXIS, impactUp)
+    impactRing2.position.copy(impactAt)
+    impactRing2.quaternion.setFromUnitVectors(Z_AXIS, impactUp)
+    impactScorch.position.copy(impactAt)
+    impactScorch.quaternion.setFromUnitVectors(Z_AXIS, impactUp)
+
+    const flash = clampValue(t / 0.34, 0, 1)
+    impactFlash.visible = flash < 1
+    impactFlash.scale.setScalar(1.6 + flash * 9)
+    impactFlash.material.opacity = (1 - flash) * (1 - flash)
+
+    const shock = clampValue(t / 0.62, 0, 1)
+    impactRing.visible = shock < 1
+    impactRing.scale.setScalar(METEOR_RADIUS * (0.7 + shock * 5.2))
+    impactRing.material.opacity = (1 - shock) * (1 - shock) * 0.95
+
+    const shock2 = clampValue((t - 0.17) / 0.78, 0, 1)
+    impactRing2.visible = t > 0.17 && shock2 < 1
+    impactRing2.scale.setScalar(METEOR_RADIUS * (1.1 + shock2 * 6.6))
+    impactRing2.material.opacity = (1 - shock2) * (1 - shock2) * 0.6
+
+    const plume = clampValue(t / 1.5, 0, 1)
+    impactPlume.visible = plume < 1
+    impactPlume.position.copy(impactAt).addScaledVector(impactUp, 1 + plume * 11)
+    impactPlume.scale.set(7 + plume * 26, 6 + plume * 20, 1)
+    impactPlume.material.opacity = (1 - plume) * (1 - plume) * 0.8
+
+    const cool = clampValue(t / 7, 0, 1)
+    impactScorch.visible = true
+    impactScorch.scale.setScalar(METEOR_RADIUS * (1.15 + cool * 0.5))
+    impactScorch.material.opacity = (1 - cool) * (1 - cool) * 0.72
+
+    if (t >= 7) {
+      impact.active = false
+      for (const object of [impactFlash, impactRing, impactRing2, impactScorch, impactPlume]) {
+        object.visible = false
+      }
+    }
   }
 
   /** Mars hazard: dust that wraps around the janitor, driven by stormIntensity. */
@@ -1578,6 +1815,20 @@ export function createWorld(container: HTMLElement): World {
           color, count, speed, 0, new THREE.Vector3(0, 0, 0),
         )
       }
+    },
+    meteorStrike(lat, lon) {
+      const planetId = activePlanetId >= 0 ? activePlanetId : 1
+      const build = surfaceBuild(planetId)
+      dir(lat, lon, impactUp)
+      impactAt.copy(impactUp).multiplyScalar(
+        build ? build.terrainRadius(lat, lon) : planetById(planetId).surfaceRadius,
+      )
+      impact.active = true
+      impact.t = 0
+      // the material a crater throws, in two sizes: chips that come back down
+      // almost at once, and dust that hangs and then drifts
+      spawnEjecta(surfaceParticles, impactAt, impactUp, 34, 26, 20, 0x6d645c, 1.05)
+      spawnEjecta(surfaceParticles, impactAt, impactUp, 26, 13, 5, 0xcbbfa9, 1.35)
     },
     setQuality(low) {
       maxPixelRatio = low ? 1 : 1.75

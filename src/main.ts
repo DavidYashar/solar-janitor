@@ -333,6 +333,7 @@ function handleEvent(event: GameEvent) {
       break
     case 'meteor':
       world.burst(event, 0xff9a5c, 40, 15)
+      world.meteorStrike(event.lat, event.lon)
       world.addShake(0.8)
       audio.play('meteor', 0.8)
       break
