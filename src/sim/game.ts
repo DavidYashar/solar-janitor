@@ -425,12 +425,22 @@ function orbitVelocity(radius: number, rate: number, angle: number, target: Vec3
 }
 
 const ORBIT_VEL_B: Vec3 = { x: 0, y: 0, z: 0 }
+const ORBIT_ACCEL_B: Vec3 = { x: 0, y: 0, z: 0 }
 
 /**
- * A world's own acceleration along its scripted orbit - toward the Sun for Earth
- * and Mars, toward Earth for the Moon (16.8 u/s^2, four times the Moon's own
- * surface gravity). Flying in a world's frame means riding its motion, so this
- * is part of the coordinate conversion, not a force on the ship.
+ * A world's own acceleration in the map frame - toward the Sun for Earth and Mars,
+ * toward Earth for the Moon (16.8 u/s^2, four times the Moon's own surface
+ * gravity). Flying in a world's frame means riding its motion, so this is part of
+ * the coordinate conversion, not a force on the ship: `updateShip` predicts the
+ * world's next velocity with it.
+ *
+ * It has to be the rate of change of the WHOLE of `planetVelocity`, though, and
+ * for the Moon that includes Earth's orbit as well as the Moon's own. Charging
+ * only the Moon's own term left Earth's acceleration about the Sun (0.63 u/s^2)
+ * uncompensated, and because the conversion runs every step it landed in the
+ * ship's velocity *relative to the Moon* as a constant extra pull. Earth and Mars
+ * never showed it because their `planetVelocity` is nothing but the orbit this
+ * already covers.
  */
 function frameAcceleration(game: Game, body: number, target: Vec3): Vec3 {
   target.x = 0
@@ -450,6 +460,13 @@ function frameAcceleration(game: Game, body: number, target: Vec3): Vec3 {
   target.x = (dx / distance) * strength
   target.y = (dy / distance) * strength
   target.z = (dz / distance) * strength
+  // riding the parent's orbit too, so the frame carries the parent's acceleration
+  if (body === 1) {
+    const parent = frameAcceleration(game, 0, ORBIT_ACCEL_B)
+    target.x += parent.x
+    target.y += parent.y
+    target.z += parent.z
+  }
   return target
 }
 

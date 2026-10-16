@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  EARTH_MU, EARTH_RADIUS, EARTH_SURFACE_G, GRAVITY_SOI, ISS_DOCK_OFFSET, ISS_ORBIT, ISS_ORBIT_RATE,
-  LAND_ZONE_HEIGHT, PLANET_MU, SHIP_SPEED,
+  EARTH_MU, EARTH_RADIUS, EARTH_SURFACE_G, GRAVITY_SOI, GRAVITY_SOI_FADE, ISS_DOCK_OFFSET, ISS_ORBIT,
+  ISS_ORBIT_RATE, LAND_ZONE_HEIGHT, PLANET_MU, SHIP_SPEED,
 } from '../src/sim/config.ts'
 import { canLand, createGame, dock, step, undock } from '../src/sim/game.ts'
 import { PLANETS } from '../src/sim/planets.ts'
@@ -78,6 +78,48 @@ function turnBetween(before, ship) {
   if (after < 1e-6 || beforeLength < 1e-6) return 0
   return Math.acos(Math.min(1, (before.x * ship.vx + before.y * ship.vy + before.z * ship.vz) / (beforeLength * after)))
 }
+
+/** The fall the constants predict for a ship released at rest: a fine integration
+ *  of d2r/dt2 = -(mu/r^2) * the same fade the sim applies across the outer slice. */
+function predictedFall(mu, radius, seconds, soi) {
+  const inner = soi * (1 - GRAVITY_SOI_FADE)
+  const weight = (r) => {
+    if (r <= inner) return 1
+    if (r >= soi) return 0
+    const t = (soi - r) / (soi - inner)
+    return t * t * (3 - 2 * t)
+  }
+  let r = radius
+  let v = 0
+  const dt = 1e-5
+  for (let i = 0; i < Math.round(seconds / dt); i++) {
+    v += (-(mu / (r * r)) * weight(r) * dt) / 2
+    r += v * dt
+    v += (-(mu / (r * r)) * weight(r) * dt) / 2
+  }
+  return r
+}
+
+test('a world\'s own well pulls with its own mu, not the largest sphere in range', () => {
+  // The Moon sits inside Earth's influence, and it is the only world whose frame is
+  // itself accelerating, because it rides Earth's orbit as well as its own. Both
+  // used to leak: Earth's 0.63 u/s^2 about the Sun came through as a constant extra
+  // pull on everything inside the Moon's sphere, enough to stall and reverse a dive.
+  // Every other test here flies at Earth, so nothing caught it - hence this one.
+  for (const [body, radius] of [[1, 130], [2, 420]]) {
+    const game = running(4)
+    orbitAt(game, body, radius, 0, { angle: body === 1 ? game.moonAngle : game.marsAngle })
+    run(game, 2)
+    const own = predictedFall(PLANET_MU[body], radius, 2, GRAVITY_SOI[body])
+    const foreign = predictedFall(PLANET_MU[0], radius, 2, GRAVITY_SOI[0])
+    const state = relative(game, body)
+    const name = PLANETS[body].name
+    assert.ok(Math.abs(state.radius - own) < 0.2,
+      `${name} falls under its own gravity (${state.radius.toFixed(3)} vs ${own.toFixed(3)})`)
+    assert.ok(Math.abs(state.radius - own) < Math.abs(state.radius - foreign) / 5,
+      `and Earth's pull is not doing the work (Earth alone would leave it at ${foreign.toFixed(1)})`)
+  }
+})
 
 test('the station\'s own orbit is a real circular orbit under the derived gravity', () => {
   // mu is read off the station's scripted orbit, so this is the whole anchor:

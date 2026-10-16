@@ -94,6 +94,17 @@ speed puts you in orbit *with* the station); dive at a world and you keep diving
 fly past fast and you are only deflected. Deep space is unchanged: out there the
 tug still parks itself when you let go. Full model and numbers: plan §5.2.1.
 
+**The Moon is the one world whose frame is itself accelerating**, because it rides
+Earth's orbit as well as its own, and the conversion back to map coordinates has to
+charge for both. It did not, once: Earth's 0.63 u/s² about the Sun went uncharged and
+sat in the ship's velocity *relative to the Moon* as a constant extra pull — 0.44 u/s²
+along the Earth–Moon line, ±19% of the Moon's own grip at 110 u and double it by 144 u,
+enough to stall and outright reverse a dive. It survived because every gravity test
+flew at Earth, where the same conversion happens to be exact. Charging the whole of a
+world's map-frame acceleration fixed it: the Moon's pull now lands within 0.006 u of
+its own law over a two-second fall, where it was 0.9 u out before, and a dive into it
+reaches the hull instead of stopping short.
+
 Ranks: SILVER 4 000 · GOLD 7 000 · PLATINUM 9 500 · LEGEND 12 000
 (plan §5.6 listed career totals; these are tuned so a full three-world run can
 actually reach LEGEND).
