@@ -26,6 +26,13 @@ credits on gear. Clean all three worlds to restore the system.
   - `window.__solar.lodStats()` (dev builds) prints the built/shown tier per
     world, the queue depth and the ms spent last frame.
 
+- **The sweep bet (plan §5.8).** Every piece already in your arms makes the next one
+  worth more — `1 + 0.15 × carried`, so the eighth pays ×2.05 — and the last tenth of a
+  world pays double again. It pays in *score* only: credits stay on class value, so the
+  risk buys rank without inflating the shop. The HUD shows the number the decision is
+  about (`NEXT x1.60`) and hides it when there is nothing to decide.
+- **A shift opens at 6/68.** Two loads a world were already aboard when you arrived.
+  Never a relic — a head start must not hand over a tool.
 - **Three landable worlds**, each ~20–24 junk pieces plus one hidden relic and the
   same concrete launch apron to come down on: Earth (green hills, trees, shores),
   the Moon (a surveyed crater field, a cut trench, a rover's route, 0.35 g floaty
@@ -165,9 +172,29 @@ world's map-frame acceleration fixed it: the Moon's pull now lands within 0.006 
 its own law over a two-second fall, where it was 0.9 u out before, and a dive into it
 reaches the hull instead of stopping short.
 
-Ranks: SILVER 4 000 · GOLD 7 000 · PLATINUM 9 500 · LEGEND 12 000
-(plan §5.6 listed career totals; these are tuned so a full three-world run can
-actually reach LEGEND).
+**The bet is the game now, and it is a bet you can see.** Oxygen was always the clock, and the
+clock was never consulted: carry is capped at eight, and eight pieces is a fifty-second lap, so
+"scoop one more?" was answered by an inventory limit before the air mattered. Every piece already
+in your arms now makes the next one worth more — `1 + 0.15 × carried`, up to ×2.05 on the eighth —
+and the last tenth of each world pays double on top of that. Carry four and the HUD says
+`NEXT x1.60`: that number is the whole decision, and it climbs while you walk. It pays in **score
+only**, so taking the risk buys rank and cannot inflate what the market sells you, which is the one
+thing that keeps the shop scarce until there are install slots to make it a build instead of a
+checklist. Measured, in `.tools/sweep-economy.mjs`: a full clean run turning back with half-full arms
+scores **13 900**; the same run pushing to a full eight every time scores **15 700**. The 1 800
+points between them is the lever, the ranks were set to it (finishing the system is PLATINUM,
+LEGEND is the bet paid off), and that also fixed a dead rank — the ceiling had been 10 188 against
+a 12 000 LEGEND, so the top of the ladder could not be reached at all.
+
+**And a shift opens at 6/68.** Two loads a world were already aboard when you arrived — the last
+janitor's — which costs nothing to build, shows progress on every world from the first frame, and
+gives a run a head start instead of a standing start. It is never a relic: a head start must not
+hand over a tool. The old rule that score and credits were the same number is gone with it, because
+they answer different questions now — **score is how well you played, credits are what you can
+spend.**
+
+Ranks: SILVER 4 000 · GOLD 9 000 · PLATINUM 12 500 · LEGEND 14 500
+(plan §5.6; measured against the achievable range rather than guessed).
 
 ## Run it
 

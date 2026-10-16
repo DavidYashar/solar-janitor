@@ -1,7 +1,7 @@
 import { CARRY_SLOTS, OXYGEN_WARN } from '../sim/config.ts'
 import { RELICS, SHOP_ITEMS } from '../sim/economy.ts'
 import {
-  carrySlots, maxOxygen, progressSummary, rank, systemReport,
+  carrySlots, maxOxygen, progressSummary, rank, sweepState, systemReport,
 } from '../sim/game.ts'
 import { planetById } from '../sim/planets.ts'
 import type { Game, GameEvent, JunkClass } from '../sim/types.ts'
@@ -109,6 +109,7 @@ export function createHud(callbacks: HudCallbacks): Hud {
   const healthFill = pick('health-fill')
   const carryEl = pick('carry')
   const holdEl = pick('hold')
+  const sweepEl = pick('sweep')
   const promptEl = pick('prompt')
   const toastsEl = pick('toasts')
   const compassEl = pick('compass')
@@ -144,6 +145,7 @@ export function createHud(callbacks: HudCallbacks): Hud {
   let lastCredits = -1
   let lastCarry = -1
   let lastHold = -1
+  let lastSweep = ''
   let lastPrompt = ''
   let lastHazard = ''
   let lastHeat = -1
@@ -344,6 +346,19 @@ export function createHud(callbacks: HudCallbacks): Hud {
         lastHold = summary.hold
         holdEl.textContent = `HOLD ${summary.hold}/${summary.holdCap}`
         holdEl.classList.toggle('full', summary.hold >= summary.holdCap)
+      }
+
+      // the sweep bet, stated as the number the decision is about: what the next
+      // piece off this world's ground would pay. Hidden when there is nothing to
+      // decide yet, so it reads as a payoff and not as a permanent HUD decoration.
+      const sweep = sweepState(game)
+      const sweepText = game.mode === 'surface' && sweep.multiplier > 1
+        ? `NEXT <b>x${sweep.multiplier.toFixed(2)}</b>${sweep.final ? ' · FINAL SWEEP' : ''}`
+        : ''
+      if (sweepText !== lastSweep) {
+        lastSweep = sweepText
+        sweepEl.innerHTML = sweepText
+        sweepEl.classList.toggle('hidden', sweepText === '')
       }
 
       if (frame.context !== lastPrompt) {

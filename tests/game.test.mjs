@@ -1,19 +1,20 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  BATCH_BONUS, BODY_CLEARANCE, CARRY_SLOTS, CLEAN_BONUS, EARTH_RADIUS, FULL_HOLD_BONUS,
+  BATCH_BONUS, BATCH_BONUS_SIZE, BODY_CLEARANCE, CARRY_SLOTS, CLEAN_BONUS, EARTH_RADIUS, FULL_HOLD_BONUS,
   HARD_LAND_DAMAGE, HOLD_SLOTS, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_POINTS, METEOR_DAMAGE,
   METEOR_TELEGRAPH_BONUS, MOON_ORBIT, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
-  SHIP_BOOST_SPEED, SHIP_SPEED, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH,
+  SHIP_BOOST_SPEED, SHIP_SPEED, SPACE_SCALE, STARTING_DELIVERED, STORM_DRAIN_MULT, STORM_DURATION,
+  STORM_PERIOD, STORM_PUSH, FINAL_SWEEP_MULT,
   SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, HEALTH_MAX, SURFACE_RADIUS, TRANSITION_TIME,
-  SUN_BURN_RADIUS, SUN_DAMAGE_HEAT, SUN_HEAT_RADIUS, SUN_WARN_HEAT,
+  SUN_BURN_RADIUS, SUN_DAMAGE_HEAT, SUN_HEAT_RADIUS, SUN_WARN_HEAT, SWEEP_STEP,
 } from '../src/sim/config.ts'
 import {
   allPlanetsClean, bearingTo, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
   deliverValue, deliveredCount, deposit, dock, hasRelic, hasUpgrade, holdCount, holdSlots, hopSpeed, land,
   landTarget, landingZone, latLonDistance, maxOxygen, nearLander, objective, placePlayerAtLander,
   planetJunkTotal, progressSummary, rankForScore, remainingCount, resetHazards, scannerPings,
-  shipSpeed, step, takeOff, undock, updateHazards, walkSpeed, systemReport,
+  shipSpeed, step, sweepState, takeOff, undock, updateHazards, walkSpeed, systemReport,
   screenMoveVector, wrapAngle,
 } from '../src/sim/game.ts'
 import { PLANETS, landerSite } from '../src/sim/planets.ts'
@@ -565,13 +566,16 @@ test('hazard timers are re-armed on every landing', () => {
 
 test('the vacuum sweeps junk within its radius and stops at the carry cap', () => {
   const game = running(12)
-  for (const item of game.junk.filter(entry => entry.planet === 0).slice(0, 10)) {
+  const earthGround0 = game.junk.filter(item => item.planet === 0 && item.status === 'ground').length
+  // two of Earth's pieces arrived already delivered (plan §5.8), so walk to ground
+  // pieces rather than to whatever happens to be first in the list
+  for (const item of game.junk.filter(entry => entry.planet === 0 && entry.status === 'ground').slice(0, 10)) {
     park(game, item.lat, item.lon)
     step(game, STEP, idle)
   }
   assert.equal(carryCount(game), CARRY_SLOTS)
   const earthGround = game.junk.filter(item => item.planet === 0 && item.status === 'ground').length
-  assert.equal(earthGround, 24 - CARRY_SLOTS)
+  assert.equal(earthGround, earthGround0 - CARRY_SLOTS)
 
   const far = game.junk.find(item => item.planet === 0 && item.status === 'ground')
   park(game, far.lat + 0.4, far.lon)
@@ -585,20 +589,22 @@ test('the vacuum never picks up junk from another planet', () => {
   park(game, moonJunk.lat, moonJunk.lon)
   step(game, STEP, idle)
   assert.equal(moonJunk.status, 'carried')
-  assert.equal(game.junk.filter(item => item.planet === 0 && item.status !== 'ground').length, 0)
+  const touched = game.junk.filter(item => item.planet === 0 && (item.status === 'carried' || item.status === 'hold'))
+  assert.equal(touched.length, 0, 'nothing on Earth was disturbed')
 })
 
 test('the Wide Scoop upgrade widens the vacuum radius', () => {
   const near = running(13)
   const far = running(13)
   far.upgrades.push('widescoop')
-  const item = near.junk[0]
+  const index = near.junk.findIndex(entry => entry.planet === 0 && entry.status === 'ground')
+  const item = near.junk[index]
   park(near, item.lat + 3.2 / EARTH_SURFACE_RADIUS, item.lon)
   park(far, item.lat + 3.2 / EARTH_SURFACE_RADIUS, item.lon)
   step(near, STEP, idle)
   step(far, STEP, idle)
-  assert.equal(near.junk[0].status, 'ground')
-  assert.equal(far.junk[0].status, 'carried')
+  assert.equal(near.junk[index].status, 'ground')
+  assert.equal(far.junk[index].status, 'carried')
 })
 
 test('deposit stows carried junk and respects the hold capacity', () => {
@@ -643,6 +649,115 @@ test('delivery bonuses scale with the batch', () => {
   )
   assert.equal(deliverValue([{ cls: 'hazardous' }], HOLD_SLOTS).credits, JUNK_POINTS.hazardous)
   assert.equal(deliverValue([{ cls: 'relic' }], HOLD_SLOTS).credits, JUNK_POINTS.relic)
+})
+
+// ------------------------------------------------------------- the sweep bet
+
+test('a shift opens with the previous janitor\'s loads already aboard', () => {
+  const game = running(80)
+  const summary = progressSummary(game)
+  assert.equal(summary.systemTotal, game.junk.length)
+  assert.equal(summary.systemDelivered, STARTING_DELIVERED * PLANETS.length)
+  for (const planet of PLANETS) {
+    assert.equal(deliveredCount(game, planet.id), STARTING_DELIVERED)
+    assert.equal(remainingCount(game, planet.id), planet.junkCount - STARTING_DELIVERED)
+  }
+  assert.equal(game.planetsCleaned, 0, 'no world is already clean')
+  assert.equal(game.score, 0, 'and the head start is not paid for')
+  assert.equal(game.credits, 0)
+  assert.ok(
+    game.junk.every(item => item.cls !== 'relic' || item.status === 'ground'),
+    'a head start never costs a relic - those tools have to be earned',
+  )
+})
+
+test('every piece in a sweep pays more than the one before it', () => {
+  const game = running(81)
+  const ground = game.junk.filter(item => item.planet === 0 && item.status === 'ground').slice(0, 4)
+  const paid = []
+  for (const item of ground) {
+    park(game, item.lat, item.lon)
+    step(game, STEP, idle)
+    paid.push(item.mult)
+  }
+  assert.equal(carryCount(game), 4)
+  assert.ok(Math.abs(paid[0] - 1) < 1e-9, 'the first piece is worth its class value')
+  for (let i = 1; i < paid.length; i++) {
+    assert.ok(paid[i] > paid[i - 1], `piece ${i + 1} pays more than piece ${i}`)
+  }
+  assert.ok(Math.abs(paid[3] - (1 + 3 * SWEEP_STEP)) < 1e-9)
+  // the HUD shows the next one, which is the number the decision is about
+  assert.ok(Math.abs(sweepState(game).multiplier - (1 + 4 * SWEEP_STEP)) < 1e-9)
+})
+
+test('stowing the haul, taking off or delivering resets the chain', () => {
+  const armful = () => {
+    const game = running(82)
+    const ground = game.junk.filter(item => item.planet === 0 && item.status === 'ground').slice(0, 3)
+    for (const item of ground) {
+      park(game, item.lat, item.lon)
+      step(game, STEP, idle)
+    }
+    assert.equal(game.sweep, 3)
+    return game
+  }
+
+  const stowed = armful()
+  placePlayerAtLander(stowed)
+  assert.ok(deposit(stowed))
+  assert.equal(stowed.sweep, 0, 'the arms are empty again')
+
+  const flown = armful()
+  placePlayerAtLander(flown)
+  assert.ok(takeOff(flown))
+  assert.equal(flown.sweep, 0, 'what is in hand is safe once you are off the ground')
+
+  const shipped = armful()
+  standOnDock(shipped)
+  assert.ok(dock(shipped))
+  assert.equal(shipped.sweep, 0, 'delivered cargo ends the sweep')
+})
+
+test('the sweep bet pays in score, not in credits', () => {
+  const game = running(83)
+  const ground = game.junk.filter(item => item.planet === 0 && item.status === 'ground').slice(0, 3)
+  for (const item of ground) {
+    park(game, item.lat, item.lon)
+    step(game, STEP, idle)
+  }
+  // the scoop can take a neighbour along with the piece you walked to, so read the
+  // batch off the game rather than assuming it is the three we aimed at
+  const batch = game.junk.filter(item => item.status === 'carried' || item.status === 'hold')
+  assert.ok(batch.length >= 2, 'a sweep of more than one piece')
+  // the first piece of a sweep pays its class value exactly; the rest pay a premium
+  assert.ok(batch.slice(1).every(item => item.mult > 1), 'every piece after the first is worth more')
+  const value = batch.reduce((sum, item) => sum + JUNK_POINTS[item.cls], 0)
+  const swept = batch.reduce((sum, item) => sum + JUNK_POINTS[item.cls] * item.mult, 0)
+  const bonus = batch.length >= BATCH_BONUS_SIZE ? BATCH_BONUS : 0
+  standOnDock(game)
+  assert.ok(dock(game))
+  assert.equal(game.credits, Math.round(value * (1 + bonus)), 'the market only ever sees class value')
+  assert.equal(game.score, Math.round(swept * (1 + bonus)), 'the run is graded on what the bet paid')
+  assert.ok(game.score > game.credits, 'and it did pay')
+})
+
+test('the last of a world is worth double', () => {
+  const game = running(84)
+  const earth = game.junk.filter(item => item.planet === 0 && item.status === 'ground')
+  for (const item of earth.slice(0, earth.length - 3)) item.status = 'delivered'
+  assert.equal(remainingCount(game, 0), 3)
+  const state = sweepState(game)
+  assert.ok(state.final, 'three pieces left of twenty-four is a final sweep')
+  assert.ok(Math.abs(state.multiplier - FINAL_SWEEP_MULT) < 1e-9, 'with nothing in hand it is exactly double')
+
+  // and it composes with the chain rather than replacing it
+  const last = game.junk.filter(item => item.planet === 0 && item.status === 'ground')
+  park(game, last[0].lat, last[0].lon)
+  step(game, STEP, idle)
+  assert.ok(Math.abs(last[0].mult - FINAL_SWEEP_MULT) < 1e-9)
+  park(game, last[1].lat, last[1].lon)
+  step(game, STEP, idle)
+  assert.ok(Math.abs(last[1].mult - FINAL_SWEEP_MULT * (1 + SWEEP_STEP)) < 1e-9)
 })
 
 test('docking delivers the hold and the carry, paying credits and score', () => {
@@ -700,30 +815,35 @@ test('space strafe slides the ship sideways without turning the nose', () => {
 
 test('partial cleanups persist per planet across takeoff and landing', () => {
   const game = running(17)
-  const earthItems = game.junk.filter(item => item.planet === 0)
+  // every world opens with STARTING_DELIVERED loads already aboard, so the test
+  // measures against that baseline rather than against zero
+  const baseline = PLANETS.map(planet => deliveredCount(game, planet.id))
+  const earthItems = game.junk.filter(item => item.planet === 0 && item.status === 'ground')
   for (const item of earthItems.slice(0, 5)) item.status = 'delivered'
   placePlayerAtLander(game)
   assert.ok(takeOff(game))
   advance(game, TRANSITION_TIME + 0.1)
   assert.equal(game.mode, 'space')
-  assert.equal(deliveredCount(game, 0), 5)
+  assert.equal(deliveredCount(game, 0), baseline[0] + 5)
 
   // out to the Moon: nothing delivered there yet, Earth's tally is untouched
   onPlanet(game, 1)
-  assert.equal(deliveredCount(game, 0), 5, 'delivered junk stays delivered')
-  assert.equal(deliveredCount(game, 1), 0)
-  assert.equal(remainingCount(game, 1), 22)
+  assert.equal(deliveredCount(game, 0), baseline[0] + 5, 'delivered junk stays delivered')
+  assert.equal(deliveredCount(game, 1), baseline[1])
+  assert.equal(remainingCount(game, 1), 22 - baseline[1])
   assert.equal(game.planetId, 1)
 
   // sweep a couple of Moon pieces, hop home, still nothing on Earth changed
-  const moonItems = game.junk.filter(item => item.planet === 1 && item.status === 'ground').slice(0, 2)
+  const moonItems = game.junk
+    .filter(item => item.planet === 1 && item.status === 'ground')
+    .slice(0, 2)
   for (const item of moonItems) item.status = 'delivered'
   assert.ok(takeOff(game))
   advance(game, TRANSITION_TIME + 0.1)
   onPlanet(game, 0)
   assert.equal(game.planetId, 0)
-  assert.equal(deliveredCount(game, 0), 5)
-  assert.equal(deliveredCount(game, 1), 2, 'Moon progress persisted across the visit')
+  assert.equal(deliveredCount(game, 0), baseline[0] + 5)
+  assert.equal(deliveredCount(game, 1), baseline[1] + 2, 'Moon progress persisted across the visit')
 })
 
 test('delivering a relic unlocks its tool for the rest of the run', () => {
@@ -749,9 +869,11 @@ test('delivering a relic unlocks its tool for the rest of the run', () => {
 
 test('cleaning every planet wins the run, one clean bonus per world', () => {
   const game = running(19)
-  const batch = game.junk.filter(item => item.status === 'ground')
+  // the works: everything not already aboard, swept in one batch at 1x, so the score
+  // equals the credit payout exactly - the sweep bet only pays on pieces you scoop
+  const batch = game.junk.filter(item => item.status !== 'delivered')
   const expected = deliverValue(batch, holdSlots(game)).credits + CLEAN_BONUS * PLANETS.length
-  for (const item of game.junk) item.status = 'hold'
+  for (const item of batch) item.status = 'hold'
   standOnDock(game)
   assert.ok(dock(game))
   assert.equal(deliveredCount(game, 0), 24)
@@ -815,7 +937,7 @@ test('the Junk Scanner pings nearby junk; the Eye in the Sky tracks everything',
   eye.relicTools.push('eye')
   park(eye, 0.30, 0.60)
   const everything = scannerPings(eye)
-  assert.equal(everything.length, 24, 'the Eye tracks every piece on the planet')
+  assert.equal(everything.length, 24 - STARTING_DELIVERED, 'the Eye tracks every piece still on the planet')
   assert.ok(everything.some(ping => ping.distance > SCANNER_RANGE), 'including the far ones')
 })
 
@@ -825,7 +947,10 @@ test('the Nav Computer reports what is left on every world', () => {
   game.upgrades.push('navcomputer')
   const report = systemReport(game)
   assert.equal(report.length, 3)
-  assert.deepEqual(report.map(entry => entry.remaining), [24, 22, 22])
+  assert.deepEqual(
+    report.map(entry => entry.remaining),
+    PLANETS.map(planet => planet.junkCount - STARTING_DELIVERED),
+  )
   assert.equal(report[1].name, 'Moon')
 })
 
@@ -925,12 +1050,12 @@ test('ranks follow the tuned score thresholds', () => {
   assert.equal(rankForScore(0), 'BRONZE')
   assert.equal(rankForScore(3999), 'BRONZE')
   assert.equal(rankForScore(4000), 'SILVER')
-  assert.equal(rankForScore(6999), 'SILVER')
-  assert.equal(rankForScore(7000), 'GOLD')
-  assert.equal(rankForScore(9499), 'GOLD')
-  assert.equal(rankForScore(9500), 'PLATINUM')
-  assert.equal(rankForScore(11999), 'PLATINUM')
-  assert.equal(rankForScore(12000), 'LEGEND')
+  assert.equal(rankForScore(8999), 'SILVER')
+  assert.equal(rankForScore(9000), 'GOLD')
+  assert.equal(rankForScore(12499), 'GOLD')
+  assert.equal(rankForScore(12500), 'PLATINUM')
+  assert.equal(rankForScore(14499), 'PLATINUM')
+  assert.equal(rankForScore(14500), 'LEGEND')
   assert.equal(rankForScore(999999), 'LEGEND')
 })
 
@@ -1002,7 +1127,7 @@ test('save → encode → decode → restore round-trips the whole run', () => {
   )
   assert.ok(Math.abs(restored.ship.x - game.ship.x) < 1e-9)
   assert.ok(Math.abs(restored.ship.q.w - game.ship.q.w) < 1e-9)
-  assert.equal(deliveredCount(restored, 1), 1, 'the Moon relic stays delivered')
+  assert.equal(deliveredCount(restored, 1), STARTING_DELIVERED + 1, 'the Moon relic stays delivered')
 })
 
 test('a restored surface run puts the janitor back on the right planet', () => {
@@ -1057,7 +1182,13 @@ test('a structurally valid save with nonsense numbers degrades gracefully', () =
   assert.equal(restored.planetId, PLANETS.length - 1)
   assert.deepEqual(restored.upgrades, ['scanner'])
   assert.deepEqual(restored.relicTools, ['eye'])
-  assert.ok(restored.junk.every(item => item.status === 'ground'))
+  // every code is nonsense, so every piece falls back to the state the seed gives it:
+  // on the ground, except the loads that were already aboard
+  assert.ok(restored.junk.every(item => item.status === 'ground' || item.status === 'delivered'))
+  assert.equal(
+    restored.junk.filter(item => item.status === 'delivered').length,
+    STARTING_DELIVERED * PLANETS.length,
+  )
 })
 
 test('a restored run keeps stepping', () => {
@@ -1105,7 +1236,8 @@ test('a full three-planet run plays through to SYSTEM RESTORED', () => {
       deposit(game)
     }
     assert.equal(groundLeft(), 0, `${planet.name} has nothing left on the ground`)
-    assert.equal(holdCount(game), planet.junkCount, `${planet.name} is fully stowed`)
+    // two of every world's loads were already aboard when the shift opened
+    assert.equal(holdCount(game), planet.junkCount - STARTING_DELIVERED, `${planet.name} is fully stowed`)
 
     assert.ok(takeOff(game))
     advance(game, TRANSITION_TIME + 0.1)
@@ -1123,6 +1255,13 @@ test('a full three-planet run plays through to SYSTEM RESTORED', () => {
   assert.equal(game.planetsCleaned, 3)
   assert.equal(game.relicTools.length, 3, 'all three relics came home')
   assert.ok(allPlanetsClean(game))
+  // walking the field in one pass fills the arms before turning back, so the sweep bet
+  // pays: a full clean run lands PLATINUM, and LEGEND is the same run played deeper
+  // (the ladder is measured in .tools/sweep-economy.mjs, plan §5.8)
   assert.ok(game.score > 5000, `a full run is worth real points (${game.score})`)
-  assert.notEqual(rankForScore(game.score), 'BRONZE', 'finishing the system is at least SILVER')
+  assert.equal(
+    rankForScore(game.score), 'PLATINUM',
+    `finishing the system is PLATINUM, not ${rankForScore(game.score)} (${game.score})`,
+  )
+  assert.ok(game.score > game.credits, `the sweeps paid (score ${game.score} vs credits ${game.credits})`)
 })

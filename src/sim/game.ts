@@ -12,6 +12,7 @@ import {
   SPRINT_MULTIPLIER, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
   STORM_WARN_LEAD_BONUS, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
   THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS,
+  FINAL_SWEEP_FRACTION, FINAL_SWEEP_MULT, STARTING_DELIVERED, SWEEP_STEP,
   SHIP_STRAFE_SPEED, SURFACE_TURN_RATE, SURFACE_PITCH_RATE, BODY_BOUNCE, BODY_REST_SPEED,
   GRAVITY_SOI, GRAVITY_SOI_FADE, PLANET_MU, SHIP_WELL_ACCEL, SHIP_WELL_SOFT,
   ORBIT_TRIM_BAND_MIN, ORBIT_TRIM_BAND_MAX, ORBIT_TRIM_RATE, ORBIT_HOLD_RANGE, DEEP_SPACE_ASSIST_FADE,
@@ -351,6 +352,7 @@ export function createGame(options: CreateOptions = {}): Game {
     delivered: 0,
     bestBatch: 0,
     trips: 0,
+    sweep: 0,
     rescued: false,
     planetsCleaned: 0,
     events: [],
@@ -372,6 +374,7 @@ function buildJunk(game: Game) {
   for (const planet of PLANETS) {
     const lander = landerSite(planet.id)
     const relicIndex = Math.floor(nextRandom(game) * planet.junkCount)
+    let endowed = 0
     for (let i = 0; i < planet.junkCount; i++) {
       const relic = i === relicIndex
       const roll = nextRandom(game)
@@ -383,13 +386,20 @@ function buildJunk(game: Game) {
         -POLE_CLAMP + 0.05, POLE_CLAMP - 0.05,
       )
       const lon = wrapAngle(planet.landerLon + randomBetween(game, -1, 1) * planet.spread.lon * spread)
+      // the previous janitor got this far: STARTING_DELIVERED pieces of every world are
+      // already aboard, which is why a fresh shift opens at 6/68 rather than 0/68 and
+      // why every world shows a little progress from the first frame. Never the relic:
+      // a head start must not cost the player a tool.
+      const already = !relic && endowed < STARTING_DELIVERED
+      if (already) endowed++
       const item: Junk = {
         id: game.nextId++,
         planet: planet.id,
         cls,
         lat,
         lon,
-        status: 'ground',
+        status: already ? 'delivered' : 'ground',
+        mult: 1,
         spin: randomBetween(game, 0.3, 1.6),
         yaw: randomBetween(game, 0, TAU),
       }
@@ -855,6 +865,8 @@ export function deposit(game: Game): boolean {
     stowed++
   }
   if (stowed === 0) return false
+  // the arms are empty: a new sweep starts from 1x
+  game.sweep = 0
   emitSurface(game, 'deposit', `STOWED ${stowed} PCS - HOLD ${stored}/${capacity}`, stowed, playerPoint(game))
   return true
 }
@@ -862,6 +874,8 @@ export function deposit(game: Game): boolean {
 export function takeOff(game: Game): boolean {
   if (game.phase !== 'playing' || game.mode !== 'surface' || game.transition) return false
   if (!nearLander(game)) return false
+  // whatever is still in hand is safe now, so the bet is over
+  game.sweep = 0
   game.transition = { kind: 'takeoff', t: 0, duration: TRANSITION_TIME }
   emitSurface(game, 'takeoff', 'LIFT OFF', 0, playerPoint(game))
   return true
@@ -961,13 +975,49 @@ export function buyItem(game: Game, id: string): boolean {
   return true
 }
 
-export function deliverValue(items: { cls: JunkClass }[], holdCapacity: number) {
+export function deliverValue(items: { cls: JunkClass; mult?: number }[], holdCapacity: number) {
   let value = 0
-  for (const item of items) value += JUNK_POINTS[item.cls]
+  let swept = 0
+  for (const item of items) {
+    value += JUNK_POINTS[item.cls]
+    swept += JUNK_POINTS[item.cls] * (item.mult ?? 1)
+  }
   let bonusRate = 0
   if (items.length >= BATCH_BONUS_SIZE) bonusRate += BATCH_BONUS
   if (items.length >= holdCapacity) bonusRate += FULL_HOLD_BONUS
-  return { value, bonusRate, credits: Math.round(value * (1 + bonusRate)) }
+  return {
+    value,
+    bonusRate,
+    /** class value, which is what the market sees */
+    credits: Math.round(value * (1 + bonusRate)),
+    /** class value with the sweep bet paid out, which is what the run is graded on */
+    score: Math.round(swept * (1 + bonusRate)),
+  }
+}
+
+/**
+ * What the NEXT piece off this world's ground would be worth, and why. This is the
+ * number the HUD shows, because it is the number the decision is about: scoop one
+ * more, or walk back with what you have.
+ *
+ * Two things multiply into it. The **chain** counts the pieces already in your arms,
+ * so the deeper into a sweep you are the more each piece pays - which is what makes
+ * turning back a judgement instead of a question the carry limit already answered.
+ * The **final sweep** doubles the last of a world, so finishing one is a payday
+ * rather than an anticlimax.
+ */
+export function sweepState(game: Game, planet: number = game.planetId): { multiplier: number; final: boolean } {
+  const final = finalSweepActive(game, planet)
+  return {
+    multiplier: (1 + SWEEP_STEP * game.sweep) * (final ? FINAL_SWEEP_MULT : 1),
+    final,
+  }
+}
+
+function finalSweepActive(game: Game, planet: number): boolean {
+  const total = planetJunkTotal(game, planet)
+  if (total === 0) return false
+  return remainingCount(game, planet) <= Math.ceil(total * FINAL_SWEEP_FRACTION)
 }
 
 function deliverAll(game: Game): number {
@@ -977,9 +1027,11 @@ function deliverAll(game: Game): number {
   const payout = deliverValue(batch, holdSlots(game))
   for (const item of batch) item.status = 'delivered'
   game.credits += payout.credits
-  game.score += payout.credits
+  game.score += payout.score
   game.delivered += batch.length
   game.bestBatch = Math.max(game.bestBatch, batch.length)
+  // the arms are empty again, so the chain starts over
+  game.sweep = 0
   emitSpace(game, 'deliver', `DELIVERED ${batch.length} PCS`, payout.credits, shipPoint(game))
   unlockRelics(game, batch)
   PLANETS.forEach((planet, index) => {
@@ -1174,6 +1226,8 @@ function updateVacuum(game: Game) {
     const ground = latLonDistance(game.player, item, game.planetId)
     if (Math.hypot(ground, game.player.h) > range) continue
     item.status = 'carried'
+    item.mult = sweepState(game, item.planet).multiplier
+    game.sweep++
     carried++
     emitSurface(game, 'pickup', '', JUNK_POINTS[item.cls], { lat: item.lat, lon: item.lon, h: 0 })
   }

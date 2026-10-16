@@ -32,6 +32,11 @@ export interface Junk {
   lat: number
   lon: number
   status: JunkStatus
+  /**
+   * What this piece is worth as a multiple of its class value, fixed when it is
+   * picked up. See `sweepMultiplier` in game.ts and plan §5.8.
+   */
+  mult: number
   spin: number
   yaw: number
 }
@@ -181,6 +186,8 @@ export interface Game {
   delivered: number
   bestBatch: number
   trips: number
+  /** pieces picked up since the last deposit, takeoff or delivery - the sweep chain */
+  sweep: number
   rescued: boolean
   planetsCleaned: number
   events: GameEvent[]

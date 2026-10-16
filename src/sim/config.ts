@@ -333,6 +333,28 @@ export const BATCH_BONUS = 0.15
 export const FULL_HOLD_BONUS = 0.25
 export const CLEAN_BONUS = 1000
 
+/**
+ * The sweep bet (plan §5.8).
+ *
+ * Every piece already in your arms makes the next one worth more, so how far to walk
+ * out before turning back is a judgement about your oxygen instead of a question the
+ * carry limit already answered. It pays in SCORE only - credits stay on class value -
+ * so taking the risk buys rank, and cannot inflate what the market can sell you.
+ */
+export const SWEEP_STEP = 0.15
+/** the last tenth of a world's junk is a final sweep */
+export const FINAL_SWEEP_FRACTION = 0.1
+/** and pays double, on top of the chain */
+export const FINAL_SWEEP_MULT = 2
+/**
+ * Loads already aboard when a shift opens: the previous janitor's, one pair a world.
+ *
+ * A run that starts at 6/68 finishes more often than one that starts at 0/68, and the
+ * six are marked delivered rather than removed, so the tallies and the win condition
+ * need no special case. Never a relic - a head start must not cost you a tool.
+ */
+export const STARTING_DELIVERED = 2
+
 // ---------------------------------------------------- LOD streaming (plan §9)
 /**
  * Progressive rendering: the space map refines from a glow impostor to a
@@ -372,13 +394,26 @@ export const LOD_COST_SURFACE = 12
 // ------------------------------------------------------------ ranks & saves
 /**
  * Plan §5.6 lists 8 000 / 14 000 / 22 000 / 32 000, which assumed career totals.
- * A full three-planet v1 run tops out near 12 000, so the thresholds are tuned
- * to the achievable range (documented in README).
+ * These are tuned to what a v1 run actually pays out, measured rather than guessed
+ * (the numbers below are from `.tools/sweep-economy.mjs` with the sweep bet in):
+ *
+ * - one world cleaned, sweeping     ~4 400
+ * - two worlds cleaned              ~9 500
+ * - the system restored, arms never
+ *   more than half full             ~11 600
+ * - the system restored, sweeping   ~13 900
+ * - the system restored, every sweep
+ *   full to the carry limit         ~15 700   <- the ceiling
+ *
+ * So the ladder reads as behaviour: finishing the system is PLATINUM, and the last
+ * rank is what the sweep bet pays - LEGEND means you kept pushing your luck and got
+ * away with it. Before this the ceiling was 10 188 against a 12 000 LEGEND, which
+ * made the top rank unreachable.
  */
 export const RANKS: { name: Rank; min: number }[] = [
-  { name: 'LEGEND', min: 12000 },
-  { name: 'PLATINUM', min: 9500 },
-  { name: 'GOLD', min: 7000 },
+  { name: 'LEGEND', min: 14500 },
+  { name: 'PLATINUM', min: 12500 },
+  { name: 'GOLD', min: 9000 },
   { name: 'SILVER', min: 4000 },
   { name: 'BRONZE', min: 0 },
 ]
