@@ -173,6 +173,14 @@ export const LAND_ZONE_HEIGHT = 16 * SPACE_SCALE
 /** a SPEED, so orbital units like the ship's own - the zone wants you slower than a
  *  circle, and this is what makes "SLOW DOWN TO LAND" mean something */
 export const LAND_MAX_SPEED = 30
+/**
+ * How fast the landing assist bleeds the ship's speed relative to the world it is
+ * landing on, per second. It is a rate rather than an acceleration, so the approach is
+ * exponential - from a full sprint it is inside the landing limit in about eight tenths
+ * of a second, which is long enough to read as the ship slowing down and short enough
+ * that the key press feels answered.
+ */
+export const LAND_ASSIST_RATE = 1.9
 export const BODY_CLEARANCE = 2 * SPACE_SCALE
 
 // -------------------------------------------------------------- transitions
@@ -384,14 +392,6 @@ export const SWEEP_STEP = 0.15
 export const FINAL_SWEEP_FRACTION = 0.1
 /** and pays double, on top of the chain */
 export const FINAL_SWEEP_MULT = 2
-/**
- * Loads already aboard when a shift opens: the previous janitor's, one pair a world.
- *
- * A run that starts at 6/68 finishes more often than one that starts at 0/68, and the
- * six are marked delivered rather than removed, so the tallies and the win condition
- * need no special case. Never a relic - a head start must not cost you a tool.
- */
-export const STARTING_DELIVERED = 2
 
 // ---------------------------------------------------- LOD streaming (plan §9)
 /**
@@ -435,21 +435,22 @@ export const LOD_COST_SURFACE = 12
  * These are tuned to what a v1 run actually pays out, measured rather than guessed
  * (the numbers below are from `.tools/sweep-economy.mjs` with the sweep bet in):
  *
- * - one world cleaned, sweeping     ~4 400
- * - two worlds cleaned              ~9 500
- * - the system restored, arms never
- *   more than half full             ~11 600
- * - the system restored, sweeping   ~13 900
+ * - one world cleaned, sweeping     ~4 800
+ * - two worlds cleaned              ~10 000
+ * - the system restored, sweeping
+ *   four at a time                  ~14 200
  * - the system restored, every sweep
- *   full to the carry limit         ~15 700   <- the ceiling
+ *   full to the carry limit         ~17 500   <- the ceiling
  *
  * So the ladder reads as behaviour: finishing the system is PLATINUM, and the last
  * rank is what the sweep bet pays - LEGEND means you kept pushing your luck and got
- * away with it. Before this the ceiling was 10 188 against a 12 000 LEGEND, which
- * made the top rank unreachable.
+ * away with it. Two things moved these numbers and both are recorded here rather
+ * than in the git log: the ceiling was once 10 188 against a 12 000 LEGEND, which
+ * made the top rank unreachable, and a shift used to open with six pieces already
+ * delivered, which took those six out of the scoring entirely.
  */
 export const RANKS: { name: Rank; min: number }[] = [
-  { name: 'LEGEND', min: 14500 },
+  { name: 'LEGEND', min: 16000 },
   { name: 'PLATINUM', min: 12500 },
   { name: 'GOLD', min: 9000 },
   { name: 'SILVER', min: 4000 },

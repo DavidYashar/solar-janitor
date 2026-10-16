@@ -2006,14 +2006,19 @@ function buildLander(
   const site = landerSite(planet.id)
   const lander = new THREE.Group()
   placeGroup(lander, radiusOf, site.lat, site.lon, 0, 0)
-  const legMaterial = new THREE.MeshStandardMaterial({ color: 0xd8a24a, flatShading: true, roughness: 0.6 })
-  for (const angle of [0, 1, 2, 3]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.6, 0.28), legMaterial)
-    const a = (angle / 4) * TAU + Math.PI / 4
-    leg.position.set(Math.cos(a) * 2.2, 0.75, Math.sin(a) * 2.2)
-    leg.rotation.set(Math.sin(a) * 0.45, 0, -Math.cos(a) * 0.45)
-    lander.add(leg)
-  }
+  const standMaterial = new THREE.MeshStandardMaterial({ color: 0xd8a24a, flatShading: true, roughness: 0.6 })
+  /**
+   * One drum, not four struts.
+   *
+   * It was four thin boxes, which read as scaffolding under the tug from every angle
+   * the janitor ever sees it from, and got in the way of the ship rather than holding
+   * it up. The pad is a hardstanding, not a launch tower: what the tug rests on is a
+   * plinth, sized to the footprint the struts splayed out to, and slightly wider at
+   * the base so it meets the concrete like something set down rather than pushed in.
+   */
+  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.7, 1.6, 24), standMaterial)
+  plinth.position.y = 0.8
+  lander.add(plinth)
 
   const ringMaterial = new THREE.MeshBasicMaterial({ color: 0x7fffb0, transparent: true, opacity: 0.5 })
   const landingRing = new THREE.Mesh(new THREE.TorusGeometry(LANDER_RING_RADIUS, 0.2, 8, 64), ringMaterial)

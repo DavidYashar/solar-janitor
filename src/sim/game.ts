@@ -4,7 +4,7 @@ import {
   DOCK_ASSIST_TURN, DOCK_RADIUS, FULL_HOLD_BONUS, GRAVITY_BASE, GRAV_HOP_BONUS, GRAV_LAND_BONUS,
   HARD_LAND_DAMAGE, HARD_LAND_SPEED, HAZARD_WEAVE_REDUCTION, HEALTH_MAX, HOLD_SLOTS, HOP_COOLDOWN,
   HOP_SPEED, ISS_DOCK_OFFSET, ISS_ORBIT, ISS_ORBIT_RATE, JUNK_POINTS, LANDER_RING_RADIUS,
-  LAND_MAX_SPEED, LAND_ZONE_HEIGHT, MAGBOOTS_BONUS, METEOR_DAMAGE, METEOR_INTERVAL_MAX,
+  LAND_MAX_SPEED, LAND_ASSIST_RATE, LAND_ZONE_HEIGHT, MAGBOOTS_BONUS, METEOR_DAMAGE, METEOR_INTERVAL_MAX,
   METEOR_INTERVAL_MIN, METEOR_RANGE, METEOR_RADIUS, METEOR_TELEGRAPH, METEOR_TELEGRAPH_BONUS,
   O2_TANK2_BONUS, O2_TANK_BONUS, OXYGEN_DRAIN, OXYGEN_MAX, OXYGEN_REFILL, OXYGEN_WARN, POLE_CLAMP,
   RANKS, RECYCLER_REDUCTION, SCANNER_RANGE, SCOOP_RADIUS, SHIP_ACCEL_K, SHIP_BOOST_SPEED,
@@ -12,7 +12,7 @@ import {
   SPRINT_MULTIPLIER, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION, STORM_PERIOD, STORM_PUSH, STORM_WARN_LEAD,
   STORM_WARN_LEAD_BONUS, STORM_WIND_TURN, STRIDE_BONUS, SUFFOCATION_DAMAGE, SUN_RADIUS, SURFACE_RADIUS, TAU,
   THRUSTER_BONUS, TRANSITION_TIME, WALK_SPEED, WIDE_SCOOP_BONUS, THIRD_ENGINE_BONUS,
-  FINAL_SWEEP_FRACTION, FINAL_SWEEP_MULT, STARTING_DELIVERED, SWEEP_STEP,
+  FINAL_SWEEP_FRACTION, FINAL_SWEEP_MULT, SWEEP_STEP,
   MUSIC_RIVER_RANGE, MUSIC_SUN_RADIUS,
   SHIP_STRAFE_SPEED, SURFACE_TURN_RATE, SURFACE_PITCH_RATE, BODY_BOUNCE, BODY_REST_SPEED,
   GRAVITY_SOI, GRAVITY_SOI_FADE, PLANET_MU, SHIP_WELL_ACCEL, SHIP_WELL_SOFT,
@@ -331,6 +331,7 @@ export function createGame(options: CreateOptions = {}): Game {
     outcome: 'none',
     mode: 'surface',
     transition: null,
+    landingAssist: false,
     time: 0,
     score: 0,
     credits: 0,
@@ -385,7 +386,6 @@ function buildJunk(game: Game) {
   for (const planet of PLANETS) {
     const lander = landerSite(planet.id)
     const relicIndex = Math.floor(nextRandom(game) * planet.junkCount)
-    let endowed = 0
     for (let i = 0; i < planet.junkCount; i++) {
       const relic = i === relicIndex
       const roll = nextRandom(game)
@@ -397,19 +397,17 @@ function buildJunk(game: Game) {
         -POLE_CLAMP + 0.05, POLE_CLAMP - 0.05,
       )
       const lon = wrapAngle(planet.landerLon + randomBetween(game, -1, 1) * planet.spread.lon * spread)
-      // the previous janitor got this far: STARTING_DELIVERED pieces of every world are
-      // already aboard, which is why a fresh shift opens at 6/68 rather than 0/68 and
-      // why every world shows a little progress from the first frame. Never the relic:
-      // a head start must not cost the player a tool.
-      const already = !relic && endowed < STARTING_DELIVERED
-      if (already) endowed++
       const item: Junk = {
         id: game.nextId++,
         planet: planet.id,
         cls,
         lat,
         lon,
-        status: already ? 'delivered' : 'ground',
+        // Every piece starts on the ground. A shift used to open with six of them already
+        // marked delivered - two a world, "the previous janitor's" - which lifted
+        // completion rates in playtests but made the HUD open at 6/68 for no reason the
+        // player could see, and reading it as a bug is the correct reading.
+        status: 'ground',
         mult: 1,
         spin: randomBetween(game, 0.3, 1.6),
         yaw: randomBetween(game, 0, TAU),
@@ -879,6 +877,7 @@ export function contextLabel(game: Game): string {
   if (game.mode === 'space') {
     if (canDock(game)) return 'DOCK'
     if (canLand(game)) return 'LAND'
+    if (game.landingAssist) return 'LANDING'
     if (landingZone(game) >= 0) return 'SLOW DOWN TO LAND'
     const target = objective(game)
     return target.kind === 'iss' ? 'FLY TO THE ISS' : `FLY TO ${target.label}`
@@ -921,6 +920,7 @@ export function land(game: Game): boolean {
   if (game.phase !== 'playing' || game.mode !== 'space' || game.transition) return false
   const target = landTarget(game)
   if (target < 0) return false
+  game.landingAssist = false
   game.planetId = target
   game.transition = { kind: 'landing', t: 0, duration: TRANSITION_TIME }
   emitSpace(game, 'land', `DESCENDING TO ${planetById(target).name.toUpperCase()}`, 0, shipPoint(game))
@@ -930,6 +930,7 @@ export function land(game: Game): boolean {
 export function dock(game: Game): boolean {
   if (game.phase !== 'playing' || game.mode !== 'space' || game.transition) return false
   if (!canDock(game)) return false
+  game.landingAssist = false
   game.mode = 'docked'
   game.trips++
   snapShipToDock(game)
@@ -971,6 +972,19 @@ export function contextAction(game: Game): boolean {
   if (game.mode === 'space') {
     if (canDock(game)) return dock(game)
     if (canLand(game)) return land(game)
+    // in range but too fast: answer the key instead of refusing it
+    const zone = landingZone(game)
+    if (zone >= 0) {
+      if (!game.landingAssist) {
+        game.landingAssist = true
+        emitSpace(
+          game, 'hint',
+          `LANDING ASSIST - SLOWING FOR ${planetById(zone).name.toUpperCase()}`,
+          0, shipPoint(game),
+        )
+      }
+      return true
+    }
     emitSpace(game, 'block', 'NOTHING IN RANGE', 0, shipPoint(game))
     return false
   }
@@ -1647,6 +1661,44 @@ function updateShip(game: Game, dt: number, input: Input) {
   ship.speed = Math.hypot(ship.vx, ship.vy, ship.vz)
   collideBodies(game)
   autoAlignToDock(game, dt)
+  updateLandingAssist(game, dt)
+}
+
+/**
+ * The landing assist: what a press of F does when you are inside a world's landing zone
+ * but still moving too fast for it.
+ *
+ * The prompt already reads SLOW DOWN TO LAND, and the action used to do nothing at all
+ * in that state - it reported NOTHING IN RANGE, which was both unhelpful and untrue -
+ * so the janitor pressed the key again and again as the ship drifted across the
+ * threshold. Now the press is always answered: the ship is held on the world's own
+ * track, bleeding the speed it has *relative to that world*, and it lands itself the
+ * moment it is slow enough.
+ *
+ * It only takes speed away. It never steers and never thrusts, so it cannot fly you
+ * anywhere you did not already point, and walking away is still just a matter of
+ * flying out of the zone.
+ */
+function updateLandingAssist(game: Game, dt: number) {
+  if (!game.landingAssist) return
+  const zone = landingZone(game)
+  if (zone < 0) {
+    game.landingAssist = false
+    emitSpace(game, 'hint', 'LANDING ABORTED', 0, shipPoint(game))
+    return
+  }
+  const ship = game.ship
+  const drift = planetVelocity(game, zone, SCRATCH_VEL)
+  const k = Math.min(1, LAND_ASSIST_RATE * dt)
+  ship.vx += (drift.x - ship.vx) * k
+  ship.vy += (drift.y - ship.vy) * k
+  ship.vz += (drift.z - ship.vz) * k
+  ship.speed = Math.hypot(ship.vx, ship.vy, ship.vz)
+  // slow enough: hand it to the landing itself, which is the same transition F starts
+  if (landTarget(game) >= 0) {
+    game.landingAssist = false
+    land(game)
+  }
 }
 
 // --------------------------------------------------------------------- step

@@ -4,14 +4,15 @@ import {
   BATCH_BONUS, BATCH_BONUS_SIZE, BODY_CLEARANCE, CARRY_SLOTS, CLEAN_BONUS, EARTH_RADIUS, FULL_HOLD_BONUS,
   HARD_LAND_DAMAGE, HOLD_SLOTS, ISS_DOCK_OFFSET, ISS_ORBIT, JUNK_POINTS, METEOR_DAMAGE,
   METEOR_TELEGRAPH_BONUS, MOON_ORBIT, OXYGEN_DRAIN, OXYGEN_MAX, SCANNER_RANGE,
-  SHIP_BOOST_SPEED, SHIP_SPEED, SPACE_SCALE, STARTING_DELIVERED, STORM_DRAIN_MULT, STORM_DURATION,
+  SHIP_BOOST_SPEED, SHIP_SPEED, SPACE_SCALE, STORM_DRAIN_MULT, STORM_DURATION,
   STORM_PERIOD, STORM_PUSH, STORM_WIND_TURN, FINAL_SWEEP_MULT,
   SUFFOCATION_DAMAGE, EARTH_SURFACE_RADIUS, HEALTH_MAX, SURFACE_RADIUS, TRANSITION_TIME,
   SUN_BURN_RADIUS, SUN_DAMAGE_HEAT, SUN_HEAT_RADIUS, SUN_WARN_HEAT, SWEEP_STEP,
   SHIP_REVERSE_SPEED, SHIP_STRAFE_SPEED, THIRD_ENGINE_BONUS, MUSIC_RIVER_RANGE, MUSIC_SUN_RADIUS,
 } from '../src/sim/config.ts'
 import {
-  allPlanetsClean, bearingTo, boostSpeed, buyItem, canDock, canLand, carryCount, contextLabel, createGame,
+  allPlanetsClean, bearingTo, boostSpeed, buyItem, canDock, canLand, carryCount, contextAction, contextLabel,
+  createGame,
   deliverValue, deliveredCount, deposit, dock, hasRelic, hasUpgrade, holdCount, holdSlots, hopSpeed, land,
   landTarget, landingZone, latLonDistance, maxOxygen, nearLander, objective, placePlayerAtLander,
   planetJunkTotal, progressSummary, rankForScore, remainingCount, resetHazards, reverseSpeed, scannerPings,
@@ -405,6 +406,51 @@ test('landing needs a slow approach to the right planet', () => {
   assert.equal(game.transition.kind, 'landing')
 })
 
+test('pressing F too fast starts the landing assist, which lands for you', () => {
+  const game = flying(49)
+  parkOnPlanet(game, 2, 10 * SPACE_SCALE)
+  const drift = bodyVelocity(game, 2)
+  game.ship.vx = drift.x + SHIP_BOOST_SPEED
+  game.ship.vy = drift.y
+  game.ship.vz = drift.z
+  assert.equal(canLand(game), false, 'too fast for the landing itself')
+  assert.equal(landingZone(game), 2)
+
+  // the press used to be refused with NOTHING IN RANGE, which was untrue
+  assert.equal(contextAction(game), true)
+  assert.equal(game.landingAssist, true)
+  assert.equal(contextLabel(game), 'LANDING')
+  assert.ok(
+    game.events.some(event => event.kind === 'hint' && /LANDING ASSIST/.test(event.text)),
+    'and it says so',
+  )
+  assert.equal(game.mode, 'space', 'nothing happens on the first frame')
+
+  // one second of being held on the world's track is enough to be inside the limit
+  advance(game, 1)
+  assert.equal(game.landingAssist, false, 'the assist handed over')
+  assert.equal(game.transition.kind, 'landing', 'and the descent started')
+  assert.equal(game.planetId, 2)
+})
+
+test('the landing assist gives up if you fly out of the zone', () => {
+  const game = flying(50)
+  parkOnPlanet(game, 2, 10 * SPACE_SCALE)
+  const drift = bodyVelocity(game, 2)
+  game.ship.vx = drift.x + SHIP_BOOST_SPEED
+  game.ship.vy = drift.y
+  game.ship.vz = drift.z
+  assert.equal(contextAction(game), true)
+  assert.equal(game.landingAssist, true)
+
+  // teleported clear across the map: no zone, so the assist releases the helm
+  parkOnPlanet(game, 2, 4000 * SPACE_SCALE)
+  advance(game, STEP * 2)
+  assert.equal(game.landingAssist, false)
+  assert.equal(game.transition, null, 'and it does not land you from there')
+  assert.ok(game.events.some(event => event.kind === 'hint' && /ABORTED/.test(event.text)))
+})
+
 // ----------------------------------------------------------------- oxygen
 
 test('oxygen drains off-pad, refills at the lander and never drains in space', () => {
@@ -703,22 +749,19 @@ test('delivery bonuses scale with the batch', () => {
 
 // ------------------------------------------------------------- the sweep bet
 
-test('a shift opens with the previous janitor\'s loads already aboard', () => {
+test('a shift opens with every world untouched', () => {
   const game = running(80)
   const summary = progressSummary(game)
   assert.equal(summary.systemTotal, game.junk.length)
-  assert.equal(summary.systemDelivered, STARTING_DELIVERED * PLANETS.length)
+  assert.equal(summary.systemDelivered, 0, 'nothing is swept before the janitor sweeps it')
   for (const planet of PLANETS) {
-    assert.equal(deliveredCount(game, planet.id), STARTING_DELIVERED)
-    assert.equal(remainingCount(game, planet.id), planet.junkCount - STARTING_DELIVERED)
+    assert.equal(deliveredCount(game, planet.id), 0)
+    assert.equal(remainingCount(game, planet.id), planet.junkCount)
   }
-  assert.equal(game.planetsCleaned, 0, 'no world is already clean')
-  assert.equal(game.score, 0, 'and the head start is not paid for')
+  assert.equal(game.planetsCleaned, 0)
+  assert.equal(game.score, 0)
   assert.equal(game.credits, 0)
-  assert.ok(
-    game.junk.every(item => item.cls !== 'relic' || item.status === 'ground'),
-    'a head start never costs a relic - those tools have to be earned',
-  )
+  assert.ok(game.junk.every(item => item.status === 'ground'), 'every piece is on the ground')
 })
 
 test('every piece in a sweep pays more than the one before it', () => {
@@ -865,8 +908,8 @@ test('space strafe slides the ship sideways without turning the nose', () => {
 
 test('partial cleanups persist per planet across takeoff and landing', () => {
   const game = running(17)
-  // every world opens with STARTING_DELIVERED loads already aboard, so the test
-  // measures against that baseline rather than against zero
+  // a fresh shift opens with every world untouched, so the baseline is zero - it is
+  // read off the game anyway, so the test measures a change rather than a level
   const baseline = PLANETS.map(planet => deliveredCount(game, planet.id))
   const earthItems = game.junk.filter(item => item.planet === 0 && item.status === 'ground')
   for (const item of earthItems.slice(0, 5)) item.status = 'delivered'
@@ -987,7 +1030,7 @@ test('the Junk Scanner pings nearby junk; the Eye in the Sky tracks everything',
   eye.relicTools.push('eye')
   park(eye, 0.30, 0.60)
   const everything = scannerPings(eye)
-  assert.equal(everything.length, 24 - STARTING_DELIVERED, 'the Eye tracks every piece still on the planet')
+  assert.equal(everything.length, 24, 'the Eye tracks every piece still on the planet')
   assert.ok(everything.some(ping => ping.distance > SCANNER_RANGE), 'including the far ones')
 })
 
@@ -999,7 +1042,7 @@ test('the Nav Computer reports what is left on every world', () => {
   assert.equal(report.length, 3)
   assert.deepEqual(
     report.map(entry => entry.remaining),
-    PLANETS.map(planet => planet.junkCount - STARTING_DELIVERED),
+    PLANETS.map(planet => planet.junkCount),
   )
   assert.equal(report[1].name, 'Moon')
 })
@@ -1134,8 +1177,8 @@ test('ranks follow the tuned score thresholds', () => {
   assert.equal(rankForScore(9000), 'GOLD')
   assert.equal(rankForScore(12499), 'GOLD')
   assert.equal(rankForScore(12500), 'PLATINUM')
-  assert.equal(rankForScore(14499), 'PLATINUM')
-  assert.equal(rankForScore(14500), 'LEGEND')
+  assert.equal(rankForScore(15999), 'PLATINUM')
+  assert.equal(rankForScore(16000), 'LEGEND')
   assert.equal(rankForScore(999999), 'LEGEND')
 })
 
@@ -1294,7 +1337,7 @@ test('save → encode → decode → restore round-trips the whole run', () => {
   )
   assert.ok(Math.abs(restored.ship.x - game.ship.x) < 1e-9)
   assert.ok(Math.abs(restored.ship.q.w - game.ship.q.w) < 1e-9)
-  assert.equal(deliveredCount(restored, 1), STARTING_DELIVERED + 1, 'the Moon relic stays delivered')
+  assert.equal(deliveredCount(restored, 1), 1, 'the Moon relic stays delivered')
 })
 
 test('a restored surface run puts the janitor back on the right planet', () => {
@@ -1354,7 +1397,7 @@ test('a structurally valid save with nonsense numbers degrades gracefully', () =
   assert.ok(restored.junk.every(item => item.status === 'ground' || item.status === 'delivered'))
   assert.equal(
     restored.junk.filter(item => item.status === 'delivered').length,
-    STARTING_DELIVERED * PLANETS.length,
+    0,
   )
 })
 
@@ -1404,7 +1447,7 @@ test('a full three-planet run plays through to SYSTEM RESTORED', () => {
     }
     assert.equal(groundLeft(), 0, `${planet.name} has nothing left on the ground`)
     // two of every world's loads were already aboard when the shift opened
-    assert.equal(holdCount(game), planet.junkCount - STARTING_DELIVERED, `${planet.name} is fully stowed`)
+    assert.equal(holdCount(game), planet.junkCount, `${planet.name} is fully stowed`)
 
     assert.ok(takeOff(game))
     advance(game, TRANSITION_TIME + 0.1)

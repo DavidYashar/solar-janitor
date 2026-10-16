@@ -538,7 +538,29 @@ export function buildShip(): ShipModel {
   podMouth.visible = false
   thirdEngine.add(podMouth)
 
-  const exhaust = { flames, podFlare, podMouth }
+  // The pod's own plume. It is the same exhaust as the two wing engines, one size up
+  // to match a bell that is a third wider, and it goes into `flames` so that a single
+  // `setThrust` drives all three - the third engine used to get a mouth and a flare
+  // ring and no flame at all, which made a bought thruster look like it was painted on.
+  const podCore = new THREE.Mesh(new THREE.ConeGeometry(0.17, 2.6, 12), coreMaterial)
+  podCore.rotation.x = -Math.PI / 2
+  podCore.position.set(0, 0.86, -4.56)
+  podCore.visible = false
+  thirdEngine.add(podCore)
+
+  const podSheath = new THREE.Mesh(new THREE.ConeGeometry(0.4, 2.1, 12), sheathMaterial)
+  podSheath.rotation.x = -Math.PI / 2
+  podSheath.position.set(0, 0.86, -4.31)
+  podSheath.visible = false
+  thirdEngine.add(podSheath)
+
+  const podGlow = new THREE.Sprite(glowMaterial)
+  podGlow.position.set(0, 0.86, -3.4)
+  podGlow.scale.setScalar(1.8)
+  podGlow.visible = false
+  thirdEngine.add(podGlow)
+
+  flames.push({ core: podCore, sheath: podSheath, diamonds: [], mouth: podMouth, glow: podGlow })
 
   function setThrust(level: number, boosting: boolean) {
     const power = Math.max(0, Math.min(1, level))
@@ -572,9 +594,7 @@ export function buildShip(): ShipModel {
         diamond.scale.setScalar(0.7 + 0.5 * flicker - i * 0.08)
       }
     }
-    exhaust.podFlare.visible = afterburner
-    exhaust.podMouth.visible = firing
-    exhaust.podMouth.scale.setScalar(0.7 + 0.4 * power)
+    podFlare.visible = afterburner
   }
 
   setThrust(0, false)

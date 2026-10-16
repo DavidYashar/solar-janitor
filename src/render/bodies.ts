@@ -85,16 +85,92 @@ function buildLowTier(id: number): THREE.Mesh {
   )
 }
 
-/** An atmosphere halo that makes a globe glow at the rim. */
+/**
+ * An atmosphere, seen from outside: a shell that glows where you are looking through
+ * the most of it.
+ *
+ * It used to be a `BackSide` sphere painted one flat colour additively, which draws a
+ * ring with a hard outer edge at the shell's silhouette — the "sticker" look. Two
+ * things were wrong with it, and this fixes both.
+ *
+ * **The falloff.** What you actually look through, for a ray passing the globe at
+ * impact parameter `b`, is a chord of length `sqrt(shell² - b²)`: longest right at the
+ * planet's limb, zero at the shell's edge. So the fragment shader measures `b` for its
+ * own ray — `vWorld` minus the camera, minus the component along the view — and takes
+ * the glow from that, which fades to nothing at the shell instead of stopping. It is
+ * the one measurement a shell cannot fake, because a fragment's own normal is the same
+ * all the way round the limb.
+ *
+ * **The terminator.** Air glows because sunlight scatters in it, and that only happens
+ * on the day side; a flat ring is the same brightness at midnight, which is what made
+ * it read as a drawn circle rather than as air. The glow is scaled by how far round
+ * from the sub-solar point the piece of shell is, with a soft terminator and a floor
+ * so the night limb keeps a thin rim. No uniform is needed for this: the Sun is at
+ * the world origin, so the direction from a planet to it is that planet's own position
+ * negated, which the vertex shader can hand down.
+ *
+ * Additive and depth-write-off, so a globe behind it is not occluded by its own air
+ * and the night-side hull is not washed out.
+ */
 function buildAtmosphere(id: number, scale: number): THREE.Mesh {
   const planet = planetById(id)
-  return new THREE.Mesh(
-    new THREE.SphereGeometry(planet.spaceRadius * scale, 32, 24),
-    new THREE.MeshBasicMaterial({
-      color: planet.atmosphere, transparent: true, opacity: 0.2, side: THREE.BackSide,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    }),
-  )
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      glowColor: { value: new THREE.Color(planet.atmosphere) },
+      planetRadius: { value: planet.spaceRadius },
+      shellRadius: { value: planet.spaceRadius * scale },
+      strength: { value: 0.85 },
+      falloff: { value: 2.6 },
+    },
+    vertexShader: /* glsl */`
+      varying vec3 vWorld;
+      varying vec3 vCentre;
+      void main() {
+        vec4 world = modelMatrix * vec4(position, 1.0);
+        vWorld = world.xyz;
+        vCentre = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+        gl_Position = projectionMatrix * viewMatrix * world;
+      }
+    `,
+    fragmentShader: /* glsl */`
+      uniform vec3 glowColor;
+      uniform float planetRadius;
+      uniform float shellRadius;
+      uniform float strength;
+      uniform float falloff;
+      varying vec3 vWorld;
+      varying vec3 vCentre;
+      void main() {
+        // How much air this line of sight passes through, as the distance from the
+        // planet's centre to the ray the camera is looking along to reach this fragment.
+        //
+        // It has to be measured against the CENTRE and not against the view direction to
+        // the fragment itself - that second thing is the same vector as the ray, so the
+        // perpendicular component of it against itself is zero and every fragment comes
+        // out at an impact parameter of nothing. Which is not a falloff at all: it draws
+        // the flat hard-edged ring this whole shader exists to get rid of.
+        vec3 ray = vWorld - cameraPosition;
+        vec3 view = normalize(ray);
+        vec3 toCentre = vCentre - cameraPosition;
+        vec3 nearest = cameraPosition + view * dot(toCentre, view);
+        float impact = length(vCentre - nearest);
+        float span = max(1e-3, shellRadius - planetRadius);
+        float thickness = 1.0 - clamp((impact - planetRadius) / span, 0.0, 1.0);
+        // and whether that air is in daylight
+        vec3 outward = normalize(vWorld - vCentre);
+        vec3 toSun = normalize(-vCentre);
+        float day = smoothstep(-0.42, 0.38, dot(outward, toSun));
+        float alpha = strength * pow(thickness, falloff) * mix(0.14, 1.0, day);
+        if (alpha <= 0.002) discard;
+        gl_FragColor = vec4(glowColor, alpha);
+      }
+    `,
+    transparent: true,
+    side: THREE.BackSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  })
+  return new THREE.Mesh(new THREE.SphereGeometry(planet.spaceRadius * scale, 48, 32), material)
 }
 
 // ---------------------------------------------------------------- textures
@@ -291,7 +367,7 @@ function* earthDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator
     new THREE.SphereGeometry(planet.spaceRadius + 0.35 * SPACE_SCALE, 48, 32),
     cloudMaterial,
   )
-  into.add(clouds, buildAtmosphere(id, 1.06))
+  into.add(clouds, buildAtmosphere(id, 1.13))
   spun.push({ object: clouds, rate: 0.014 })
   yield
 }
@@ -448,7 +524,7 @@ function* marsDetail(id: number, into: THREE.Group, spun: Spinner[]): Generator<
   deimos.scale.set(0.95, 0.78, 0.9)
   deimos.position.set(-(planet.spaceRadius + 11 * SPACE_SCALE), -2.2 * SPACE_SCALE, 3.6 * SPACE_SCALE)
   moonlets.add(deimos)
-  into.add(moonlets, buildAtmosphere(id, 1.07))
+  into.add(moonlets, buildAtmosphere(id, 1.13))
   spun.push({ object: moonlets, rate: 0.11 })
   yield
 }

@@ -557,6 +557,26 @@ export function createWorld(container: HTMLElement): World {
     new THREE.MeshBasicMaterial({ map: skyTextures[0], side: THREE.BackSide, fog: false }),
   )
   surfaceScene.add(sky)
+  /**
+   * The Moon has no air, so its sky is not a gradient at all: it is the same
+   * photograph of the sky the space scene wears, on a dome of its own. Two spheres
+   * with one hidden, rather than one sphere swapping its map, because the two are
+   * not the same kind of thing - a gradient sky is a stand-in for air, and this is
+   * a map of where the stars actually are.
+   *
+   * It is left unturned on purpose. The Moon is tidally locked, so its sky holds
+   * still while you walk under it, which is one of the few places in the system
+   * where the real thing and the readable thing agree. The tilt is the space
+   * scene's own, so the Milky Way lies on the same slant here as it does in orbit
+   * over it.
+   */
+  const moonSky = new THREE.Mesh(
+    new THREE.SphereGeometry(SURFACE_SKY_RADIUS, 64, 32),
+    new THREE.MeshBasicMaterial({ map: starSkyTexture, side: THREE.BackSide, fog: false }),
+  )
+  moonSky.rotation.set(STAR_SKY_TILT, 1.1, 0)
+  moonSky.visible = false
+  surfaceScene.add(moonSky)
   const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
     map: sunGlowTexture(),
     transparent: true, depthWrite: false, fog: false,
@@ -696,6 +716,9 @@ export function createWorld(container: HTMLElement): World {
     const look = themeLooks[planet.theme]
     sky.material.map = skyTextures[planet.id] ?? skyTextures[0]
     sky.material.needsUpdate = true
+    // a world with no air gets the real sky; the others get their own gradient
+    sky.visible = planet.theme !== 'moon'
+    moonSky.visible = planet.theme === 'moon'
     sunSprite.material.color.setHex(look.sunTint)
     sunSprite.scale.setScalar(SUN_BASE_SCALE * (look.sunScale / 130))
     // the core stays white-hot while everything around it goes gold: that is what

@@ -31,14 +31,24 @@ credits on gear. Clean all three worlds to restore the system.
   world pays double again. It pays in *score* only: credits stay on class value, so the
   risk buys rank without inflating the shop. The HUD shows the number the decision is
   about (`NEXT x1.60`) and hides it when there is nothing to decide.
-- **A shift opens at 6/68.** Two loads a world were already aboard when you arrived.
-  Never a relic — a head start must not hand over a tool.
+- **A shift opens at 0/68.** Every piece is on the ground and every one has to be swept.
+  A shift used to open at 6/68, with two loads a world already aboard — it lifted
+  completion, but the only place a player could read it was the HUD, and 6/68 before you
+  have done anything looks exactly like a bug.
 - **Three landable worlds**, each ~20–24 junk pieces plus one hidden relic and the
   same concrete launch apron to come down on: Earth (green hills, trees, shores),
   the Moon (a surveyed crater field, a cut trench, a rover's route, 0.35 g floaty
   hops) and Mars (a crater field inside a ring of peaks, half-buried probes,
   0.45 g). The janitor wears his helmet on the worlds with no air and a cap on the
-  one with, and his legs stride as he walks.
+  one with, and his legs stride as he walks. **The Moon has the real sky** — the
+  same NASA star map the space scene wears, on a dome of its own, so the Milky Way
+  is where it actually is and holds still overhead, as a tidally locked body's
+  should.
+- **Landing is one press, not five.** Fly into a world's zone too fast and `F` used to
+  be refused with `NOTHING IN RANGE`, which was untrue and left you stabbing at the key.
+  It now starts a **landing assist**: the tug is held on that world's track, its speed
+  relative to that world bled away, and it lands itself the moment it is slow enough.
+  It never steers and never thrusts, so it cannot take you anywhere you did not point.
 - **Hazards, all telegraphed:** Moon meteor showers (a stone falls out of the sky
   for 2.5 s, getting larger the closer it gets — watch it come down, then run —
   and being mid-hop clears you), Mars dust storms, and **the Sun**, which is not
@@ -108,7 +118,9 @@ credits on gear. Clean all three worlds to restore the system.
   when you fly back. Win = every world delivered.
 - Touch play is first-class: left stick, look pad, roll paddles and one context
   button whose label follows the situation (DEPOSIT · TAKE OFF · DOCK · LAND ·
-  SLOW DOWN TO LAND · SHOP).
+  SLOW DOWN TO LAND → LANDING · SHOP). Pressing it while it reads `SLOW DOWN TO
+  LAND` starts the landing assist rather than doing nothing, so the label is a
+  promise the button keeps.
 
 ## Controls
 
@@ -221,17 +233,18 @@ and the last tenth of each world pays double on top of that. Carry four and the 
 only**, so taking the risk buys rank and cannot inflate what the market sells you, which is the one
 thing that keeps the shop scarce until there are install slots to make it a build instead of a
 checklist. Measured, in `.tools/sweep-economy.mjs`: a full clean run turning back with half-full arms
-scores **13 900**; the same run pushing to a full eight every time scores **15 700**. The 1 800
+scores **14 200**; the same run pushing to a full eight every time scores **17 500**. The 3 300
 points between them is the lever, the ranks were set to it (finishing the system is PLATINUM,
 LEGEND is the bet paid off), and that also fixed a dead rank — the ceiling had been 10 188 against
 a 12 000 LEGEND, so the top of the ladder could not be reached at all.
 
-**And a shift opens at 6/68.** Two loads a world were already aboard when you arrived — the last
-janitor's — which costs nothing to build, shows progress on every world from the first frame, and
-gives a run a head start instead of a standing start. It is never a relic: a head start must not
-hand over a tool. The old rule that score and credits were the same number is gone with it, because
-they answer different questions now — **score is how well you played, credits are what you can
-spend.**
+**And a shift opens at 0/68, which is not where it started.** It used to open at 6/68, two loads a
+world already aboard — the last janitor's — on the completion-lift argument. It worked, and it was
+still wrong: the only place a player could read it was the HUD, and 6/68 before you have touched
+anything is indistinguishable from a bug. The head start is gone, the whole 68 has to be swept, and
+LEGEND moved 14 500 → 16 000 to keep a plain full sweep at PLATINUM. The old rule that score and
+credits were the same number is gone with it, because they answer different questions now —
+**score is how well you played, credits are what you can spend.**
 
 **The soundtrack is files, and the files needed measuring before use.** Seven tracks
 supplied by the project owner, one per environment. The first thing to do with them was
@@ -884,6 +897,48 @@ This is also the change that moved a test fixture: two space-flight tests parked
 tug at two thousand units and called it open space. It is not open space any more —
 it is inside a star's sphere of influence — so they park at fourteen thousand, which
 is where the fly-by-wire handling they are actually about still applies.
+
+**An atmosphere is how much air a line of sight passes through, not a ring of paint.**
+The shell around Earth and Mars used to be a `BackSide` sphere painted one flat colour
+additively, which draws exactly what that sounds like: a band of uniform brightness
+ending in a hard edge at the shell's own silhouette. What a ray past a globe actually
+crosses is a chord, `sqrt(shell² − b²)` for impact parameter `b` — longest right at the
+planet's limb and zero at the shell's edge — so the shader measures `b` and takes the
+glow from that, and it fades to nothing instead of stopping. A shell cannot fake this
+by looking at its own normals, because a fragment's normal is the same all the way
+round the limb; measuring against the planet's centre is the whole trick. The press
+that is worth knowing: **the first version of this measured `b` against the view
+direction to the fragment itself**, which is the same vector as the ray, so the
+perpendicular component of it against itself was zero and every fragment came out at
+an impact parameter of *nothing* — no falloff at all, which is precisely the flat
+hard-edged ring the shader existed to get rid of. The glow is also scaled by how far
+round from the sub-solar point the piece of shell is, because air glows by scattering
+sunlight and that only happens on the day side: a night-side pass now reads as a
+night-side pass, with the day limb lit and the dark limb keeping a thin rim. Shells
+went 1.06 → 1.13 to give the falloff room to happen in.
+
+**The Sun had no lighting to remove, only a photograph that looked like some.** It is
+drawn with an unlit material and always has been, so the terminator across it was the
+surface map itself: measured row by row it runs from a mean luminance of 207 at one
+pole to 107 through the southern tropics, and its slow variation reaches **3.89×
+across the map**, which wrapped onto a sphere is a shading gradient and nothing else.
+`.tools/flatten-sun-map.py` normalises it the way the Mars tiles are normalised — split
+into slow and fast, throw the slow away, keep the granulation — and lifts the result so
+the disc is the brightest thing in the frame rather than a mid-tone sitting behind its
+own corona. It also reports the map's seam against the map's *own* adjacent-column
+steps rather than against zero: 63/255 against a p99.9 of 27 and a maximum of 77, which
+is an ordinary step in a very detailed photograph, so the map does not need stitching
+and does not get any.
+
+**The parked tug stands on a plinth, and its third engine has a plume.** Both were
+about the ship's hardware reading as hardware. Four thin struts under the parked tug
+read as scaffolding from every angle the janitor ever sees the ship from, so they are
+one tapered drum — radius 2.4 to 2.7, 1.6 tall, reaching exactly the belly the parked
+tug sits at. And the third engine used to get a bell and an afterburner ring and *no
+flame at all*, so a bought thruster looked painted on next to the two that fire; it now
+carries the same cone the wing engines carry, one size up, driven by the same
+`setThrust` — which meant pushing it into the same `flames` array rather than animating
+it separately, so the three can no longer drift apart.
 
 ### How to check the streaming in a browser (M3)
 

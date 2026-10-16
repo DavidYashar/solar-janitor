@@ -164,6 +164,13 @@ export interface Game {
   outcome: Outcome
   mode: PlayMode
   transition: Transition | null
+  /**
+   * True while the landing assist is flying. Set by pressing F inside a world's landing
+   * zone while still moving too fast for it: the ship is then held on that world's own
+   * track, bleeding the speed it has *relative to that world*, and it lands itself the
+   * moment it is slow enough. Cleared by landing, by docking, and by leaving the zone.
+   */
+  landingAssist: boolean
   time: number
   score: number
   credits: number
