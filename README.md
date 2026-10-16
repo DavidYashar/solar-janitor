@@ -235,10 +235,13 @@ of every subject facing the ground and unlit. Normals point straight up: a plant
 cut from a picture already has its shading painted in, so it is lit as ground
 rather than as a surface.
 
-The undergrowth is **scattered in clumps rather than evenly** — it is the clump
-centres that get scattered and the plants that gather round them. A uniform
-scatter reads as a pattern however random the numbers are; what makes ground look
-planted is that things grow in patches with bare ground between them.
+The undergrowth is planted two ways, and the difference is the point. Out in the
+meadow it goes down in **beds of a single species** — a slope of one flower reads
+as planted, massed and deliberate, the way a flower farm looks, where a bed of
+everything at once only reads as overgrown. Beside each cottage it goes down as a
+**garden**: the same species, but mixed and set in rows at even spacing, jittered
+by a hand's breadth so it reads as grown rather than printed. That is the one
+place in the valley where the planting is laid out rather than left to scatter.
 
 They are **cut, not blended** — `alphaTest` with alpha-to-coverage — because tens
 of thousands of them facing every which way would need a sort order that cannot
