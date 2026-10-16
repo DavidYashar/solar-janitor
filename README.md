@@ -319,14 +319,14 @@ twenty-three maps, of which Earth's two ground tiles are the largest single item
 
 ## Credits & licences
 
-**The music is supplied by the project owner** — seven tracks in `public/music/`, one
-per environment (space, the Sun's approach, Earth's valley, Earth's river, the Moon,
-Mars, Mars in a dust storm). They are the only external assets in the project; every
-other sound is synthesized in code. **Their provenance and licence still need recording
-here** — the file names are descriptive rather than sourced, so this line is a
-placeholder until the owner fills it in. The selection and mixing logic is ours: which
-track a moment calls for is decided in the sim (`musicFor`), and each track carries a
-measured normalising level in `audio.ts`.
+**The music is from [Pixabay](https://pixabay.com/music/)**, used under the **Pixabay
+Content Licence**: free for commercial and non-commercial use, and **attribution is not
+required** — credited here anyway. The licence's one condition is that the tracks are
+not redistributed as standalone items, and they aren't: the seven files in
+`public/music/` are part of this larger work. They are the only external assets in the
+project; every other sound is synthesized in code. The selection and mixing logic is
+ours — which track a moment calls for is decided in the sim (`musicFor`), and each
+track carries a measured normalising level in `audio.ts` (see the design notes above).
 
 Earth's colour, night-lights and cloud maps, the Moon's surface, Mars and the
 Sun's photosphere — all in `public/textures/` — are from the **Solar System Scope**
